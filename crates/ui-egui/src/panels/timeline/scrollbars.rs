@@ -1134,6 +1134,10 @@ fn minimap_indicator_bounds(mut xa: f32, mut xb: f32, left_tangent: f32, right_t
     (xa, xb)
 }
 
+fn minimap_indicator_filled(fill_clips: bool, width: f32, min_outline_width: f32, hug_left: bool, hug_right: bool) -> bool {
+    fill_clips || (width < min_outline_width && !hug_left && !hug_right)
+}
+
 /// Accumulate clip boundaries so overlapping long clips cost constant work each, rather than
 /// repainting every covered column for every clip.
 fn minimap_add_span(boundaries: &mut [[i64; 3]], start: usize, end: usize, priority: usize) {
@@ -2306,7 +2310,9 @@ mod zoom_drag_scale_tests {
 
 #[cfg(test)]
 mod controls_tests {
-    use super::{SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, matches_gesture, minimap_clips_fit, minimap_indicator_bounds, shift_drag_rate};
+    use super::{
+        SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, matches_gesture, minimap_clips_fit, minimap_indicator_bounds, minimap_indicator_filled, shift_drag_rate,
+    };
 
     #[test]
     fn minimap_boundaries_match_per_column_priority_for_overlaps() {
@@ -2367,6 +2373,14 @@ mod controls_tests {
         // Interior runs and runs already beyond the tangent keep their existing bounds.
         assert_eq!(minimap_indicator_bounds(40.0, 45.0, 24.0, 76.0, false, false), (40.0, 45.0));
         assert_eq!(minimap_indicator_bounds(20.0, 30.0, 24.0, 76.0, true, false), (20.0, 30.0));
+    }
+
+    #[test]
+    fn minimap_semicircles_stay_outlined_when_extremely_narrow() {
+        assert!(!minimap_indicator_filled(false, 0.5, 3.0, true, false));
+        assert!(!minimap_indicator_filled(false, 0.5, 3.0, false, true));
+        assert!(minimap_indicator_filled(true, 0.5, 3.0, true, false));
+        assert!(minimap_indicator_filled(false, 0.5, 3.0, false, false));
     }
 
     /// The Alternate Drag Speed setting squares: 1x keeps the slow rate, 0.5x a quarter of it and
@@ -2612,7 +2626,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
             let hug_left = x0 - bar.min.x < rad;
             let hug_right = bar.max.x - x1 < rad;
             let col = color_for(k);
-            if fill || x1 - x0 < 5.0 * px {
+            if minimap_indicator_filled(fill, x1 - x0, 5.0 * px, hug_left, hug_right) {
                 // solid: one triangle fan over the whole shape (rounded cap included)
                 let pts = outline(x0, x1, 0.0, hug_left, hug_right);
                 let n = pts.len().max(3);
