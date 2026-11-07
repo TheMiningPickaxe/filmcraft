@@ -1134,6 +1134,12 @@ fn minimap_indicator_bounds(mut xa: f32, mut xb: f32, left_tangent: f32, right_t
     (xa, xb)
 }
 
+/// Give an end cap only to the outermost run near that edge, so adjacent runs keep their cut.
+fn minimap_indicator_hugs_edges(index: usize, run_count: usize, left_gap: f32, right_gap: f32, cap_zone: f32) -> (bool, bool) {
+    (index == 0 && left_gap < cap_zone, index + 1 == run_count && right_gap < cap_zone)
+}
+
+/// Fill narrow interior indicators, but keep edge indicators outlined unless Fill Clips is enabled.
 fn minimap_indicator_filled(fill_clips: bool, width: f32, min_outline_width: f32, hug_left: bool, hug_right: bool) -> bool {
     fill_clips || (width < min_outline_width && !hug_left && !hug_right)
 }
@@ -2311,7 +2317,8 @@ mod zoom_drag_scale_tests {
 #[cfg(test)]
 mod controls_tests {
     use super::{
-        SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, matches_gesture, minimap_clips_fit, minimap_indicator_bounds, minimap_indicator_filled, shift_drag_rate,
+        SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, matches_gesture, minimap_clips_fit, minimap_indicator_bounds, minimap_indicator_filled,
+        minimap_indicator_hugs_edges, shift_drag_rate,
     };
 
     #[test]
@@ -2373,6 +2380,14 @@ mod controls_tests {
         // Interior runs and runs already beyond the tangent keep their existing bounds.
         assert_eq!(minimap_indicator_bounds(40.0, 45.0, 24.0, 76.0, false, false), (40.0, 45.0));
         assert_eq!(minimap_indicator_bounds(20.0, 30.0, 24.0, 76.0, true, false), (20.0, 30.0));
+    }
+
+    #[test]
+    fn minimap_only_outermost_short_runs_claim_edge_caps() {
+        assert_eq!(minimap_indicator_hugs_edges(0, 2, 1.0, 50.0, 10.0), (true, false));
+        assert_eq!(minimap_indicator_hugs_edges(1, 2, 5.0, 1.0, 10.0), (false, true));
+        assert_eq!(minimap_indicator_hugs_edges(1, 3, 5.0, 50.0, 10.0), (false, false));
+        assert_eq!(minimap_indicator_hugs_edges(0, 1, 1.0, 1.0, 10.0), (true, true));
     }
 
     #[test]
@@ -2621,10 +2636,9 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
             pts
         };
         // fully opaque, drawn over the slider so nothing ever hides behind it
-        for &(x0, x1, k) in &runs {
+        for (index, &(x0, x1, k)) in runs.iter().enumerate() {
             // "very near the beginning" / "very near the end": within the pill's cap zones
-            let hug_left = x0 - bar.min.x < rad;
-            let hug_right = bar.max.x - x1 < rad;
+            let (hug_left, hug_right) = minimap_indicator_hugs_edges(index, runs.len(), x0 - bar.min.x, bar.max.x - x1, rad);
             let col = color_for(k);
             if minimap_indicator_filled(fill, x1 - x0, 5.0 * px, hug_left, hug_right) {
                 // solid: one triangle fan over the whole shape (rounded cap included)
