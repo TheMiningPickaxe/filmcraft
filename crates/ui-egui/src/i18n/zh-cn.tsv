@@ -453,7 +453,7 @@
 	Are you sure you want to discard your changes to '{file}'?	确定要放弃对“{file}”的更改吗？
 	Yes	是
 	No	否
-	Add media to your project. Drop files anywhere in the window, or choose a source below.	将媒体添加到你的项目。将文件拖到窗口任意位置，或在下方选择来源。
+	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	将媒体添加到你的项目。将文件或文件夹拖到窗口任意位置，或在下方选择来源。
 	Browse files…	浏览文件…
 	Movies, audio and stills from disk	来自磁盘的电影、音频与静帧
 	Demo footage	演示素材
@@ -3459,6 +3459,7 @@
 	Clip Speed / Duration	剪辑速度 / 时长
 	Speed:	速度：
 	Reverse Speed	反转速度
+	Maintain Audio Pitch	保持音频音调
 	Ripple Edit, Shifting Trailing Clips	波纹编辑，移动后续剪辑
 	About	关于
 	Contributors	贡献者
@@ -3616,7 +3617,7 @@
 	Hide Slider	隐藏滑块
 	Unhide Slider	显示滑块
 	Maximum Zoom Level	最大缩放级别
-	Alternate Drag Speed (Shift + Left Click)	拖动速度调整（Shift + 左键单击）
+	Alternate Drag Speed (Shift + Drag)	拖动速度调整（Shift + 拖动）
 	Playhead Centering Range (Double Click)	播放头居中范围（三击）
 	Alternate Drag Speed	拖动速度调整
 	Value:	值：
@@ -3738,3 +3739,126 @@
 	Previous	上一个
 	Next	下一个
 	Enter a valid HH:MM:SS:FF timecode	请输入有效的 HH:MM:SS:FF 时间码
+
+# The strings the report listed as missing for zh-cn.
+	1 frame ({seconds} s)	1 帧（{seconds} 秒）
+	1/2	1/2
+	Add Track	添加轨道
+	Audio output failed: playing without sound (check Settings ▸ Audio Hardware)	音频输出失败：以无声音方式播放（检查 设置 ▸ 音频硬件）
+	Audio output is not responding: playing without sound (check Settings ▸ Audio Hardware)	音频输出未响应：以无声音方式播放（检查 设置 ▸ 音频硬件）
+	Caption Export Settings	字幕导出设置
+	Check for Updates…	检查更新…
+	Checking for updates…	正在检查更新…
+	Could not check for updates:\n{error}	无法检查更新：\n{error}
+	Dark Theme	深色主题
+	Delete Track	删除轨道
+	Dock Panel	停靠面板
+	Docking Action	停靠操作
+	Duration (frames):	持续时间（帧）：
+	Exported {path} as {format}, from its file extension	已将 {path} 导出为 {format}（依据文件扩展名）
+	Fill Type	填充类型
+	FilmCraft Updates	FilmCraft 更新
+	FilmCraft {version} is currently the newest version available.	FilmCraft {version} 目前已是最新版本。
+	Gradient Angle	渐变角度
+	Hardware decoding: Auto uses the system's video decoder (VideoToolbox on macOS, Media Foundation on Windows, VA-API or NVDEC for H.264 and HEVC on Linux) for the streams it supports, and FilmCraft's own decoder for everything else or if the hardware fails. Media that is already open keeps its decoder until it is reopened.	硬件解码：自动模式对支持的流使用系统视频解码器（macOS 的 VideoToolbox、Windows 的 Media Foundation、Linux 上 H.264 和 HEVC 的 VA-API 或 NVDEC），对其余内容或在硬件故障时使用 FilmCraft 自带的解码器。已打开的媒体在重新打开之前会保留其解码器。
+	Hide FilmCraft	隐藏 FilmCraft
+	Hide Others	隐藏其他
+	Light Theme	浅色主题
+	Linear Gradient	线性渐变
+	Looks for a newer FilmCraft release and offers to update.	查找较新的 FilmCraft 版本并提供更新。
+	Responsive Design – Time remaps the graphic's layer keyframes; clip effects like Opacity and Motion keep media time	自适应设计 – 时间会重新映射图形的图层关键帧；不透明度和运动等剪辑效果保持媒体时间
+	Ripple Trim In	波纹修剪入点
+	Ripple Trim Out	波纹修剪出点
+	Roll Edit	滚动编辑
+	Set Work Area Bar In Point	设置工作区域条入点
+	Set Work Area Bar Out Point	设置工作区域条出点
+	Set as Default Transition	设为默认过渡
+	Settings	设置
+	Solid	纯色
+	Source In/Out is only 1 frame. Choose Entire Source to export the whole sequence.	源入点/出点仅有 1 帧。请选择“整个源”以导出整个序列。
+	Trim In	修剪入点
+	Trim Out	修剪出点
+	Use Effect Shutter Angle	使用效果快门角度
+	When enabled, GIF transparency is on/off: alpha below 128 is transparent; 128 and above is opaque.	启用后，GIF 透明度为开/关模式：alpha 低于 128 为透明；128 及以上为不透明。
+	{frames} frames ({seconds} s)	{frames} 帧（{seconds} 秒）
+	{name} already exists, so nothing was exported. To replace it, choose it in the save dialog.	{name} 已存在，因此未导出任何内容。要替换它，请在保存对话框中选择它。
+	Open Presets Folder	打开预设文件夹
+	Scan Presets Folder	扫描预设文件夹
+	From preset file:	来自预设文件：
+	No presets folder: the app has no data directory	无预设文件夹：应用没有数据目录
+	Imported {n} preset(s)	已导入 {n} 个预设
+	Imported {n} preset(s); {skipped} skipped	已导入 {n} 个预设；已跳过 {skipped} 个
+	Imported {n} preset(s); {warnings} with unsupported parameters	已导入 {n} 个预设；{warnings} 个含不支持的参数
+	Imported {n} preset(s); {skipped} skipped, {warnings} with unsupported parameters	已导入 {n} 个预设；已跳过 {skipped} 个，{warnings} 个含不支持的参数
+	Imported {n} preset(s); not imported: {error}	已导入 {n} 个预设；未导入：{error}
+	Preset library updated: {imported} loaded, {removed} removed	预设库已更新：已加载 {imported} 个，已移除 {removed} 个
+	Preset library updated	预设库已更新
+	Preset library is up to date	预设库已是最新
+
+# Export: H.264 High 10 and all-intra (#1221).
+	High 10	High 10
+	10-bit color	10 位色彩
+	All Intra	全帧内
+	Every frame a keyframe (edit-friendly, larger files)	每一帧都是关键帧（便于剪辑，文件更大）
+	H.264 High 10 Master	H.264 High 10 母版
+	H.264 High 10 Intra	H.264 High 10 Intra
+	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10（10 位 4:2:0，采用序列的尺寸），恒定质量 CRF 16，AAC 320 kbps；10 位母版
+	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra（10 位 4:2:0，每一帧都是关键帧），CRF 12，AAC 320 kbps；便于剪辑的中间文件
+
+	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	启用后，滑块边缘、以播放头居中和镜像滑块操作会使用平滑动画。
+	Reverses timeline scrolling and zooming when holding the center of the slider.	按住滑块中央时，反转时间线滚动和缩放方向。
+	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	垂直拖动时间线滑块可调整两个轨道区域的大小。隐藏轨道滑块时建议使用。
+	When the playhead enters the visible timeline, zooming in gravitates the view toward it.	播放头进入可见时间线后，放大时视图会向播放头靠近。
+	Moves the timeline slider to the top.	将时间线滑块移至顶部。
+	Sets the maximum amount you can zoom in.	设置最大放大程度。
+	Mimics the feature in Blender. A high multiplier can make it faster than dragging normally.	模仿 Blender 中的功能。较高的倍数可能使其比普通拖动更快。
+	Sets how much of the timeline is visible on each side of the playhead.	设置播放头两侧显示的时间线范围。
+	Reverses zooming when holding the center of a slider and scrolling vertically on the timeline.	按住滑块中央并在时间线上垂直滚动时反转缩放方向。
+	Use Alternate Drag Speed for fine adjustments when enabled.	启用后可使用备用拖动速度进行精细调整。
+	Keeps the opposite slider edge fixed while resizing.	调整大小时保持滑块的另一端固定。
+	Moves the track sliders to the left side.	将轨道滑块移至左侧。
+	Adjust Track Height:	调整轨道高度：
+	Fast Timeline Scroll:	快速滚动时间线：
+	Mirror Sliders:	镜像滑块：
+	Scroll Track Rows:	滚动轨道行：
+	Timeline Slider: Alternate Drag Speed	时间线滑块：备用拖动速度
+	Timeline Slider: Center on Playhead	时间线滑块：以播放头居中
+	Timeline Slider: Explode	时间线滑块：展开
+	Timeline: Fast Scroll	时间线：快速滚动
+	Timeline: Zoom	时间线：缩放
+	Track Sliders: Adjust Track Height	轨道滑块：调整轨道高度
+	Track Sliders: Alternate Drag Speed	轨道滑块：备用拖动速度
+	Track Sliders: Explode	轨道滑块：展开
+	Track Sliders: Mirror	轨道滑块：镜像
+	Track Sliders: Scroll Track Rows	轨道滑块：滚动轨道行
+	Zoom In:	放大：
+	Zoom Out:	缩小：
+	Zoom Timeline:	缩放时间线：
+
+	Shortcut unavailable	快捷键不可用
+	Left click is reserved for controlling the application and cannot be assigned.	左键单击保留用于控制应用程序，无法分配。
+	Right click is reserved for opening slider settings and cannot be assigned.	右键单击保留用于打开滑块设置，无法分配。
+	Turn on Decouple Edges to use Snap to Tracks; linked edges cannot snap independently.	启用“分离边缘”以使用“吸附到轨道”；关联的边缘无法单独吸附。
+
+	This shortcut is already assigned. Open Keyboard Shortcuts to review it.	此快捷键已被分配。打开“键盘快捷键”进行检查。
+
+	Copy of the project saved to {path}	项目副本已保存到 {path}
+	Project saved to {path}	项目已保存到 {path}
+	Ticked attributes are removed from the selected clips.	勾选的属性将从所选片段中移除。
+
+	No bin {id}	不存在素材箱 {id}
+
+	Unbound	未分配
+	Track Control Angle:	轨道控制角度：
+	to	至
+
+	Control Track Sliders	控制轨道滑块
+
+	Full Screen Program Monitor	全屏节目监视器
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 10 Mbps, loudness normalized to −14 LUFS	H.264 竖屏 9:16，缩放以填充，VBR 单遍，10 Mbps，响度归一化至 −14 LUFS
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 12 Mbps, loudness normalized to −14 LUFS	H.264 竖屏 9:16，缩放以填充，VBR 单遍，12 Mbps，响度归一化至 −14 LUFS
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 8 Mbps, loudness normalized to −14 LUFS	H.264 竖屏 9:16，缩放以填充，VBR 单遍，8 Mbps，响度归一化至 −14 LUFS
+	Instagram Reels 1080×1920	Instagram Reels 1080×1920
+	Key Out Brights	抠除高光
+	TikTok 1080×1920	TikTok 1080×1920
+	YouTube Shorts 1080×1920	YouTube Shorts 1080×1920

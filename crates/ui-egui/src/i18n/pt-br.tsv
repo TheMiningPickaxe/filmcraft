@@ -3683,7 +3683,7 @@
 	Hide Slider	Ocultar controle deslizante
 	Unhide Slider	Mostrar controle deslizante
 	Maximum Zoom Level	Nível máximo de zoom
-	Alternate Drag Speed (Shift + Left Click)	Velocidade de arrasto alternativa (Shift + clique esquerdo)
+	Alternate Drag Speed (Shift + Drag)	Velocidade de arrasto alternativa (Shift + arrastar)
 	Playhead Centering Range (Double Click)	Intervalo de centralização do cursor (clique duplo)
 	Alternate Drag Speed	Velocidade de arrasto alternativa
 	Value:	Valor:
@@ -3717,3 +3717,87 @@
 	Alternate drag speed multiplier	Multiplicador da velocidade de arrasto alternativa
 	Playhead centering range in seconds	Intervalo de centralização do cursor em segundos
 	Alternate drag speed for the track sliders	Velocidade de arrasto alternativa dos controles deslizantes de faixas
+
+	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	Quando ativado, as bordas dos controles deslizantes, Centralizar no indicador de reprodução e Espelhar controle têm animações suaves.
+	Reverses timeline scrolling and zooming when holding the center of the slider.	Inverte a rolagem e o zoom da linha do tempo ao segurar o centro do controle deslizante.
+	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	Arraste o controle da linha do tempo verticalmente para redimensionar as duas seções de faixas. Recomendado quando os controles de faixa estiverem ocultos.
+	When the playhead enters the visible timeline, zooming in gravitates the view toward it.	Quando o indicador de reprodução entra na área visível da linha do tempo, ampliar aproxima a visualização dele.
+	Moves the timeline slider to the top.	Move o controle da linha do tempo para cima.
+	Sets the maximum amount you can zoom in.	Define o nível máximo de ampliação.
+	Mimics the feature in Blender. A high multiplier can make it faster than dragging normally.	Imita o recurso do Blender. Um multiplicador alto pode torná-lo mais rápido que o arrasto normal.
+	Sets how much of the timeline is visible on each side of the playhead.	Define quanto da linha do tempo fica visível em cada lado do indicador de reprodução.
+	Reverses zooming when holding the center of a slider and scrolling vertically on the timeline.	Inverte o zoom ao segurar o centro de um controle e rolar verticalmente na linha do tempo.
+	Use Alternate Drag Speed for fine adjustments when enabled.	Use a velocidade alternativa de arrasto para ajustes precisos quando ativada.
+	Keeps the opposite slider edge fixed while resizing.	Mantém fixa a borda oposta do controle ao redimensionar.
+	Moves the track sliders to the left side.	Move os controles de faixa para a esquerda.
+	Adjust Track Height:	Ajustar altura da faixa:
+	Fast Timeline Scroll:	Rolagem rápida da linha do tempo:
+	Mirror Sliders:	Espelhar controles:
+	Scroll Track Rows:	Rolar linhas de faixas:
+	Timeline Slider: Alternate Drag Speed	Controle da linha do tempo: velocidade alternativa de arrasto
+	Timeline Slider: Center on Playhead	Controle da linha do tempo: centralizar no indicador de reprodução
+	Timeline Slider: Explode	Controle da linha do tempo: expandir
+	Timeline: Fast Scroll	Linha do tempo: rolagem rápida
+	Timeline: Zoom	Linha do tempo: zoom
+	Track Sliders: Adjust Track Height	Controles de faixa: ajustar altura da faixa
+	Track Sliders: Alternate Drag Speed	Controles de faixa: velocidade alternativa de arrasto
+	Track Sliders: Explode	Controles de faixa: expandir
+	Track Sliders: Mirror	Controles de faixa: espelhar
+	Track Sliders: Scroll Track Rows	Controles de faixa: rolar linhas de faixas
+	Zoom In:	Ampliar:
+	Zoom Out:	Reduzir:
+	Zoom Timeline:	Zoom da linha do tempo:
+
+	Shortcut unavailable	Atalho indisponível
+	Left click is reserved for controlling the application and cannot be assigned.	O clique esquerdo é reservado para controlar o aplicativo e não pode ser atribuído.
+	Right click is reserved for opening slider settings and cannot be assigned.	O clique direito é reservado para abrir as configurações do controle e não pode ser atribuído.
+	Turn on Decouple Edges to use Snap to Tracks; linked edges cannot snap independently.	Ative Desvincular bordas para usar Ajustar às faixas; bordas vinculadas não podem ser ajustadas independentemente.
+
+	This shortcut is already assigned. Open Keyboard Shortcuts to review it.	Este atalho já está atribuído. Abra Atalhos de teclado para verificá-lo.
+
+	10-bit color	Cor de 10 bits
+	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	Adicione mídia ao projeto. Solte arquivos ou pastas em qualquer lugar da janela ou escolha uma fonte abaixo.
+	All Intra	Tudo intra
+	Copy of the project saved to {path}	Cópia do projeto salva em {path}
+	Every frame a keyframe (edit-friendly, larger files)	Cada quadro é um quadro-chave (facilita a edição, arquivos maiores)
+	From preset file:	Do arquivo de predefinição:
+	Imported {n} preset(s)	{n} predefinição(ões) importada(s)
+	Imported {n} preset(s); {skipped} skipped	{n} predefinição(ões) importada(s); {skipped} ignorada(s)
+	Imported {n} preset(s); {warnings} with unsupported parameters	{n} predefinição(ões) importada(s); {warnings} com parâmetros não suportados
+	Imported {n} preset(s); not imported: {error}	{n} predefinição(ões) importada(s); não importado: {error}
+	Maintain Audio Pitch	Manter tom do áudio
+	No presets folder: the app has no data directory	Sem pasta de predefinições: o aplicativo não tem diretório de dados
+	Open Presets Folder	Abrir pasta de predefinições
+	Preset library is up to date	A biblioteca de predefinições está atualizada
+	Preset library updated	Biblioteca de predefinições atualizada
+	Preset library updated: {imported} loaded, {removed} removed	Biblioteca de predefinições atualizada: {imported} carregadas, {removed} removidas
+	Project saved to {path}	Projeto salvo em {path}
+	Scan Presets Folder	Verificar pasta de predefinições
+	Ticked attributes are removed from the selected clips.	Os atributos marcados são removidos dos clipes selecionados.
+
+	Imported {n} preset(s); {skipped} skipped, {warnings} with unsupported parameters	{n} predefinição(ões) importada(s); {skipped} ignorada(s), {warnings} com parâmetros não suportados
+
+	No bin {id}	A bandeja {id} não existe
+
+	Unbound	Não atribuído
+	Track Control Angle:	Ângulo de controle da faixa:
+	to	a
+
+	Control Track Sliders	Controlar controles de faixa
+
+	Full Screen Program Monitor	Monitor de programa em tela cheia
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 10 Mbps, loudness normalized to −14 LUFS	H.264 vertical 9:16, dimensionado para preencher, VBR de 1 passagem, 10 Mbps, sonoridade normalizada para −14 LUFS
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 12 Mbps, loudness normalized to −14 LUFS	H.264 vertical 9:16, dimensionado para preencher, VBR de 1 passagem, 12 Mbps, sonoridade normalizada para −14 LUFS
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 8 Mbps, loudness normalized to −14 LUFS	H.264 vertical 9:16, dimensionado para preencher, VBR de 1 passagem, 8 Mbps, sonoridade normalizada para −14 LUFS
+	Instagram Reels 1080×1920	Instagram Reels 1080×1920
+	Key Out Brights	Remover áreas claras
+	TikTok 1080×1920	TikTok 1080×1920
+	YouTube Shorts 1080×1920	YouTube Shorts 1080×1920
+
+	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10 bits 4:2:0) no tamanho da sequência, qualidade constante CRF 16, AAC 320 kbps; uma matriz de 10 bits
+	H.264 High 10 Intra	H.264 High 10 Intra
+	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10 bits 4:2:0, cada quadro é um quadro-chave), CRF 12, AAC 320 kbps; um intermediário adequado à edição
+	H.264 High 10 Master	Matriz H.264 High 10
+	High 10	High 10
+
+	Compression	Compressão

@@ -7,6 +7,7 @@
 //! |---|---|---|
 //! | `window.maximizeFrame` / `window.maximizeFrameUnderCursor` | Maximize or Restore Active Frame / Frame Under Cursor | Shift+` / ` |
 //! | `window.toggleFullScreen` | Toggle Full Screen | Ctrl+` |
+//! | `view.fullScreenProgram` | Full Screen Program Monitor | |
 //! | `window.nextPanel` / `window.prevPanel` | Select Next / Previous Panel | Ctrl+Shift+. / Ctrl+Shift+, |
 //! | `window.toggleMonitorFocus` | Toggle Source/Program Monitor Focus | |
 //! | `window.openSearch` / `panel.selectFindBox` | Open Search / Select Find Box | Cmd+Shift+F / Shift+F |
@@ -61,6 +62,7 @@ pub const COMMANDS: &[UiCommand] = &[
     uic!("window.maximizeFrame", "Maximize or Restore Active Frame", [], Some("Shift+`")),
     uic!("window.maximizeFrameUnderCursor", "Maximize or Restore Frame Under Cursor", [], Some("`")),
     uic!("window.toggleFullScreen", "Toggle Full Screen", [], Some("Ctrl+`")),
+    uic!("view.fullScreenProgram", "Full Screen Program Monitor", [], None),
     uic!("window.nextPanel", "Select Next Panel", [], Some("Ctrl+Shift+.")),
     uic!("window.prevPanel", "Select Previous Panel", [], Some("Ctrl+Shift+,")),
     uic!("window.toggleMonitorFocus", "Toggle Source/Program Monitor Focus", [], None),
@@ -158,6 +160,23 @@ pub fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Val
             let fs = !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fs));
             Ok(json!({"fullScreen": fs}))
+        }
+        "view.fullScreenProgram" => {
+            let entering = !app.ui.fullscreen_program;
+            if entering {
+                app.ui.cinema_was_fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                app.ui.cinema_prev_focus = Some(app.ui.focused);
+                app.ui.focused = PanelKind::Program;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            } else {
+                let restore = app.ui.cinema_was_fullscreen;
+                if let Some(prev) = app.ui.cinema_prev_focus.take() {
+                    app.ui.focused = prev;
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(restore));
+            }
+            app.ui.fullscreen_program = entering;
+            Ok(json!({"fullScreenProgram": entering}))
         }
         "window.nextPanel" | "window.prevPanel" => Ok(cycle_panel(app, id == "window.nextPanel")),
         "window.toggleMonitorFocus" => {
@@ -333,9 +352,10 @@ fn play_range(app: &mut FilmcraftApp, preroll: bool) -> Result<Value, String> {
 
 fn all_heights(app: &mut FilmcraftApp, expand: bool) -> Value {
     let tv = &mut app.ui.timeline;
-    let target = if expand { 120.0 } else { MIN_TRACK_H };
-    let at_target = tv.video_track_h == target && tv.audio_track_h == target;
-    match (at_target, app.ui.keys.saved_heights) {
+    let saved = app.ui.keys.saved_heights;
+    let at_target =
+        saved.is_some_and(|[v, a]| if expand { tv.video_track_h > v && tv.audio_track_h > a } else { tv.video_track_h < v && tv.audio_track_h < a });
+    match (at_target, saved) {
         // pressing again restores the heights from before
         (true, Some([v, a])) => {
             tv.video_track_h = v;
@@ -344,8 +364,8 @@ fn all_heights(app: &mut FilmcraftApp, expand: bool) -> Value {
         }
         _ => {
             app.ui.keys.saved_heights = Some([tv.video_track_h, tv.audio_track_h]);
-            tv.video_track_h = target;
-            tv.audio_track_h = target;
+            tv.video_track_h = if expand { 120.0f32.max(tv.video_track_h * 1.5) } else { MIN_TRACK_H };
+            tv.audio_track_h = if expand { 120.0f32.max(tv.audio_track_h * 1.5) } else { MIN_TRACK_H };
         }
     }
     json!({"videoTrackHeight": tv.video_track_h, "audioTrackHeight": tv.audio_track_h})

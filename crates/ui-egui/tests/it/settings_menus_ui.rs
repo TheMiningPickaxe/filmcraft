@@ -79,14 +79,20 @@ fn the_timeline_settings_menu_stays_open_while_options_are_toggled() {
 #[test]
 fn the_track_height_actions_set_both_heights_and_close_the_timeline_menu() {
     let mut d = Driver::demo();
-    for (action, height) in [("Expand All Tracks", 64.0), ("Minimize All Tracks", 26.0)] {
+    for (action, height) in [("Expand All Tracks", 64.0f32), ("Minimize All Tracks", 26.0)] {
         d.ok("ui.click", json!({"id": "timeline.toggle.settings"}));
         d.frames(2);
         assert!(has(&mut d, "timeline.settings.showThumbnails"), "the menu opened for {action}");
         d.harness.get_by_label(action).click();
         d.frames(3);
+        let elements = d.ok("ui.elements", json!({"prefix": "timeline.trackSlider."}));
+        let bar_height = |id: &str| elements.as_array().unwrap().iter().find(|e| e["id"] == id).unwrap()["rect"][3].as_f64().unwrap() as f32;
+        let seq = d.harness.state().session.active_sequence().unwrap();
+        let video_fit = (bar_height("timeline.trackSlider.video.track") - 29.0) / (seq.video_tracks.len() as f32 + 1.0 / 3.0);
+        let audio_fit = (bar_height("timeline.trackSlider.audio.track") + 5.0 - 34.0) / (seq.audio_tracks.len() as f32 + 1.0 / 3.0);
         let timeline = &d.harness.state().ui.timeline;
-        assert_eq!((timeline.video_track_h, timeline.audio_track_h), (height, height), "{action}");
+        assert!((timeline.video_track_h - height.max(video_fit)).abs() < 0.01, "{action}");
+        assert!((timeline.audio_track_h - height.max(audio_fit)).abs() < 0.01, "{action}");
         assert!(!has(&mut d, "timeline.settings.showThumbnails"), "{action} closes the menu");
     }
 }

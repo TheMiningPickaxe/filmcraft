@@ -42,6 +42,26 @@ fn catalogs_are_well_formed() {
 }
 
 #[test]
+fn slider_warning_dialogs_have_merge_language_translations() {
+    for language in [Language::Es, Language::Fr, Language::Id, Language::It, Language::Ja, Language::Ko, Language::PtBr, Language::ZhCn] {
+        for text in [
+            "Shortcut unavailable",
+            "Left click is reserved for controlling the application and cannot be assigned.",
+            "Right click is reserved for opening slider settings and cannot be assigned.",
+            "Turn on Decouple Edges to use Snap to Tracks; linked edges cannot snap independently.",
+            "Snap to Tracks",
+            "Hide Slider",
+            "You can bring it back anytime by right clicking the timeline and selecting \"{row}\" at the bottom of the list.",
+            "This shortcut is already assigned. Open Keyboard Shortcuts to review it.",
+            "Control Track Sliders",
+            "Track Control Angle:",
+            "Unbound",
+        ] {
+            assert!(language.has(text), "{}: missing {text}", language.code());
+        }
+    }
+}
+#[test]
 fn unknown_strings_pass_through_and_languages_round_trip() {
     for l in Language::ALL {
         for text in ["An untranslated label", "mi video.mp4", "日本語の文書.pdf", "Größe ändern.mp4", "Montage d'été.mp4"] {
@@ -402,7 +422,7 @@ fn dynamic_names() -> Vec<String> {
     ex::Placement::ALL.iter().for_each(|p| push(&mut out, p.label()));
     [ex::FieldOrder::Progressive, ex::FieldOrder::UpperFirst, ex::FieldOrder::LowerFirst].iter().for_each(|f| push(&mut out, f.label()));
     [ex::BitrateMode::Cbr, ex::BitrateMode::Vbr1Pass, ex::BitrateMode::Vbr2Pass, ex::BitrateMode::Crf].iter().for_each(|m| push(&mut out, m.label()));
-    [ex::H264Profile::Baseline, ex::H264Profile::Main, ex::H264Profile::High].iter().for_each(|p| push(&mut out, p.label()));
+    [ex::H264Profile::Baseline, ex::H264Profile::Main, ex::H264Profile::High, ex::H264Profile::High10].iter().for_each(|p| push(&mut out, p.label()));
     crate::panels::export_mode::RANGES.iter().for_each(|(_, l)| push(&mut out, l));
     crate::panels::export_mode::PARS.iter().for_each(|(l, _)| push(&mut out, l));
     for template in filmcraft_project::gtemplate::builtin_templates() {

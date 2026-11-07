@@ -63,6 +63,11 @@ pub struct TimelineUiSettings {
     /// Inverted controls: the wheel over the tracks scrolls the Timeline the other way in time,
     /// and the wheel while grabbing the zoom slider's middle zooms the other way.
     pub inverted_controls: bool,
+    /// Drag vertically from the timeline slider's middle to resize both track sections.
+    pub control_tracks: bool,
+    /// Allowed drag angles to either side of vertical, in degrees.
+    pub control_tracks_angle_left: f32,
+    pub control_tracks_angle_right: f32,
     pub playhead_side_seconds: f64,
     pub playhead_side_custom: bool,
     /// Shift-drag speed as a multiplier of the Auto sensitivity for the current view (0.25 = four
@@ -116,8 +121,7 @@ pub struct TimelineUiSettings {
     /// sliders yet.
     pub track_slider_smooth: bool,
     pub track_slider_alternate_position: bool,
-    /// Snap to Tracks: an end-circle drag's landing snaps to the track dividing lines. Stored and
-    /// toggled, but it does not drive the sliders yet (the snap is being rebuilt).
+    /// Snap the dragged track-view edge to clip boundaries when slider edges are decoupled.
     pub track_slider_snap: bool,
     /// Decouple Edges: dragging one end circle of a track slider moves only that end -- the
     /// other end stays exactly where it is instead of mirroring about the thumb's middle.
@@ -141,6 +145,17 @@ pub struct TimelineUiSettings {
     pub control_explode_slider: String,
     pub control_alternate_drag_speed: String,
     pub control_settings: String,
+    /// The track sliders' own Controls bindings: kept separate from the zoom bar's so naming
+    /// one slider's control never rebinds the other's (Mirror Slider / Explode Slider / ...)
+    /// even though both menus share the action names.
+    pub track_control_mirror: String,
+    pub track_control_explode: String,
+    pub track_control_alternate_drag_speed: String,
+    pub track_control_settings: String,
+    /// Additional Timeline Controls-flyout actions. Fixed slot meanings are owned by the UI;
+    /// empty strings retain each action's built-in gesture, except the optional fast-scroll row.
+    #[serde(default)]
+    pub timeline_control_bindings: Vec<String>,
 }
 
 fn default_playhead_custom() -> f64 {
@@ -160,6 +175,9 @@ impl Default for TimelineUiSettings {
         Self {
             smooth_animations: false,
             inverted_controls: false,
+            control_tracks: false,
+            control_tracks_angle_left: 71.565_05,
+            control_tracks_angle_right: 71.565_05,
             playhead_side_seconds: 10.0,
             playhead_side_custom: false,
             shift_drag_speed: 1.0,
@@ -193,6 +211,11 @@ impl Default for TimelineUiSettings {
             control_explode_slider: String::new(),
             control_alternate_drag_speed: String::new(),
             control_settings: String::new(),
+            track_control_mirror: String::new(),
+            track_control_explode: String::new(),
+            track_control_alternate_drag_speed: String::new(),
+            track_control_settings: String::new(),
+            timeline_control_bindings: vec![String::new(); 14],
         }
     }
 }
@@ -200,7 +223,18 @@ impl Default for TimelineUiSettings {
 impl TimelineUiSettings {
     /// Validate settings read from a project file before they reach UI geometry or controls.
     pub fn checked(mut self) -> Self {
+        if !self.track_slider_decouple {
+            self.track_slider_snap = false;
+        }
+        self.timeline_control_bindings.truncate(14);
+        self.timeline_control_bindings.resize(14, String::new());
+        for binding in &mut self.timeline_control_bindings {
+            *binding = binding.chars().take(64).collect();
+        }
         self.playhead_side_seconds = if self.playhead_side_seconds.is_finite() { self.playhead_side_seconds.clamp(0.1, 3600.0) } else { 10.0 };
+        self.control_tracks_angle_left = if self.control_tracks_angle_left.is_finite() { self.control_tracks_angle_left.clamp(30.0, 89.0) } else { 71.565_05 };
+        self.control_tracks_angle_right =
+            if self.control_tracks_angle_right.is_finite() { self.control_tracks_angle_right.clamp(30.0, 89.0) } else { 71.565_05 };
         self.shift_drag_speed = if self.shift_drag_speed.is_finite() { self.shift_drag_speed.clamp(0.1, 50.0) } else { 1.0 };
         self.playhead_side_last_custom = if self.playhead_side_last_custom.is_finite() { self.playhead_side_last_custom.clamp(0.1, 3600.0) } else { 15.0 };
         self.shift_drag_last_custom = if self.shift_drag_last_custom.is_finite() { self.shift_drag_last_custom.clamp(0.1, 50.0) } else { 1.0 };
@@ -288,10 +322,25 @@ mod tests {
         assert!(s.control_alternate_drag_speed.is_empty());
         assert!(s.control_settings.is_empty());
         assert!(s.track_slider_snap, "Snap to Tracks is on by default");
+        assert_eq!(s.timeline_control_bindings.len(), 14);
+        assert!(s.timeline_control_bindings.iter().all(String::is_empty));
+    }
+
+    #[test]
+    fn extra_timeline_control_bindings_are_bounded_and_shortened() {
+        let s = TimelineUiSettings { timeline_control_bindings: vec!["x".repeat(100); 10_000], ..TimelineUiSettings::default() }.checked();
+        assert_eq!(s.timeline_control_bindings.len(), 14);
+        assert!(s.timeline_control_bindings.iter().all(|binding| binding.len() == 64));
     }
 
     /// Values a project file may carry (hostile or stale) come back clamped and finite, so no
     /// setting read from disk can drive UI geometry outside its range.
+    #[test]
+    fn checked_disables_track_snap_when_edges_are_coupled() {
+        let settings = TimelineUiSettings { track_slider_snap: true, track_slider_decouple: false, ..Default::default() }.checked();
+        assert!(!settings.track_slider_snap);
+    }
+
     #[test]
     fn checked_clamps_values_read_from_a_project_file() {
         let s = TimelineUiSettings {

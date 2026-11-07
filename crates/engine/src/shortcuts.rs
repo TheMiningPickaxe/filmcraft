@@ -68,6 +68,14 @@ const ACTIVE_FILE: &str = "active.json";
 
 /// Every key the editor's keyboard shows, in canonical spelling (row order).
 pub const KEYS: &[&str] = &[
+    "Modifiers",
+    "Double Click",
+    "Triple Click",
+    "Left Click",
+    "Right Click",
+    "Middle Click",
+    "Scroll",
+    "Drag",
     "Escape",
     "F1",
     "F2",
@@ -287,12 +295,16 @@ impl Chord {
                 _ => return Err(format!("unknown modifier `{p}`")),
             }
         }
-        let key = key.ok_or_else(|| format!("`{s}` has no key"))?;
+        let key = match key {
+            Some(key) => key,
+            None if mods.count() >= 2 => "Modifiers",
+            None => return Err(format!("`{s}` has no key")),
+        };
         Ok(Chord { mods, key })
     }
 
     pub fn canonical(&self) -> String {
-        format!("{}{}", self.mods.prefix(), self.key)
+        if self.key == "Modifiers" { self.mods.prefix().trim_end_matches('+').to_string() } else { format!("{}{}", self.mods.prefix(), self.key) }
     }
 
     /// The chord as this OS sees it: off macOS the Control key is the primary modifier, so `Ctrl`
@@ -329,7 +341,9 @@ impl Chord {
                 "PageDown" => "Page Down",
                 k => k,
             };
-            s.push_str(k);
+            if k != "Modifiers" {
+                s.push_str(k);
+            }
             s
         } else {
             let e = self.effective(p);
@@ -338,6 +352,9 @@ impl Chord {
                 if on {
                     s.push_str(n);
                 }
+            }
+            if self.key == "Modifiers" {
+                return s.trim_end_matches('+').to_string();
             }
             s.push_str(match self.key {
                 "PageUp" => "Page Up",
@@ -661,9 +678,22 @@ impl Shortcuts {
         v
     }
 
-    fn preset_path(&self, name: &str) -> Option<PathBuf> {
+    pub(crate) fn preset_path(&self, name: &str) -> Option<PathBuf> {
         let safe: String = name.chars().map(|c| if c.is_alphanumeric() || " -_().".contains(c) { c } else { '_' }).collect();
-        self.presets_dir().map(|d| d.join(format!("{}.json", safe.trim())))
+        let mut file = format!("{}.json", safe.trim());
+        let dir = self.presets_dir()?;
+        // A preset called "active" must not replace the active set restored at startup. It is saved as
+        // "active~.json": `~` is never kept in a sanitised name, so no other preset can share that path.
+        // A file that already has this exact (differently cased) name is a preset saved by an earlier
+        // version on a case-sensitive file system, and stays reachable; a case-insensitive one lists
+        // `active.json` instead, so it is not mistaken for one.
+        if file.eq_ignore_ascii_case(ACTIVE_FILE) {
+            let legacy = file != ACTIVE_FILE && std::fs::read_dir(&dir).is_ok_and(|rd| rd.flatten().any(|e| e.file_name() == file.as_str()));
+            if !legacy {
+                file = format!("{}~.json", safe.trim());
+            }
+        }
+        Some(dir.join(file))
     }
 
     /// Use the per-user data directory: loads the active set saved there (if any).

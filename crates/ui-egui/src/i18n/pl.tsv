@@ -456,7 +456,7 @@
 	Are you sure you want to discard your changes to '{file}'?	Czy na pewno odrzucić zmiany w „{file}”?
 	Yes	Tak
 	No	Nie
-	Add media to your project. Drop files anywhere in the window, or choose a source below.	Dodaj multimedia do projektu. Upuść pliki w dowolnym miejscu okna lub wybierz źródło poniżej.
+	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	Dodaj multimedia do projektu. Upuść pliki lub foldery w dowolnym miejscu okna lub wybierz źródło poniżej.
 	Browse files…	Przeglądaj pliki…
 	Movies, audio and stills from disk	Filmy, audio i zdjęcia z dysku
 	Demo footage	Materiał demonstracyjny
@@ -3466,6 +3466,7 @@
 	Clip Speed / Duration	Szybkość / czas trwania klipu
 	Speed:	Szybkość:
 	Reverse Speed	Odwróć kierunek
+	Maintain Audio Pitch	Zachowaj wysokość dźwięku
 	Ripple Edit, Shifting Trailing Clips	Edycja ripple, przesuwanie kolejnych klipów
 	About	Informacje
 	Contributors	Współtwórcy
@@ -3630,3 +3631,43 @@
 	No matching text.	Brak pasującego tekstu.
 	H.265 (HEVC) needs a hardware encoder (NVENC on NVIDIA GPUs, VideoToolbox on macOS); none was found on this machine, and FilmCraft has no software H.265 encoder yet. Choose H.264 or ProRes instead.	H.265 (HEVC) wymaga sprzętowego kodera (NVENC na kartach NVIDIA, VideoToolbox w macOS); na tym komputerze nie znaleziono żadnego, a FilmCraft nie ma jeszcze programowego kodera H.265. Wybierz H.264 lub ProRes.
 	AV1 needs a hardware encoder; none was found on this machine, and FilmCraft has no software AV1 encoder yet.	AV1 wymaga sprzętowego kodera; na tym komputerze nie znaleziono żadnego, a FilmCraft nie ma jeszcze programowego kodera AV1.
+
+# Export: H.264 High 10 and all-intra (#1221).
+	High 10	High 10
+	10-bit color	Kolor 10-bitowy
+	All Intra	Tylko intra
+	Every frame a keyframe (edit-friendly, larger files)	Każda klatka kluczowa (wygodne w montażu, większe pliki)
+	H.264 High 10 Master	H.264 High 10 Master
+	H.264 High 10 Intra	H.264 High 10 Intra
+	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10-bit 4:2:0) w rozmiarze sekwencji, stała jakość CRF 16, AAC 320 kb/s; master 10-bitowy
+	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10-bit 4:2:0, każda klatka kluczowa), CRF 12, AAC 320 kb/s; plik pośredni wygodny w montażu
+
+	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	Po włączeniu krawędzie suwaków, wyśrodkowanie na głowicy i odbicie suwaka są płynnie animowane.
+	Reverses timeline scrolling and zooming when holding the center of the slider.	Odwraca kierunek przewijania i powiększania osi czasu przy przytrzymaniu środka suwaka.
+	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	Przeciągnij suwak osi czasu pionowo, aby zmienić rozmiar obu sekcji ścieżek. Zalecane, gdy suwaki ścieżek są ukryte.
+	When the playhead enters the visible timeline, zooming in gravitates the view toward it.	Gdy głowica znajdzie się w widocznym obszarze osi czasu, powiększanie przyciąga widok w jej kierunku.
+	Moves the timeline slider to the top.	Przenosi suwak osi czasu na górę.
+	Sets the maximum amount you can zoom in.	Ustawia maksymalny poziom powiększenia.
+	Mimics the feature in Blender. A high multiplier can make it faster than dragging normally.	Naśladuje funkcję Blendera. Wysoki mnożnik może sprawić, że będzie szybsza od zwykłego przeciągania.
+	Sets how much of the timeline is visible on each side of the playhead.	Określa, jaka część osi czasu jest widoczna po obu stronach głowicy.
+	Reverses zooming when holding the center of a slider and scrolling vertically on the timeline.	Odwraca powiększanie przy przytrzymaniu środka suwaka i pionowym przewijaniu osi czasu.
+	Use Alternate Drag Speed for fine adjustments when enabled.	Po włączeniu użyj alternatywnej prędkości przeciągania do precyzyjnych zmian.
+	Keeps the opposite slider edge fixed while resizing.	Podczas zmiany rozmiaru utrzymuje przeciwną krawędź suwaka w miejscu.
+	Moves the track sliders to the left side.	Przenosi suwaki ścieżek na lewą stronę.
+	Adjust Track Height:	Dostosuj wysokość ścieżki:
+	Fast Timeline Scroll:	Szybkie przewijanie osi czasu:
+	Mirror Sliders:	Odbij suwaki:
+	Scroll Track Rows:	Przewijaj wiersze ścieżek:
+	Timeline Slider: Alternate Drag Speed	Suwak osi czasu: alternatywna prędkość przeciągania
+	Timeline Slider: Center on Playhead	Suwak osi czasu: wyśrodkuj na głowicy
+	Timeline Slider: Explode	Suwak osi czasu: rozwiń
+	Timeline: Fast Scroll	Oś czasu: szybkie przewijanie
+	Timeline: Zoom	Oś czasu: powiększenie
+	Track Sliders: Adjust Track Height	Suwaki ścieżek: dostosuj wysokość ścieżki
+	Track Sliders: Alternate Drag Speed	Suwaki ścieżek: alternatywna prędkość przeciągania
+	Track Sliders: Explode	Suwaki ścieżek: rozwiń
+	Track Sliders: Mirror	Suwaki ścieżek: odbij
+	Track Sliders: Scroll Track Rows	Suwaki ścieżek: przewijaj wiersze ścieżek
+	Zoom In:	Powiększ:
+	Zoom Out:	Pomniejsz:
+	Zoom Timeline:	Powiększ oś czasu:

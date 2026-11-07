@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$repo = 'C:\Users\Balázs Ferenczi\filmcraft-repo\filmcraft'
+$repo = $PSScriptRoot
 $expectedRemote = 'https://github.com/TheMiningPickaxe/filmcraft'
 $title = 'Timeline Slider Overhaul Part #1'
 $body = @'
@@ -40,7 +40,7 @@ Settings persistence and menu behavior
 
 Verification
 - Formatting and whitespace checks passed.
-- Release build and app launch were previously verified using the existing D:\Other\FilmCraft Cargo target directory.
+- Release build and app launch were previously verified using a separate Cargo target directory.
 '@
 
 if ((Get-Location).Path -ne $repo) {

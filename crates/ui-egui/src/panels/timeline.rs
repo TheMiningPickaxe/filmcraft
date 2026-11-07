@@ -52,7 +52,7 @@ pub use layout::{Layout, Row, max_pps, max_scroll, min_pps, scroll_to_reveal, ti
 pub(crate) use menus::{CLIP_MENU, EDIT_POINT_TYPES};
 use ruler::draw_top;
 pub use ruler::ruler_steps;
-pub use scrollbars::{controls_listening, set_track_slider_hidden, set_zoombar_hidden, zoombar_cursor_watchdog};
+pub use scrollbars::{controls_listening, route_slider_shortcut, set_track_slider_hidden, set_zoombar_hidden, sync_slider_bindings, zoombar_cursor_watchdog};
 use scrollbars::{vertical_scrollbar, zoom_scrollbar};
 pub use snap::{hit_json, locate};
 pub(super) use snap::{snap, snap_caption};
@@ -113,7 +113,7 @@ pub struct TlState {
     /// Source peak of each cached peak list (keyed by the list's address), for the waveform
     /// display gain: scanning the whole source per clip per frame cost more than drawing.
     peak_max: HashMap<PeakKey, (usize, f32)>,
-    zoom_anchor: Option<(f64, f32)>,
+    pub(crate) zoom_anchor: Option<(f64, f32)>,
     /// The zoom (points a second) the video thumbnails are laid out at while the view is zooming (#1094).
     thumb_pps: Option<f64>,
     /// While a zoom-bar Shift drag has the OS cursor pinned: the exact position where Shift went
@@ -121,6 +121,7 @@ pub struct TlState {
     /// it can never hit any edge and reappears on release at the very same pixel. `None` also when
     /// no drag has it.
     pub zoombar_cursor_lock: Option<Pos2>,
+    pub zoombar_track_control: bool,
     /// One frame after a zoom-bar Shift drag releases the pinned cursor: the unlock warp settles
     /// as egui pointer motion in that frame, so movement is skipped once to keep it from showing
     /// up as a bogus reverse nudge on the slider.
@@ -338,6 +339,10 @@ fn label_color(app: &FilmcraftApp, l: filmcraft_project::Label) -> Color32 {
 pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let ctx = ui.ctx().clone();
+    if !app.session.state.timeline_ui.track_slider_decouple && app.session.state.timeline_ui.track_slider_snap {
+        app.session.state.timeline_ui.track_slider_snap = false;
+        app.session.project_view_changed();
+    }
     // the Hide Slider window: a dialog of its own, shown even after the bar itself is gone
     scrollbars::zoombar_hide_dialog(app, &ctx);
     // and the sliders' settings, reachable from the Timeline's own menu while they are hidden
@@ -381,11 +386,31 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     );
     let ruler = Rect::from_min_max(pos2(content.min.x, content.min.y - RULER_H), pos2(content.max.x, content.min.y));
     app.last_timeline_width = content.width();
+    app.last_timeline_center_x = content.center().x;
     let painter = ui.painter().clone();
     painter.rect_filled(full, 0.0, t.panel_bg);
 
     // ---- sequence tabs strip (top-left header block)
     // ---- animated zoom / scroll
+    let early_zoom = ctx.data(|d| d.get_temp::<usize>(egui::Id::unique("tl-controls-zoom-extra-action")));
+    if matches!(early_zoom, Some(8..=10)) && app.session.state.timeline_ui.playhead_centering {
+        let slot = early_zoom.unwrap_or(8);
+        ctx.data_mut(|d| d.remove_temp::<usize>(egui::Id::unique("tl-controls-zoom-extra-action")));
+        let ph = app.session.playhead().seconds();
+        let view_w = content.width();
+        let v = &mut app.ui.timeline;
+        let visible = ph >= v.scroll && ph <= v.scroll + f64::from(view_w) / v.pps.max(1e-6);
+        v.scroll = (ph - f64::from(view_w) / (2.0 * v.pps.max(1e-6))).max(0.0);
+        v.target_scroll = v.scroll;
+        let factor = if slot == 10 { 1.0 / 1.6 } else { 1.6 };
+        layout::zoom_about(v, factor, ph, view_w, app.session.state.timeline_ui.max_zoom_secs());
+        v.target_scroll = (ph - f64::from(view_w) / (2.0 * v.target_pps.max(1e-6))).max(0.0);
+        if !visible {
+            v.pps = v.target_pps;
+            v.scroll = v.target_scroll;
+        }
+        app.tl.zoom_anchor = Some((ph, content.center().x));
+    }
     animate_view(app, &ctx, content, seq_id, seq);
     animate_track_sliders(app, &ctx);
     let pps = app.ui.timeline.pps;
@@ -397,19 +422,23 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let caption_area = Rect::from_min_max(pos2(rect.min.x, content.min.y), pos2(content.max.x, content.min.y + cap_n as f32 * super::timeline_captions::ROW_H));
     let cap_h = if cap_n > 0 { caption_area.height() + DIVIDER_H } else { 0.0 };
     let tracks_area = Rect::from_min_max(pos2(content.min.x, content.min.y + cap_h), content.max);
-    let split_y = tracks_area.min.y + (tracks_area.height() - DIVIDER_H) * app.ui.timeline.split;
+    let split_y = tracks_area.min.y + (tracks_area.height() - DIVIDER_H - MASTER_H).max(0.0) * app.ui.timeline.split;
     let video_area = Rect::from_min_max(pos2(rect.min.x, tracks_area.min.y), pos2(content.max.x, split_y));
     let audio_area = Rect::from_min_max(pos2(rect.min.x, split_y + DIVIDER_H), pos2(content.max.x, tracks_area.max.y - MASTER_H));
+    let nv = seq.video_tracks.len();
+    let na = seq.audio_tracks.len();
+    let min_v = scrollbars::track_min_height(video_area.height(), nv as f32 + 1.0 / 3.0);
+    let min_a = scrollbars::track_min_height(audio_area.height(), na as f32 + 1.0 / 3.0);
+    app.ui.timeline.video_track_h = app.ui.timeline.video_track_h.max(min_v);
+    app.ui.timeline.audio_track_h = app.ui.timeline.audio_track_h.max(min_a);
     let vh = app.ui.timeline.video_track_h;
     let ah = app.ui.timeline.audio_track_h;
     let mut rows = Vec::new();
-    let nv = seq.video_tracks.len();
     let (video_tops, max_vs) = video_row_tops(video_area, nv, vh, &mut app.ui.timeline.v_scroll);
     for ((i, tr), top) in seq.video_tracks.iter().enumerate().zip(video_tops) {
         let rect = Rect::from_min_max(pos2(content.min.x, top), pos2(content.max.x, top + vh));
         rows.push(Row { track: tr.id, kind: TrackKind::Video, index: i, rect, lane: false });
     }
-    let na = seq.audio_tracks.len();
     // a third of a track's height of empty space below the last audio track (space for a new
     // track), the same reveal the video side keeps above its topmost row
     let max_as = ((na as f32 + 1.0 / 3.0) * ah - audio_area.height()).max(0.0);
@@ -439,10 +468,12 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         if let Some(l) = seq.track(r.track).and_then(|tr| tr.label) {
             painter.rect_filled(row, 0.0, label_color(app, l).gamma_multiply(TRACK_LANE_TINT));
         }
-        painter.line_segment([pos2(row.min.x, r.rect.max.y - 0.5), pos2(row.max.x, r.rect.max.y - 0.5)], Stroke::new(1.0, t.separator));
+        painter.with_clip_rect(clip).line_segment([pos2(row.min.x, r.rect.max.y - 0.5), pos2(row.max.x, r.rect.max.y - 0.5)], Stroke::new(1.0, t.separator));
         // the top video track also gets a line above it
         if r.kind == TrackKind::Video && r.index + 1 == nv {
-            painter.line_segment([pos2(row.min.x, r.rect.min.y + 0.5), pos2(row.max.x, r.rect.min.y + 0.5)], Stroke::new(1.0, t.separator));
+            painter
+                .with_clip_rect(clip)
+                .line_segment([pos2(row.min.x, r.rect.min.y + 0.5), pos2(row.max.x, r.rect.min.y + 0.5)], Stroke::new(1.0, t.separator));
         }
     }
     // in/out shading across tracks
@@ -492,25 +523,19 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         ctx.request_repaint();
     }
     if div_resp.dragged() {
-        let f = app.ui.timeline.split + div_resp.drag_delta().y / (tracks_area.height() - DIVIDER_H).max(1.0);
+        let f = app.ui.timeline.split + div_resp.drag_delta().y / (tracks_area.height() - DIVIDER_H - MASTER_H).max(1.0);
         // neither side may collapse (the side sliders live on these areas) AND the travel up and
         // down is equal: the same pad (the Mix row plus the minimum area) on both sides of the
         // middle. pad <= 0.5, so lo <= 0.5 <= hi always.
-        let th = (tracks_area.height() - DIVIDER_H).max(1.0);
-        let pad = ((MASTER_H + 30.0) / th).min(0.5);
+        let th = (tracks_area.height() - DIVIDER_H - MASTER_H).max(1.0);
+        let pad = (30.0 / th).min(0.5);
         app.ui.timeline.split = f.max(pad).min(1.0 - pad);
     }
     // master track
     let master = Rect::from_min_max(pos2(rect.min.x, tracks_area.max.y - MASTER_H), pos2(content.max.x, tracks_area.max.y));
     painter.rect_filled(master, 0.0, t.tl_header_bg);
     painter.text(pos2(rect.min.x + 44.0, master.center().y), Align2::LEFT_CENTER, tl!("Mix"), Tokens::ui(11.5), t.text);
-    painter.text(
-        pos2(rect.min.x + header_w - 12.0, master.center().y),
-        Align2::RIGHT_CENTER,
-        format!("{:.1}", seq.master_volume_db),
-        Tokens::ui(11.5),
-        t.hot_text,
-    );
+    mix_volume(app, ui, seq, Rect::from_min_max(pos2(rect.min.x + header_w - 72.0, master.min.y + 6.0), pos2(rect.min.x + header_w - 8.0, master.max.y - 6.0)));
 
     // ---- caption tracks
     if cap_n > 0 {
@@ -523,14 +548,16 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     draw_top(app, ui, Rect::from_min_max(pos2(full.min.x, rect.min.y + top_off), rect.max), seq, &layout, &t, seq_id);
 
     // ---- playhead
-    let ph = app.session.playhead();
+    let ph = app.shown_playhead();
     let px = layout.x_of(ph);
     if px >= content.min.x - 1.0 && px <= content.max.x + 1.0 {
         // a short head on the tick row, as in Effect Controls, so it leaves the markers and timecodes clear
         let (top, tip) = (ruler.max.y - 13.0, ruler.max.y);
         let head = [pos2(px - 5.0, top), pos2(px + 5.0, top), pos2(px + 5.0, tip - 5.0), pos2(px, tip), pos2(px - 5.0, tip - 5.0)];
         painter.add(egui::Shape::convex_polygon(head.to_vec(), t.playhead, Stroke::NONE));
-        painter.line_segment([pos2(px, tip), pos2(px, content.max.y)], Stroke::new(1.0, t.playhead));
+        // a path, not a line segment: egui rounds line segments to whole pixels, so while playing
+        // the line would move in uneven pixel steps and part from its head
+        painter.add(egui::Shape::line(vec![pos2(px, tip), pos2(px, content.max.y)], Stroke::new(1.0, t.playhead)));
     }
     // snap indicator
     if let Some(sx) = app.tl.snap_x.take() {
@@ -553,6 +580,121 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         };
         zoom_scrollbar(app, ui, bar, content.width(), seq, seq.settings.frame_rate.frame_duration().seconds(), &t);
     }
+    if let Some(dy) = ui.data_mut(|d| d.remove_temp::<f32>(egui::Id::unique("timeline-control-tracks-dy"))) {
+        let outer = if bar_top { 5.0 } else { 2.0 };
+        scrollbars::resize_tracks_from_timeline(
+            &mut app.ui.timeline.video_track_h,
+            &mut app.ui.timeline.v_scroll,
+            video_area.height(),
+            nv as f32 + 1.0 / 3.0,
+            (video_area.height() - outer - 3.0).max(1.0),
+            dy,
+        );
+        scrollbars::resize_tracks_from_timeline(
+            &mut app.ui.timeline.audio_track_h,
+            &mut app.ui.timeline.a_scroll,
+            audio_area.height(),
+            na as f32 + 1.0 / 3.0,
+            (audio_area.max.y - outer - split_y - DIVIDER_H - 3.0).max(1.0),
+            dy,
+        );
+        app.tl.track_anim = None;
+        ctx.request_repaint();
+    }
+    if let Some(slot) = ui.ctx().data_mut(|d| d.remove_temp::<usize>(egui::Id::unique("tl-controls-zoom-extra-action"))) {
+        let view_w = content.width();
+        let wheel_delta = ui.ctx().data_mut(|d| d.remove_temp::<f32>(egui::Id::unique("timeline-controls-wheel-delta"))).unwrap_or(0.0);
+        match slot {
+            4 => {
+                let p = ctx.pointer_hover_pos().unwrap_or(content.center());
+                let video = p.y < split_y;
+                let (height, scroll, window, slots) = if video {
+                    (&mut app.ui.timeline.video_track_h, &mut app.ui.timeline.v_scroll, video_area.height(), nv as f32 + 1.0 / 3.0)
+                } else {
+                    (&mut app.ui.timeline.audio_track_h, &mut app.ui.timeline.a_scroll, audio_area.height(), na as f32 + 1.0 / 3.0)
+                };
+                let min = scrollbars::track_min_height(window, slots);
+                let max = 220.0f32.max(min * 2.0);
+                let factor = (wheel_delta / 600.0).clamp(-0.3, 0.3);
+                if factor != 0.0 {
+                    let old_max = (slots * *height - window).max(0.0);
+                    let fraction = if old_max > 0.0 { (*scroll / old_max).clamp(0.0, 1.0) } else { 0.0 };
+                    *height = (*height * (1.0 + factor)).clamp(min, max);
+                    let new_max = (slots * *height - window).max(0.0);
+                    *scroll = fraction * new_max;
+                }
+            }
+            5 => {
+                if wheel_delta != 0.0 {
+                    let sign = if app.session.state.timeline_ui.inverted_controls { 1.0 } else { -1.0 };
+                    app.ui.timeline.target_scroll =
+                        (app.ui.timeline.target_scroll + sign * f64::from(wheel_delta * 10.0) / app.ui.timeline.target_pps.max(1e-6)).max(0.0);
+                    app.ui.timeline.scroll = app.ui.timeline.target_scroll;
+                }
+            }
+            6 => {
+                if wheel_delta != 0.0 {
+                    if ctx.pointer_hover_pos().is_some_and(|p| p.y < split_y) {
+                        app.ui.timeline.v_scroll += wheel_delta;
+                    } else {
+                        app.ui.timeline.a_scroll -= wheel_delta;
+                    }
+                }
+            }
+            7 => {
+                if wheel_delta != 0.0 {
+                    let p = ctx.pointer_hover_pos().unwrap_or(content.center());
+                    let anchor = app.ui.timeline.target_scroll + f64::from(p.x - content.min.x) / app.ui.timeline.target_pps.max(1e-6);
+                    let factor = (1.0 + f64::from(wheel_delta) * 0.01).clamp(0.5, 2.0);
+                    layout::zoom_about(&mut app.ui.timeline, factor, anchor, view_w, app.session.state.timeline_ui.max_zoom_secs());
+                }
+            }
+            8..=10 => {
+                let factor = if slot == 10 { 1.0 / 1.6 } else { 1.6 };
+                let ph = app.session.playhead().seconds();
+                let anchor = if app.session.state.timeline_ui.playhead_centering {
+                    ph
+                } else {
+                    app.ui.timeline.target_scroll + view_w as f64 / (2.0 * app.ui.timeline.target_pps.max(1e-6))
+                };
+                let was_visible = ph >= app.ui.timeline.scroll && ph <= app.ui.timeline.scroll + f64::from(view_w) / app.ui.timeline.pps.max(1e-6);
+                if app.session.state.timeline_ui.playhead_centering {
+                    app.ui.timeline.scroll = (ph - f64::from(view_w) / (2.0 * app.ui.timeline.pps.max(1e-6))).max(0.0);
+                    app.ui.timeline.target_scroll = app.ui.timeline.scroll;
+                }
+                app.tl.zoom_anchor = Some((anchor, content.center().x));
+                layout::zoom_about(&mut app.ui.timeline, factor, anchor, view_w, app.session.state.timeline_ui.max_zoom_secs());
+                if app.session.state.timeline_ui.playhead_centering {
+                    app.ui.timeline.target_scroll = (ph - view_w as f64 / (2.0 * app.ui.timeline.target_pps.max(1e-6))).max(0.0);
+                    if !was_visible {
+                        app.ui.timeline.pps = app.ui.timeline.target_pps;
+                        app.ui.timeline.scroll = app.ui.timeline.target_scroll;
+                    }
+                }
+            }
+            11 | 12 => {
+                app.tl.zoom_anchor = None;
+                let duration = timeline_extent(seq.duration().seconds());
+                app.ui.timeline.target_pps =
+                    (view_w.max(1.0) as f64 / duration.max(1e-9)).min(layout::max_pps(view_w, app.session.state.timeline_ui.max_zoom_secs()));
+                app.ui.timeline.target_scroll = 0.0;
+            }
+            13 => app.ui.tool = Tool::Zoom,
+            14 => {
+                app.ui.timeline.video_track_h = app.ui.timeline.video_track_h.max(min_v * 1.5).max(120.0);
+                app.ui.timeline.audio_track_h = app.ui.timeline.audio_track_h.max(min_a * 1.5).max(120.0);
+            }
+            15 => {
+                app.ui.timeline.video_track_h = min_v;
+                app.ui.timeline.audio_track_h = min_a;
+                app.ui.timeline.v_scroll = 0.0;
+                app.ui.timeline.a_scroll = 0.0;
+            }
+            16 => app.ui.timeline.audio_track_h = (app.ui.timeline.audio_track_h * 1.25).clamp(min_a, 10000.0),
+            17 => app.ui.timeline.audio_track_h = (app.ui.timeline.audio_track_h / 1.25).clamp(min_a, 10000.0),
+            _ => {}
+        }
+    }
     let mut on_side = false;
     if !tracks_hidden {
         let smooth = app.session.state.timeline_ui.track_slider_smooth;
@@ -574,10 +716,22 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         // The same inset on both keeps the two sliders the same length at the default split and
         // the A/V divider centered between their outer ends.
         let outer = if bar_top { 5.0 } else { 2.0 };
+        let snap_setting = app.session.state.timeline_ui.track_slider_snap && app.session.state.timeline_ui.track_slider_decouple;
+        let track_bindings = {
+            let s = &app.session.state.timeline_ui;
+            [s.track_control_mirror.clone(), s.track_control_explode.clone(), s.track_control_alternate_drag_speed.clone(), s.track_control_settings.clone()]
+        };
+        // Extend both sliders outward by half the Mix strip height. The pair stays centered
+        // around the A/V divider, and the audio slider reaches through the Mix/master row.
+        let outer_extension = MASTER_H;
+        let vbar = Rect::from_min_max(pos2(sx0, video_area.min.y + outer - outer_extension), pos2(sx1, split_y - 3.0));
+        let abar = Rect::from_min_max(pos2(sx0, split_y + DIVIDER_H + 3.0), pos2(sx1, tracks_area.max.y - outer));
+        app.auto.add("timeline.trackSlider.video.track", vbar, "Video track slider track");
+        app.auto.add("timeline.trackSlider.audio.track", abar, "Audio track slider track");
         let (on_vs, vthumb, vclicks) = vertical_scrollbar(
             ui,
             &mut app.tl,
-            Rect::from_min_max(pos2(sx0, video_area.min.y + outer), pos2(sx1, split_y - 3.0)),
+            vbar,
             &mut app.ui.timeline.v_scroll,
             max_vs,
             video_area.height(),
@@ -588,13 +742,15 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             inverted,
             decouple,
             shift_speed,
+            snap_setting,
+            &track_bindings,
             &t,
             "vs",
         );
         let (on_as, athumb, aclicks) = vertical_scrollbar(
             ui,
             &mut app.tl,
-            Rect::from_min_max(pos2(sx0, split_y + DIVIDER_H + 3.0), pos2(sx1, content.max.y - outer)),
+            abar,
             &mut app.ui.timeline.a_scroll,
             max_as,
             audio_area.height(),
@@ -605,51 +761,87 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             inverted,
             decouple,
             shift_speed,
+            snap_setting,
+            &track_bindings,
             &t,
             "as",
         );
         on_side |= on_vs || on_as;
+        // A Controls binding named in this frame's settings flyout fires its action once, so the
+        // new input does what the in-built gesture would have done the moment it is complete
+        // (Mirror Slider = the plain move, Explode Slider = both sliders fit their tracks,
+        // Settings = the settings popup at the slider; Alternate Drag Speed is a drag modifier
+        // and does not fire).
+        let (vclicks, aclicks) = match ui.ctx().data_mut(|d| d.remove_temp::<usize>(egui::Id::unique("tl-controls-track-trigger"))) {
+            Some(0) => (1u8, 0u8),
+            // The Explode Slider shortcut fits the slider under the pointer only. A binding
+            // fired from the controls flyout has no pointer target, so use the video slider.
+            Some(1) => (2u8, 0u8),
+            Some(3) => {
+                app.tl.zoombar_settings_pos = None;
+                scrollbars::close_zoombar_popup(ui.ctx());
+                scrollbars::track_slider_state_reset(ui.ctx());
+                app.tl.track_slider_settings_pos = Some(vthumb.min);
+                (0u8, 0u8)
+            }
+            _ => (vclicks, aclicks),
+        };
         // double-click copies this thumb's length and position to the other slider; Shift+
         // double-click fits every track of this slider only. Either way the OTHER slider is the
         // one that moves, and with Smooth Animations on it eases there -- targets, not jumps.
         if vclicks != 0 || aclicks != 0 {
             let video = vclicks != 0;
             let clicks = if video { vclicks } else { aclicks };
-            let (val_s, max_s, _win_s) =
-                if video { (app.ui.timeline.v_scroll, max_vs, video_area.height()) } else { (app.ui.timeline.a_scroll, max_as, audio_area.height()) };
+            let val_s = if video { app.ui.timeline.v_scroll } else { app.ui.timeline.a_scroll };
             let mut tg = [app.ui.timeline.video_track_h, app.ui.timeline.v_scroll, app.ui.timeline.audio_track_h, app.ui.timeline.a_scroll];
             if clicks == 3 {
                 // Ctrl+Shift+double-click: BOTH sliders fit every track of their own kind --
                 // the fit is the meter's full extent (22 pt tracks: everything fits, the thumb
                 // spans the whole bar), so it lands exactly there on both sliders
-                tg = [22.0, 0.0, 22.0, 0.0];
+                tg = [min_v, 0.0, min_a, 0.0];
             } else if clicks == 2 {
                 // Shift+double-click: THIS slider fits every track -- again the meter's full
                 // extent, so the thumb comes all the way up (it used to stop just short of it
                 // whenever the window's own fit height landed a hair over 22 pt)
                 if video {
-                    tg[0] = 22.0;
+                    tg[0] = min_v;
                     tg[1] = 0.0;
                 } else {
-                    tg[2] = 22.0;
+                    tg[2] = min_a;
                     tg[3] = 0.0;
                 }
             } else {
                 // the thumb's length is the track-height meter, so copying the length copies
-                // the height itself; the position is copied as the raw scroll fraction (the
-                // other slider is the mirror image: this one at the bottom sends it to the top)
-                let raw = if max_s > 0.5 { (val_s / max_s).clamp(0.0, 1.0) } else { 0.0 };
+                // the height itself; the visible track position is reflected across the divider
+                let source_h = if video { app.ui.timeline.video_track_h } else { app.ui.timeline.audio_track_h };
                 let win_o = if video { audio_area.height() } else { video_area.height() };
                 let slots = if video { na as f32 + 1.0 / 3.0 } else { nv as f32 + 1.0 / 3.0 };
-                let h_new = if video { app.ui.timeline.video_track_h } else { app.ui.timeline.audio_track_h };
+                let source_min = if video { min_v } else { min_a };
+                let target_min = if video { min_a } else { min_v };
+                let h_new = if source_h <= source_min + 0.05 { target_min } else { source_h.max(target_min) };
                 let max_new = (slots * h_new - win_o).max(0.0);
-                let v_new = (raw * max_new).clamp(0.0, max_new);
+                // Mirror the visible track index, not the scroll fraction: the two sections
+                // have different viewport heights (Audio excludes Mix), so equal fractions
+                // consistently show unequal track positions.
+                // The video pane's row order is bottom-up, while audio is top-down. Mirror the
+                // scroll distance at the divider, scaling it by the new row height; pane viewport
+                // sizes must not shift the corresponding track by half a row.
+                let mirrored_scroll = val_s / source_h.max(1e-6) * h_new;
+                let v_new = mirrored_scroll.clamp(0.0, max_new);
+                // A plain mirror gesture changes only the opposite slider. Keep the clicked
+                // slider's height and scroll exactly as they were, even when the destination
+                // has fewer tracks and its mirrored scroll must be clamped.
                 if video {
+                    tg[0] = app.ui.timeline.video_track_h;
+                    tg[1] = app.ui.timeline.v_scroll;
                     tg[2] = h_new;
                     tg[3] = v_new;
                 } else {
+                    tg[2] = h_new;
                     tg[0] = h_new;
                     tg[1] = v_new;
+                    tg[2] = app.ui.timeline.audio_track_h;
+                    tg[3] = app.ui.timeline.a_scroll;
                 }
             }
             if app.session.state.timeline_ui.track_slider_smooth {
@@ -678,6 +870,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
     }
     app.tl.zoombar_point_cursor |= on_side;
+    scrollbars::promote_slider_dialogs(app, &ctx);
 
     // ---- interaction
     interact(app, ui, seq, &layout, rect);
@@ -1040,6 +1233,36 @@ fn paint_track_edits(
                 x += 8.0;
             }
         }
+    }
+}
+
+/// The Mix track header's level (#3765): the Mix fader at the playhead (its automation, or a
+/// control held in the Audio Track Mixer), as hot text to drag or type, as on an audio track.
+/// Changes go through `mixer.setValue`, so automation is written where the Mix fader has it; the
+/// changes of one press are one undo step, a typed value its own.
+fn mix_volume(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, r: Rect) {
+    use filmcraft_project::mixer::{FADER_MAX_DB, FADER_MIN_DB, LANE_VOLUME, MASTER_STRIP};
+    let now = app.session.playhead();
+    let db = app.session.previews.live.get(MASTER_STRIP, LANE_VOLUME).map(|o| o.value).unwrap_or_else(|| seq.master_strip().lane_value(LANE_VOLUME, now));
+    let mut vui = ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::right_to_left(egui::Align::Center)).id_salt("timeline-mix"));
+    let (resp, nv) = crate::widgets::hot_number(
+        &mut vui,
+        tl!("Mix"),
+        egui::Id::unique("timeline-mix-volume"),
+        db.max(FADER_MIN_DB),
+        crate::widgets::HotNumberOptions::new(0.1, (FADER_MIN_DB, FADER_MAX_DB), 1, "", &app.tokens),
+    );
+    app.auto.add("timeline.mix.volume", resp.rect, &format!("{db:.1}"));
+    // as the Audio Track Mixer's fader: a drag holds the control and lets go when it ends (one
+    // undo step, or one gesture of an automation pass); a typed value is set at once
+    let (cmd, p) = match nv {
+        Some(v) if resp.dragged() => ("mixer.touch", json!({"strip": "Mix", "lane": LANE_VOLUME, "value": v, "time": now.0})),
+        Some(v) => ("mixer.setValue", json!({"strip": "Mix", "lane": LANE_VOLUME, "value": v})),
+        None if resp.drag_stopped() => ("mixer.release", json!({"strip": "Mix", "lane": LANE_VOLUME, "time": now.0})),
+        None => return,
+    };
+    if let Err(e) = app.session.execute(cmd, p) {
+        app.ui.status = e.to_string();
     }
 }
 

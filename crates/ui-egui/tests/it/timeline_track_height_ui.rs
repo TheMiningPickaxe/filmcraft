@@ -93,6 +93,11 @@ fn the_header_edges_no_longer_resize_the_tracks_the_side_slider_circles_do() {
     d.ok("ui.drag", json!({"from": {"x": x, "y": strip.max.y - 1.0}, "to": {"x": x, "y": strip.max.y + 14.0}}));
     d.frames(3);
     assert_eq!(d.heights(), (v0, a0), "the header edges are inert now");
+    // Give both sliders enough tracks to have a zoom-out range and test free dragging here;
+    // snapping and the all-tracks fit limit are covered separately.
+    d.ok("engine.execute", json!({"command": "sequence.addTracks", "params": {"video": 12, "audio": 12}}));
+    d.harness.state_mut().session.state.timeline_ui.track_slider_snap = false;
+    d.frames(3);
     // the side slider's end circles are where vertical zoom lives now: dragging DOWN makes the
     // tracks taller (the thumb shrinks about its middle), up makes them shorter
     d.drag("timeline.trackSlider.video.topCircle", 0.5, 30.0);

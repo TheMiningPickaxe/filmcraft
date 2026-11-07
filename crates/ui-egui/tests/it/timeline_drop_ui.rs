@@ -41,7 +41,7 @@ fn control_rect(h: &Harness<'static, FilmcraftApp>, id: &str) -> egui::Rect {
 
 /// A point 60 px into the Timeline's clip area on the named track row.
 fn point_on_row(h: &Harness<'static, FilmcraftApp>, row_control: &str) -> egui::Pos2 {
-    let row = control_rect(h, row_control);
+    let row = control_rect(h, row_control).intersect(control_rect(h, "timeline.tracks"));
     let panel = control_rect(h, "panel.Timeline");
     egui::pos2(panel.min.x + h.state().ui.timeline.header_w + 60.0, row.center().y)
 }

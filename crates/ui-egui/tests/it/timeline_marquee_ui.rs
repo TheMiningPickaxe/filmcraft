@@ -233,12 +233,12 @@ fn scrolling_mid_drag_keeps_the_box_anchored_to_the_content() {
 }
 
 impl Driver {
-    fn wheel(&mut self, dy: f32) {
+    fn wheel(&mut self, dy: f32, modifiers: egui::Modifiers) {
         self.send(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
             source: egui::MouseWheelSource::Wheel,
             delta: egui::vec2(0.0, dy),
-            modifiers: egui::Modifiers::NONE,
+            modifiers,
             phase: egui::TouchPhase::Move,
         });
     }
@@ -269,12 +269,13 @@ fn scrolling_the_audio_tracks_mid_drag_keeps_the_box_on_them() {
     d.send(egui::Event::PointerMoved(start));
     d.button(start, true);
     // into the last clip of Audio 1 and down onto the track below it
-    let over = egui::pos2(rb.center().x, start.y + ah);
+    let tracks = d.rect("timeline.tracks");
+    let over = egui::pos2(rb.center().x, (start.y + ah).min(tracks.max.y - 2.0));
     d.move_to(start, over);
     assert!(d.selected(b), "the box reaches the clip before the tracks scroll");
     // wheel down over the audio tracks: they move up most of a track, the pointer held still
     let dy = (ah * 0.75).round();
-    d.wheel(-dy);
+    d.wheel(-dy, egui::Modifiers::CTRL);
     d.frames(2);
     assert_eq!(d.harness.state().ui.timeline.a_scroll, dy, "the audio tracks scrolled");
     let rb_now = d.rect(&format!("timeline.clip.{b}"));
@@ -303,7 +304,7 @@ fn a_wheel_turn_past_the_end_of_the_video_scroll_does_not_move_the_box() {
     assert!(d.selected(b));
     let before = d.selection();
     // the video tracks are already as low as they go: the wheel cannot scroll them
-    d.wheel(-400.0);
+    d.wheel(-400.0, egui::Modifiers::CTRL);
     assert_eq!(d.selection(), before, "the box did not reach the tracks above for the frame of the wheel turn");
     d.frames(2);
     assert_eq!(d.harness.state().ui.timeline.v_scroll, 0.0);

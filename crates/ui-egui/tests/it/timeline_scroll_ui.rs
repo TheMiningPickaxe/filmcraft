@@ -26,11 +26,15 @@ impl Driver {
     }
 
     fn sized(w: f32, h: f32) -> Self {
+        Self::sized_with_step(w, h, 0.25)
+    }
+
+    fn sized_with_step(w: f32, h: f32, step: f32) -> Self {
         let mut session = Session::default();
         session.execute("file.openDemoProject", json!({})).expect("demo project");
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(session).with_control(rx);
-        let harness = Harness::builder().with_size(egui::vec2(w, h)).with_max_steps(10_000).build_eframe(move |_cc| app);
+        let harness = Harness::builder().with_step_dt(step).with_size(egui::vec2(w, h)).with_max_steps(10_000).build_eframe(move |_cc| app);
         let mut d = Driver { harness, tx, pointer: egui::Pos2::ZERO };
         d.frames(4);
         d
@@ -170,6 +174,190 @@ fn none() -> Value {
     json!({})
 }
 
+fn track_view(d: &mut Driver, video: bool) -> (f32, f32) {
+    let (content_top, content_bottom, split_y) = {
+        let layout = d.app().tl.layout.as_ref().expect("timeline layout");
+        (layout.content.min.y, layout.content.max.y, layout.split_y)
+    };
+    if video { (content_top, split_y) } else { (split_y + 5.0, content_bottom - 34.0) }
+}
+
+#[test]
+fn timeline_middle_vertical_drag_controls_both_track_heights() {
+    let mut d = Driver::tall();
+    d.ok("ui.set", json!({"timeline": {"controlTracks": true, "videoTrackHeight": 100.0, "audioTrackHeight": 100.0}}));
+    d.frames(3);
+    let r = d.rect("timeline.zoomBar");
+    let (x, y) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    d.press(x, y);
+    d.move_to(x, y - 12.0);
+    let v = &d.app().ui.timeline;
+    assert!(v.video_track_h > 100.0 && v.audio_track_h > 100.0, "{} {}", v.video_track_h, v.audio_track_h);
+    let scroll = v.target_scroll;
+    d.move_to(x + 20.0, y - 18.0);
+    assert_eq!(d.app().ui.timeline.target_scroll, scroll, "track control cannot pan the timeline");
+    d.release(x + 20.0, y - 18.0);
+}
+
+#[test]
+fn shift_linked_resize_pins_the_cursor_and_keeps_resizing() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    d.ok("ui.set", json!({"timeline": {"controlTracks": true, "videoTrackHeight": 100.0, "audioTrackHeight": 100.0}}));
+    d.frames(4);
+    let r = d.rect("timeline.zoomBar");
+    let (x, y) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    d.press(x, y);
+    d.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+    d.move_to(x, y - 24.0);
+    assert!(d.app().tl.zoombar_cursor_lock.is_some(), "Shift-linked resize should pin and hide the cursor");
+    let before = d.app().ui.timeline.video_track_h;
+    d.move_to(x, y - 48.0);
+    assert!(d.app().ui.timeline.video_track_h > before, "pinned vertical movement continues resizing");
+    d.release(x, y - 48.0);
+    d.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    d.frames(1);
+}
+
+#[test]
+fn right_button_alternate_drag_pins_and_moves_zoom_and_track_sliders() {
+    let mut d = Driver::tall();
+    d.app().session.shortcuts.set("timeline.sliderAlternate", "Right Click", None, false, true).expect("assign");
+    d.app().session.shortcuts.set("timeline.trackSliderAlternate", "Right Click", None, false, true).expect("assign");
+    d.frames(3);
+
+    let bar = d.rect("timeline.zoomBar");
+    let (x, y) = (bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0);
+    d.press(x, y);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(x, y),
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(1);
+    d.move_to(x + 30.0, y);
+    assert!(d.app().tl.zoombar_cursor_lock.is_some(), "right-button alternate drag pins the Timeline slider cursor");
+    assert!(d.app().ui.timeline.target_scroll > 4.0, "right-button alternate drag pans the Timeline");
+    d.release(x + 30.0, y);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(x + 30.0, y),
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(2);
+
+    let bar = d.rect("timeline.zoomBar");
+    let (ex, ey) = (bar[0] + 6.0, bar[1] + bar[3] / 2.0);
+    let old_pps = d.app().ui.timeline.target_pps;
+    d.press(ex, ey);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(ex, ey),
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(1);
+    d.move_to(ex - 30.0, ey);
+    assert!(d.app().tl.zoombar_cursor_lock.is_some(), "right-button alternate edge drag pins the Timeline slider cursor");
+    assert_ne!(d.app().ui.timeline.target_pps, old_pps, "right-button alternate edge drag zooms");
+    d.release(ex - 30.0, ey);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(ex - 30.0, ey),
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(2);
+
+    let thumb = d.rect("timeline.trackSlider.video");
+    let (tx, ty) = (thumb[0] + thumb[2] / 2.0, thumb[1] + thumb[3] / 2.0);
+    let old_vscroll = d.app().ui.timeline.v_scroll;
+    d.press(tx, ty);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(tx, ty),
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(1);
+    d.move_to(tx, ty - 30.0);
+    assert!(d.app().tl.zoombar_cursor_lock.is_some(), "right-button alternate drag pins the Track slider cursor");
+    assert_ne!(d.app().ui.timeline.v_scroll, old_vscroll, "right-button alternate drag scrolls the tracks");
+    d.release(tx, ty - 30.0);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(tx, ty - 30.0),
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(2);
+
+    let circle = d.rect("timeline.trackSlider.video.topCircle");
+    let (ex, ey) = (circle[0] + circle[2] / 2.0, circle[1] + circle[3] / 2.0);
+    let old_height = d.app().ui.timeline.video_track_h;
+    d.press(ex, ey);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(ex, ey),
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(1);
+    d.move_to(ex, ey - 24.0);
+    assert!(d.app().tl.zoombar_cursor_lock.is_some(), "right-button alternate edge drag pins the Track slider cursor");
+    assert_ne!(d.app().ui.timeline.video_track_h, old_height, "right-button alternate edge drag zooms tracks");
+    d.release(ex, ey - 24.0);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(ex, ey - 24.0),
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(2);
+}
+
+#[test]
+fn shift_drag_with_right_button_down_keeps_the_slider_moving() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"timeline": {"pps": 100.0, "scroll": 10.0}}));
+    d.frames(4);
+    let r = d.rect("timeline.zoomBar");
+    let (x, y) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    d.press(x, y);
+    d.harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::ShiftLeft,
+        physical_key: Some(egui::Key::ShiftLeft),
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::SHIFT,
+    });
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(x, y),
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::SHIFT,
+    });
+    d.frames(1);
+    d.move_to(x + 36.0, y);
+    assert!(d.app().ui.timeline.target_scroll > 10.0, "the Timeline slider should continue moving while Shift and right mouse are held");
+    d.release(x + 36.0, y);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: egui::pos2(x + 36.0, y),
+        button: egui::PointerButton::Secondary,
+        pressed: false,
+        modifiers: egui::Modifiers::SHIFT,
+    });
+    d.harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::ShiftLeft,
+        physical_key: Some(egui::Key::ShiftLeft),
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(2);
+}
+
 #[test]
 fn ctrl_wheel_moves_the_tracks_up_and_down() {
     let mut d = Driver::tall();
@@ -213,14 +401,20 @@ fn the_wheel_moves_the_timeline_sideways_and_option_wheel_zooms() {
     assert_eq!((v, a), (0.0, 0.0));
     d.wheel(0.2, 0.0, -20.0, json!({"alt": true}));
     assert!((d.view().1 - 48.0).abs() < 1e-6, "and out again");
-    // a sideways gesture (trackpad swipe, tilt wheel) is sideways whatever is held; Shift is the
-    // wheel a lot faster
+    // A sideways gesture is still time scroll. Shift+wheel now adjusts the hovered track height;
+    // the legacy fast time-scroll gesture is available as an optional Controls binding.
     d.ok("ui.set", json!({"timeline": {"pps": 50.0, "scroll": 4.0}}));
     d.frames(3);
     d.wheel(0.2, -50.0, 5.0, none());
     assert_eq!(d.view(), (5.0, 50.0, 0.0, 0.0));
+    let before_h = d.app().ui.timeline.video_track_h;
+    let before_scroll = d.view().0;
     d.wheel(0.2, 0.0, -50.0, json!({"shift": true}));
-    assert_eq!(d.view(), (15.0, 50.0, 0.0, 0.0), "Shift + wheel is the same ten times over");
+    assert!(d.app().ui.timeline.video_track_h < before_h);
+    assert_eq!(d.view().0, before_scroll, "default Shift+wheel adjusts track height");
+    d.app().session.shortcuts.set("timeline.fastScroll", "Shift+Scroll", None, false, true).expect("assign");
+    d.wheel(0.2, 0.0, -50.0, json!({"shift": true}));
+    assert!(d.view().0 > before_scroll, "the legacy fast time-scroll action is configurable");
 }
 
 /// Settings ▸ Timeline ▸ Timeline Mouse Scrolling "Horizontal": the wheel moves the Timeline
@@ -750,6 +944,9 @@ fn timeline_slider_settings_is_the_menus_row_while_the_bar_is_hidden() {
     // while hidden the top row is the blue Unhide Slider, never Hide Slider
     assert!(d.has("timeline.zoomBar.settings.unhideSlider"), "Unhide Slider while the bar is hidden");
     assert!(!d.has("timeline.zoomBar.settings.hideSlider"), "no Hide Slider there");
+    // the menu starts at its bottom when it has to scroll: wheel up (over a bottom row) to reach it
+    d.ok("ui.scroll", json!({"id": "timeline.zoomBar.settings.sliderMinimap", "fx": 0.5, "fy": 0.5, "dx": 0.0, "dy": 2000.0, "modifiers": {}}));
+    d.frames(3);
     d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.unhideSlider"}));
     d.frames(2);
     assert!(!d.app().session.state.timeline_ui.zoom_bar_hidden, "Unhide Slider brings the bar back");
@@ -782,6 +979,26 @@ fn both_slider_menus_carry_the_controls_rows_and_snap_to_tracks() {
     assert!(!d.app().session.state.timeline_ui.track_slider_snap, "the toggle takes (it drives nothing yet)");
 }
 
+#[test]
+fn short_window_opens_timeline_settings_at_the_bottom() {
+    // 420 pt is well below the menu; 600 and 700 pt are the ordinary "too small" windows where
+    // the menu still has to scroll. Every one of them must start at the menu's bottom.
+    for height in [420.0, 600.0, 700.0] {
+        let mut d = Driver::sized_with_step(1200.0, height, 1.0 / 60.0);
+        let bar = d.rect("timeline.zoomBar.track");
+        d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+        d.frames(3);
+        assert!(d.has("timeline.zoomBar.settings.sliderMinimap"), "the final settings row is visible without scrolling");
+        let first = d.rect("timeline.zoomBar.settings.hideSlider");
+        let last = d.rect("timeline.zoomBar.settings.sliderMinimap");
+        let content = last[1] + last[3] - first[1];
+        assert!(last[1] >= -0.5 && last[1] + last[3] <= height + 0.5, "bottom row inside the {height} pt window: {last:?}");
+        if content > height {
+            assert!(first[1] < 0.5, "the menu starts at its bottom (top rows scrolled off) in a {height} pt window: first row {first:?}, content {content}");
+        }
+    }
+}
+
 /// The Controls boxes: clicking one listens ("Enter Shortcut"), the next key becomes the binding
 /// and then that chord does what the gesture did -- fitting the Playhead Centering Range.
 #[test]
@@ -798,12 +1015,15 @@ fn clicking_a_controls_box_takes_the_next_key_and_that_key_does_the_action() {
     d.frames(3);
     assert!(d.has("timeline.zoomBar.settings.controlsFlyout"), "the flyout opens beside the row");
     assert!(d.has("timeline.zoomBar.settings.controlsFlyout.box0"), "the first box");
+    assert!(d.has("timeline.zoomBar.settings.controlsFlyout.box6"), "the full set of Timeline actions is listed");
     d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.box0"}));
     d.frames(2);
-    assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "", "nothing is bound until a key arrives");
+    assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "Double Click", "binding stays until capture completes");
+    let before_capture = d.app().ui.timeline.target_pps;
     d.ok("ui.key", json!({"key": "K"}));
     d.frames(2);
     assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "K", "the key became the binding");
+    assert_eq!(d.app().ui.timeline.target_pps, before_capture, "capturing a key does not fire it");
     // the binding replaces the double click: pressing K fits the Playhead Centering Range
     let before = d.app().ui.timeline.target_pps;
     d.ok("ui.key", json!({"key": "K"}));
@@ -812,5 +1032,1039 @@ fn clicking_a_controls_box_takes_the_next_key_and_that_key_does_the_action() {
     // and the row's reset arrow puts the built-in gesture back
     d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.reset0"}));
     d.frames(2);
-    assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "", "Reset restores the default gesture");
+    assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "Double Click", "Reset restores the default gesture");
+}
+
+#[test]
+fn track_fit_fills_the_bar_and_updates_when_the_timeline_grows() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    d.ok("ui.click", json!({"id": "timeline.trackSlider.video", "count": 2, "modifiers": {"shift": true}}));
+    d.frames(4);
+    let thumb = d.rect("timeline.trackSlider.video");
+    let bar = d.rect("timeline.trackSlider.video.track");
+    assert!((thumb[3] - bar[3]).abs() < 0.1, "fit {thumb:?} {bar:?}");
+    let h = d.app().ui.timeline.video_track_h;
+    d.harness.set_size(egui::vec2(1600.0, 1400.0));
+    d.frames(5);
+    let thumb = d.rect("timeline.trackSlider.video");
+    let bar = d.rect("timeline.trackSlider.video.track");
+    assert!((thumb[3] - bar[3]).abs() < 0.1, "resized {thumb:?} {bar:?}");
+    assert!(d.app().ui.timeline.video_track_h >= h);
+    d.app().session.state.timeline_ui.track_slider_snap = false;
+    d.app().ui.timeline.video_track_h *= 1.5;
+    d.frames(3);
+    let circle = d.rect("timeline.trackSlider.video.topCircle");
+    let x = circle[0] + circle[2] / 2.0;
+    let y = circle[1] + circle[3] / 2.0;
+    d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": x, "y": bar[1] - 100.0}}));
+    d.frames(3);
+    let thumb = d.rect("timeline.trackSlider.video");
+    assert!((thumb[3] - bar[3]).abs() < 0.2, "manual fit {thumb:?} {bar:?}");
+}
+
+#[test]
+fn mirror_copies_the_visible_track_position_at_the_outer_end() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    d.exec("sequence.addTracks", json!({"video": 12, "audio": 12}));
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 180.0, "audioTrackHeight": 180.0}}));
+    d.app().ui.timeline.v_scroll = 100000.0;
+    d.frames(4);
+    d.ok("ui.click", json!({"id": "timeline.trackSlider.video", "count": 2}));
+    d.frames(4);
+    let vb = d.rect("timeline.trackSlider.video.track");
+    let ab = d.rect("timeline.trackSlider.audio.track");
+    let vt = d.rect("timeline.trackSlider.video");
+    let at = d.rect("timeline.trackSlider.audio");
+    let vf = (vt[1] - vb[1]) / (vb[3] - vt[3]).max(1.0);
+    let af = (at[1] - ab[1]) / (ab[3] - at[3]).max(1.0);
+    let v = &d.app().ui.timeline;
+    assert!((v.video_track_h - v.audio_track_h).abs() < 0.01);
+    assert!((vf + af - 1.0).abs() < 0.02, "mirror positions should reverse: video {vf}, audio {af}");
+}
+
+#[test]
+fn mirroring_a_fit_track_slider_fits_the_other_section_too() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    d.exec("sequence.addTracks", json!({"video": 12, "audio": 12}));
+    d.frames(3);
+    let vb = d.rect("timeline.trackSlider.video.track");
+    let ab = d.rect("timeline.trackSlider.audio.track");
+    let slots = 12.0 + 1.0 / 3.0;
+    let video_fit = ((vb[3] + 5.0) / slots).max(22.0);
+    let audio_fit = ((ab[3] + 5.0) / slots).max(22.0);
+    d.app().ui.timeline.video_track_h = video_fit;
+    d.app().ui.timeline.audio_track_h = 180.0;
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "timeline.trackSlider.video", "count": 2}));
+    d.frames(4);
+    assert!((d.app().ui.timeline.audio_track_h - audio_fit).abs() < 0.05);
+}
+
+#[test]
+fn mirror_aligns_the_center_track_between_different_pane_heights() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    d.exec("sequence.addTracks", json!({"video": 12, "audio": 12}));
+    d.app().ui.timeline.split = 0.7;
+    d.app().ui.timeline.video_track_h = 170.0;
+    d.app().ui.timeline.audio_track_h = 170.0;
+    d.app().ui.timeline.v_scroll = 2.0 * 170.0;
+    d.app().ui.timeline.a_scroll = 0.0;
+    d.frames(4);
+    let vb = d.rect("timeline.trackSlider.video.track");
+    let v3 = d.rect("timeline.track.V3.color");
+    let thumb = d.rect("timeline.trackSlider.video");
+    d.ok("ui.click", json!({"x": thumb[0] + thumb[2] / 2.0, "y": thumb[1] + thumb[3] / 2.0, "count": 2}));
+    d.frames(100);
+    let a3 = d.rect("timeline.track.A3.color");
+    let divider = vb[1] + vb[3] + 3.0 + 2.5;
+    let video_offset = v3[1] + v3[3] / 2.0 - divider;
+    let audio_offset = a3[1] + a3[3] / 2.0 - divider;
+    assert!((video_offset + audio_offset).abs() < 2.0, "V3 and A3 should occupy mirrored positions around the divider: {video_offset} / {audio_offset}");
+}
+
+#[test]
+fn controls_flyout_is_centered_on_its_first_visible_frame() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(row[0] + 10.0, row[1] + row[3] / 2.0)));
+    d.frames(1);
+    let first = d.app().auto.find("timeline.zoomBar.settings.controlsFlyout").unwrap().rect;
+    d.frames(1);
+    let second = d.app().auto.find("timeline.zoomBar.settings.controlsFlyout").unwrap().rect;
+    let first_y = first[1] + first[3] / 2.0;
+    let second_y = second[1] + second[3] / 2.0;
+    assert!((first_y - second_y).abs() < 0.1, "{first:?} -> {second:?}");
+    assert!((first_y - (row[1] + row[3] / 2.0)).abs() < 0.5, "{first:?}, row {row:?}");
+}
+
+#[test]
+fn minimap_flyout_is_centered_without_a_first_frame_jump_at_the_top_slider_position() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"timeline": {"alternateSliderPosition": true}}));
+    d.frames(3);
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    let row = d.rect("timeline.zoomBar.settings.sliderMinimap");
+    let point = egui::pos2(row[0] + row[2] / 2.0, row[1] + row[3] / 2.0);
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(point));
+    d.frames(1);
+    let first = d.app().auto.find("timeline.zoomBar.settings.minimapFlyout").unwrap().rect;
+    d.frames(1);
+    let second = d.app().auto.find("timeline.zoomBar.settings.minimapFlyout").unwrap().rect;
+    let row2 = d.app().auto.find("timeline.zoomBar.settings.sliderMinimap").unwrap().rect;
+    let first_center = first[1] + first[3] / 2.0;
+    let second_center = second[1] + second[3] / 2.0;
+    assert!((first_center - second_center).abs() < 0.1, "first {first:?}, second {second:?}, row1 {row:?}, row2 {row2:?}");
+    assert!((first_center - (row[1] + row[3] / 2.0)).abs() < 0.5, "flyout centered on the row: {first:?}, row {row:?}");
+}
+
+#[test]
+fn controls_capture_triple_click_and_warn_on_duplicate_without_firing() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.box0"}));
+    let before = d.app().ui.timeline.target_pps;
+    d.ok("ui.click", json!({"x": row[0] + 20.0, "y": row[1] + row[3] / 2.0, "count": 3}));
+    d.frames(4);
+    assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "Triple Click");
+    assert_eq!(d.app().ui.timeline.target_pps, before);
+    assert!(d.has("timeline.zoomBar.settings.controlsFlyout.conflict0"));
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.conflict0"}));
+    d.frames(2);
+    assert!(d.app().dialog.is_some(), "the warning opens Keyboard Shortcuts");
+    d.ok("ui.key", json!({"key": "Escape"}));
+    d.frames(2);
+}
+
+#[test]
+fn controls_can_capture_double_click_and_escape_to_unbind() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.box1"}));
+    let before = d.app().ui.timeline.target_pps;
+    d.ok("ui.click", json!({"x": row[0] + 20.0, "y": row[1] + row[3] / 2.0, "count": 2}));
+    d.frames(30);
+    assert_eq!(d.app().session.state.timeline_ui.control_explode_slider, "Double Click");
+    assert_eq!(d.app().ui.timeline.target_pps, before);
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.box1"}));
+    d.ok("ui.key", json!({"key": "Escape"}));
+    d.frames(2);
+    assert_eq!(d.app().session.state.timeline_ui.control_explode_slider, "Unbound");
+    let before_unbound_click = d.app().ui.timeline.target_pps;
+    d.ok("ui.click", json!({"id": "timeline.zoomBar", "count": 2}));
+    d.frames(3);
+    assert_eq!(d.app().ui.timeline.target_pps, before_unbound_click, "Unbound disables the original double-click action");
+}
+
+#[test]
+fn every_controls_black_box_can_be_clicked_without_crashing() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    for i in 0..7 {
+        d.ok("ui.click", json!({"id": format!("timeline.zoomBar.settings.controlsFlyout.box{i}")}));
+        d.ok("ui.key", json!({"key": "Escape"}));
+        d.frames(1);
+    }
+
+    let video = d.rect("timeline.trackSlider.video");
+    d.click_at(video[0] + video[2] / 2.0, video[1] + video[3] / 2.0, "right");
+    let row = d.rect("timeline.trackSlider.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    for i in 0..5 {
+        d.ok("ui.click", json!({"id": format!("timeline.trackSlider.settings.controlsFlyout.box{i}")}));
+        d.ok("ui.key", json!({"key": "Escape"}));
+        d.frames(1);
+    }
+}
+
+#[test]
+fn linked_track_resize_uses_main_alternate_drag_speed_for_shift_and_right_click() {
+    let resize = |main_speed: f64, track_speed: f64, right_click: bool| {
+        let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+        d.ok("ui.set", json!({"timeline": {"controlTracks": true, "videoTrackHeight": 100.0, "audioTrackHeight": 100.0}}));
+        let settings = &mut d.app().session.state.timeline_ui;
+        settings.shift_drag_speed = main_speed;
+        settings.track_slider_shift_drag_speed = track_speed;
+        if right_click {
+            d.app().session.shortcuts.set("timeline.sliderAlternate", "Right Click", None, false, true).expect("assign");
+        }
+        d.frames(4);
+        let start = d.app().ui.timeline.video_track_h;
+        let r = d.rect("timeline.zoomBar");
+        let (x, y) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+        d.press(x, y);
+        if right_click {
+            d.harness.input_mut().events.push(egui::Event::PointerButton {
+                pos: egui::pos2(x, y),
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            });
+            d.frames(1);
+        } else {
+            d.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+            d.frames(1);
+        }
+        d.move_to(x, y - 40.0);
+        let moved = (d.app().ui.timeline.video_track_h - start).abs();
+        d.release(x, y - 40.0);
+        if right_click {
+            d.harness.input_mut().events.push(egui::Event::PointerButton {
+                pos: egui::pos2(x, y - 40.0),
+                button: egui::PointerButton::Secondary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        } else {
+            d.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        }
+        d.frames(1);
+        moved
+    };
+    for right_click in [false, true] {
+        let slow = resize(0.5, 2.0, right_click);
+        let same_speed_other_track_setting = resize(0.5, 0.5, right_click);
+        let fast = resize(2.0, 0.5, right_click);
+        assert!((slow - same_speed_other_track_setting).abs() < 0.1, "track-slider speed must not affect linked drag speed");
+        assert!(fast > slow * 2.0, "main speed should apply (right-click modifier: {right_click}): {slow} -> {fast}");
+    }
+}
+
+#[test]
+fn rebinding_replaces_the_old_gesture_and_runs_the_new_key() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    d.app().session.shortcuts.set("timeline.sliderCenter", "O", None, false, true).expect("assign");
+    d.ok("ui.set", json!({"timeline": {"pps": 100.0, "scroll": 10.0}}));
+    d.frames(8);
+    let before = d.app().ui.timeline.target_pps;
+    d.ok("ui.click", json!({"id": "timeline.zoomBar", "count": 2}));
+    d.frames(3);
+    assert_eq!(d.app().ui.timeline.target_pps, before, "old double-click no longer fires");
+    d.ok("ui.key", json!({"key": "O"}));
+    d.frames(3);
+    assert_ne!(d.app().ui.timeline.target_pps, before, "the new key fires");
+}
+
+#[test]
+fn zooming_out_past_the_playhead_does_not_capture_it() {
+    let mut d = Driver::demo();
+    d.exec("playhead.end", json!({}));
+    let ph = d.app().session.playhead().seconds();
+    d.ok("ui.set", json!({"timeline": {"pps": 100.0, "scroll": ph + 5.0, "playheadCentering": true}}));
+    d.frames(4);
+    let width = d.rect("timeline.tracks")[2] as f64;
+    let (scroll, pps, _, _) = d.view();
+    let center = scroll + width / pps / 2.0;
+    let thumb = d.rect("timeline.zoomBar");
+    let x = thumb[0] + 6.0;
+    let y = thumb[1] + thumb[3] / 2.0;
+    d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": x - 100.0, "y": y}}));
+    d.frames(3);
+    let (scroll, pps, _, _) = d.view();
+    assert!(ph >= scroll && ph <= scroll + width / pps, "playhead entered view");
+    assert!((scroll + width / pps / 2.0 - center).abs() < 0.05, "zoom-out keeps the view center fixed");
+}
+
+#[test]
+fn plus_minus_zoom_centers_on_playhead_when_enabled_and_on_view_center_when_disabled() {
+    let mut d = Driver::demo();
+    d.exec("playhead.end", json!({}));
+    let ph = d.app().session.playhead().seconds();
+    d.ok("ui.set", json!({"timeline": {"pps": 40.0, "scroll": 0.0, "playheadCentering": true}}));
+    d.frames(4);
+    d.ok("ui.key", json!({"key": "="}));
+    d.frames(4);
+    let width = d.rect("timeline.tracks")[2] as f64;
+    let v = &d.app().ui.timeline;
+    assert!((v.target_scroll + width / v.target_pps / 2.0 - ph).abs() < 0.02);
+    d.ok("ui.set", json!({"timeline": {"playheadCentering": false, "pps": 40.0, "scroll": 20.0}}));
+    d.frames(4);
+    let before = d.app().ui.timeline.target_scroll + width / (2.0 * d.app().ui.timeline.target_pps);
+    d.ok("ui.key", json!({"key": "-"}));
+    d.frames(4);
+    let v = &d.app().ui.timeline;
+    assert!((v.target_scroll + width / (2.0 * v.target_pps) - before).abs() < 0.02);
+}
+
+#[test]
+fn hiding_and_unhiding_track_sliders_keeps_timeline_slider_geometry_fixed() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"timeline": {"pps": 120.0, "scroll": 2.0}}));
+    d.frames(4);
+    let before = d.rect("timeline.zoomBar");
+    d.ok("ui.set", json!({"timeline": {"trackSliderHidden": true}}));
+    d.frames(4);
+    let hidden = d.rect("timeline.zoomBar");
+    for i in 0..4 {
+        assert!((hidden[i] - before[i]).abs() < 0.1, "hidden {before:?} -> {hidden:?}");
+    }
+    d.ok("ui.set", json!({"timeline": {"trackSliderHidden": false}}));
+    d.frames(4);
+    let after = d.rect("timeline.zoomBar");
+    for i in 0..4 {
+        assert!((after[i] - before[i]).abs() < 0.1, "restored {before:?} -> {after:?}");
+    }
+}
+
+#[test]
+fn linked_shift_drag_ignores_track_slider_alternate_drag_speed() {
+    let resize = |speed: f64| {
+        let mut d = Driver::demo();
+        d.ok("ui.set", json!({"timeline": {"controlTracks": true, "videoTrackHeight": 100.0, "audioTrackHeight": 100.0}}));
+        d.app().session.state.timeline_ui.track_slider_shift_drag_speed = speed;
+        d.app().session.state.timeline_ui.shift_drag_speed = 1.0;
+        d.frames(3);
+        let start = d.app().ui.timeline.video_track_h;
+        let r = d.rect("timeline.zoomBar");
+        let x = r[0] + r[2] / 2.0;
+        let y = r[1] + r[3] / 2.0;
+        d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": x, "y": y - 40.0}, "steps": 8, "modifiers": {"shift": true}}));
+        d.frames(3);
+        (d.app().ui.timeline.video_track_h - start).abs()
+    };
+    let slow = resize(0.5);
+    let fast = resize(2.0);
+    assert!((fast - slow).abs() < 0.1, "the track slider speed setting must not affect linked track control: {slow} vs {fast}");
+}
+
+#[test]
+fn rebound_timeline_key_replaces_default_shortcut() {
+    let mut d = Driver::demo();
+    d.app().session.shortcuts.set("view.zoomOut", "K", None, false, true).expect("set shortcut");
+    d.ok("ui.set", json!({"timeline": {"pps": 100.0, "scroll": 10.0}}));
+    d.frames(3);
+    let before = d.app().ui.timeline.target_pps;
+    d.ok("ui.key", json!({"key": "-"}));
+    d.frames(3);
+    assert_eq!(d.app().ui.timeline.target_pps, before, "old shortcut must stop working");
+    d.ok("ui.key", json!({"key": "K"}));
+    d.frames(3);
+    assert_ne!(d.app().ui.timeline.target_pps, before, "new shortcut must work");
+}
+
+#[test]
+fn short_timeline_settings_scroll_up_from_bottom() {
+    let mut d = Driver::sized_with_step(1200.0, 420.0, 1.0 / 60.0);
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(4);
+    let before = d.rect("timeline.zoomBar.settings.hideSlider")[1];
+    d.ok("ui.scroll", json!({"id": "timeline.zoomBar.settings.sliderMinimap", "dy": 2000.0}));
+    d.frames(4);
+    let after = d.rect("timeline.zoomBar.settings.hideSlider")[1];
+    assert!(after > before + 50.0, "scroll up moves rows: {before} -> {after}");
+}
+#[test]
+fn short_track_settings_scroll_up_from_bottom() {
+    let mut d = Driver::sized_with_step(1200.0, 300.0, 1.0 / 60.0);
+    d.app().tl.track_slider_settings_pos = Some(egui::pos2(400.0, 100.0));
+    d.frames(4);
+    let before = d.rect("timeline.trackSlider.settings.hideSlider")[1];
+    d.ok("ui.scroll", json!({"id": "timeline.trackSlider.settings.shiftDragSpeed", "dy": 2000.0}));
+    d.frames(4);
+    let after = d.rect("timeline.trackSlider.settings.hideSlider")[1];
+    assert!(after > before + 30.0, "scroll up moves rows: {before} -> {after}");
+}
+#[test]
+fn unbound_timeline_key_does_not_run_default() {
+    let mut d = Driver::demo();
+    d.app().session.shortcuts.clear("view.zoomOut", None, None).expect("clear shortcut");
+    d.ok("ui.set", json!({"timeline": {"pps": 100.0, "scroll": 10.0}}));
+    d.frames(3);
+    let before = d.app().ui.timeline.target_pps;
+    d.ok("ui.key", json!({"key": "-"}));
+    d.frames(3);
+    assert_eq!(d.app().ui.timeline.target_pps, before);
+}
+#[test]
+fn slider_controls_share_shortcuts_and_timeout_unbinds() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 0.25);
+    assert!(d.app().session.shortcuts.command("timeline.sliderCenter").is_some());
+    d.app().session.shortcuts.set("timeline.sliderCenter", "K", None, false, true).expect("set shortcut");
+    d.frames(2);
+    assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "K");
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(2);
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + 8.0);
+    d.frames(2);
+    d.move_to(row[0] + row[2] / 2.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.box0"}));
+    d.frames(15);
+    assert!(d.app().session.shortcuts.primary("timeline.sliderCenter").is_none(), "idle capture clears the shared binding");
+}
+#[test]
+fn slider_conflict_warning_updates_when_other_binding_cleared() {
+    let mut d = Driver::demo();
+    d.app().session.shortcuts.set("timeline.sliderExplode", "Double Click", None, false, true).expect("assign");
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(2);
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + 8.0);
+    d.frames(2);
+    d.move_to(row[0] + row[2] / 2.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    assert!(d.has("timeline.zoomBar.settings.controlsFlyout.conflict1"));
+    d.app().session.shortcuts.clear("timeline.sliderCenter", None, None).expect("clear");
+    d.frames(2);
+    assert!(!d.has("timeline.zoomBar.settings.controlsFlyout.conflict1"));
+}
+#[test]
+fn resized_window_keeps_timeline_settings_scrollable() {
+    let mut d = Driver::sized_with_step(1200.0, 980.0, 1.0 / 60.0);
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(4);
+    d.harness.set_size(egui::vec2(1200.0, 520.0));
+    d.frames(8);
+    let last = d.rect("timeline.zoomBar.settings.sliderMinimap");
+    assert!(last[1] >= 0.0 && last[1] + last[3] <= 520.0, "bottom row visible: {last:?}");
+    let before = d.rect("timeline.zoomBar.settings.hideSlider")[1];
+    d.ok("ui.scroll", json!({"id": "timeline.zoomBar.settings.sliderMinimap", "dy": 2000.0}));
+    d.frames(4);
+    let after = d.rect("timeline.zoomBar.settings.hideSlider")[1];
+    assert!(after > before + 30.0, "scroll after resize: {before} -> {after}");
+}
+#[test]
+fn default_zoom_controls_have_no_conflict_warning() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(2);
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + 8.0);
+    d.frames(2);
+    d.move_to(row[0] + row[2] / 2.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    assert!(!d.has("timeline.zoomBar.settings.controlsFlyout.conflict5"));
+    assert!(!d.has("timeline.zoomBar.settings.controlsFlyout.conflict6"));
+    assert!(d.has("timeline.zoomBar.settings.controlsFlyout.sequenceBox"));
+}
+#[test]
+fn right_click_binding_is_rejected_with_message() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.box0"}));
+    d.click_at(row[0] + 20.0, row[1] + row[3] / 2.0, "right");
+    d.frames(30);
+    assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "Double Click");
+    assert!(d.has("timeline.rightClickDialog.ok"));
+}
+
+#[test]
+fn controls_capture_modifier_chord() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.box2"}));
+    let mods = egui::Modifiers { shift: true, alt: true, ..Default::default() };
+    d.harness.input_mut().events.push(egui::Event::ModifiersChanged(mods));
+    d.frames(2);
+    d.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    d.frames(2);
+    let binding = d.app().session.shortcuts.primary("timeline.sliderAlternate");
+    assert_eq!(binding.as_deref(), Some("Alt+Shift"));
+}
+#[test]
+fn sequence_box_captures_new_shortcut() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(2);
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + 8.0);
+    d.frames(2);
+    d.move_to(row[0] + row[2] / 2.0, row[1] + row[3] / 2.0);
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.sequenceBox"}));
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "K"}));
+    d.frames(2);
+    assert_eq!(d.app().session.shortcuts.primary("view.zoomToSequence").as_deref(), Some("K"));
+    d.app().session.shortcuts.set("view.zoomToSequence", "Ctrl+Z", None, false, true).expect("assign conflict");
+    d.frames(2);
+    assert!(d.has("timeline.zoomBar.settings.controlsFlyout.sequenceConflict"));
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.reset1"}));
+    d.frames(2);
+    assert_eq!(d.app().session.shortcuts.primary("view.zoomToSequence").as_deref(), Some("\\"));
+}
+
+#[test]
+fn linked_track_control_uses_independent_angle_limits() {
+    for (dx, left, right, expected) in [(-10.0, 30.0, 89.0, true), (10.0, 30.0, 89.0, false), (-10.0, 89.0, 30.0, false), (10.0, 89.0, 30.0, true)] {
+        let mut d = Driver::tall();
+        d.app().session.state.timeline_ui.control_tracks = true;
+        d.app().session.state.timeline_ui.control_tracks_angle_left = left;
+        d.app().session.state.timeline_ui.control_tracks_angle_right = right;
+        let r = d.rect("timeline.zoomBar");
+        let (x, y) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+        d.press(x, y);
+        d.move_to(x + dx, y - 20.0);
+        assert_eq!(d.app().tl.zoombar_track_control, expected, "dx={dx}, left={left}, right={right}");
+        d.release(x + dx, y - 20.0);
+    }
+}
+
+#[test]
+fn equal_track_counts_fit_and_mirror_at_both_outer_walls() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    let seq = d.app().session.active_sequence().unwrap();
+    assert_eq!(seq.video_tracks.len(), seq.audio_tracks.len());
+    d.app().session.state.timeline_ui.track_slider_smooth = false;
+    d.app().ui.timeline.video_track_h = 22.0;
+    d.app().ui.timeline.audio_track_h = 22.0;
+    d.frames(4);
+    let vb = d.rect("timeline.trackSlider.video.track");
+    let ab = d.rect("timeline.trackSlider.audio.track");
+    assert!((vb[3] - ab[3]).abs() < 0.01, "bars {vb:?} {ab:?}");
+    let v = &d.app().ui.timeline;
+    assert!((v.video_track_h - v.audio_track_h).abs() < 0.01, "fit heights {} {}", v.video_track_h, v.audio_track_h);
+    d.app().ui.timeline.video_track_h = 130.0;
+    d.app().ui.timeline.v_scroll = 100000.0;
+    d.frames(3);
+    d.ok("ui.click", json!({"id": "timeline.trackSlider.video", "count": 2}));
+    d.frames(4);
+    let vt = d.rect("timeline.trackSlider.video");
+    let at = d.rect("timeline.trackSlider.audio");
+    assert!((vt[1] - vb[1]).abs() < 0.01, "video wall {vt:?} {vb:?}");
+    assert!((at[1] + at[3] - ab[1] - ab[3]).abs() < 0.01, "audio wall {at:?} {ab:?}");
+    assert!((vt[3] - at[3]).abs() < 0.01, "thumb lengths {vt:?} {at:?}");
+}
+
+#[test]
+fn track_snap_aligns_visible_area_edge_with_named_track_boundaries() {
+    for window_height in [900.0, 980.0] {
+        for count in [3usize, 8] {
+            for video in [true, false] {
+                for split in [0.45, 0.55] {
+                    let mut d = Driver::sized_with_step(1600.0, window_height, 1.0 / 60.0);
+                    if count > 3 {
+                        d.exec("sequence.addTracks", json!({"video": count - 3, "audio": count - 3}));
+                    }
+                    d.app().session.state.timeline_ui.track_slider_decouple = true;
+                    d.app().session.state.timeline_ui.track_slider_snap = true;
+                    d.app().ui.timeline.split = split;
+                    d.app().ui.timeline.video_track_h = 220.0;
+                    d.app().ui.timeline.audio_track_h = 220.0;
+                    d.frames(4);
+                    let circle_id = if video { "timeline.trackSlider.video.topCircle" } else { "timeline.trackSlider.audio.bottomCircle" };
+                    let (view_min, view_max) = track_view(&mut d, video);
+                    let view_edge = if video { view_min } else { view_max };
+                    let circle = d.rect(circle_id);
+                    let (x, start) = (circle[0] + circle[2] / 2.0, circle[1] + circle[3] / 2.0);
+                    let mut reached = Vec::new();
+                    d.press(x, start);
+                    for step in 1..=180 {
+                        let y = start + if video { -(step as f32) } else { step as f32 };
+                        d.move_to(x, y);
+                        let layout = d.app().tl.layout.as_ref().unwrap();
+                        let rows: Vec<_> = layout
+                            .rows
+                            .iter()
+                            .filter(|r| matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio)))
+                            .collect();
+                        for (index, row) in rows.iter().enumerate().take(3) {
+                            let line = if video { row.rect.min.y + 1.0 } else { row.rect.max.y - 1.0 };
+                            if (line - view_edge).abs() < 0.02 && !reached.contains(&index) {
+                                reached.push(index);
+                            }
+                        }
+                    }
+                    d.release(x, start + if video { -180.0 } else { 180.0 });
+                    let (snap, track_h, scroll) = {
+                        let app = d.app();
+                        (
+                            app.session.state.timeline_ui.track_slider_snap,
+                            if video { app.ui.timeline.video_track_h } else { app.ui.timeline.audio_track_h },
+                            if video { app.ui.timeline.v_scroll } else { app.ui.timeline.a_scroll },
+                        )
+                    };
+                    let closest = d
+                        .app()
+                        .tl
+                        .layout
+                        .as_ref()
+                        .map(|layout| {
+                            layout
+                                .rows
+                                .iter()
+                                .filter(|r| {
+                                    matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio))
+                                })
+                                .map(|r| {
+                                    let line = if video { r.rect.min.y + 1.0 } else { r.rect.max.y - 1.0 };
+                                    (line - view_edge).abs()
+                                })
+                                .fold(f32::INFINITY, f32::min)
+                        })
+                        .unwrap_or(f32::INFINITY);
+                    let boundaries = d
+                        .app()
+                        .tl
+                        .layout
+                        .as_ref()
+                        .map(|layout| {
+                            layout
+                                .rows
+                                .iter()
+                                .filter(|r| {
+                                    matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio))
+                                })
+                                .map(|r| format!("{}:{:.2}", r.index, if video { r.rect.min.y + 1.0 } else { r.rect.max.y - 1.0 }))
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        })
+                        .unwrap_or_default();
+                    assert_eq!(
+                        reached,
+                        vec![0, 1, 2],
+                        "height={window_height}, tracks={count}, video={video}, split={split}, snap={snap}, track_h={track_h}, scroll={scroll}, view_edge={view_edge}, closest={closest}, boundaries={boundaries}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn track_snap_uses_scrolled_rows_and_survives_release() {
+    for video in [true, false] {
+        let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+        d.exec("sequence.addTracks", json!({"video": 5, "audio": 5}));
+        d.app().session.state.timeline_ui.track_slider_decouple = true;
+        d.app().session.state.timeline_ui.track_slider_snap = true;
+        d.app().ui.timeline.video_track_h = 100.0;
+        d.app().ui.timeline.audio_track_h = 100.0;
+        d.app().ui.timeline.v_scroll = 80.0;
+        d.app().ui.timeline.a_scroll = 80.0;
+        d.frames(4);
+        assert!(if video { d.app().ui.timeline.v_scroll > 0.5 } else { d.app().ui.timeline.a_scroll > 0.5 });
+        let id = if video { "timeline.trackSlider.video.topCircle" } else { "timeline.trackSlider.audio.bottomCircle" };
+        let (view_min, view_max) = track_view(&mut d, video);
+        let view_edge = if video { view_min } else { view_max };
+        let c = d.rect(id);
+        let (x, start) = (c[0] + c[2] / 2.0, c[1] + c[3] / 2.0);
+        d.press(x, start);
+        let mut found = false;
+        for step in 1..=100 {
+            let y = start + if video { -(step as f32) } else { step as f32 };
+            d.move_to(x, y);
+            let layout = d.app().tl.layout.as_ref().unwrap();
+            let matched = layout
+                .rows
+                .iter()
+                .filter(|r| matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio)))
+                .any(|r| {
+                    let line = if video { r.rect.min.y + 1.0 } else { r.rect.max.y - 1.0 };
+                    (line - view_edge).abs() < 0.02
+                });
+            if matched {
+                d.release(x, y);
+                d.frames(3);
+                let layout = d.app().tl.layout.as_ref().unwrap();
+                let stays = layout
+                    .rows
+                    .iter()
+                    .filter(|r| matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio)))
+                    .any(|r| {
+                        let line = if video { r.rect.min.y + 1.0 } else { r.rect.max.y - 1.0 };
+                        (line - view_edge).abs() < 0.02
+                    });
+                assert!(stays, "line moved off the viewport edge after release: video={video}");
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "no scrolled track boundary reached the viewport edge: video={video}");
+    }
+}
+
+#[test]
+fn twelve_tracks_zoom_out_without_scrolling_to_the_middle() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    d.exec("sequence.addTracks", json!({"video": 9, "audio": 9}));
+    d.app().ui.timeline.audio_track_h = 100.0;
+    d.app().ui.timeline.a_scroll = 0.0;
+    d.frames(4);
+    let c = d.rect("timeline.trackSlider.audio.bottomCircle");
+    let bar = d.rect("timeline.trackSlider.audio.track");
+    let (x, y) = (c[0] + c[2] / 2.0, c[1] + c[3] / 2.0);
+    d.press(x, y);
+    d.move_to(x, bar[1] + bar[3] + 30.0);
+    d.release(x, bar[1] + bar[3] + 30.0);
+    assert!(d.app().ui.timeline.a_scroll < 0.1, "zooming out changed the scroll position: {}", d.app().ui.timeline.a_scroll);
+}
+
+#[test]
+fn decoupled_track_edges_keep_opposite_edge_fixed_in_tall_timeline() {
+    for video in [true, false] {
+        for drag_top in [true, false] {
+            let mut d = Driver::sized_with_step(1600.0, 1800.0, 1.0 / 60.0);
+            d.app().session.state.timeline_ui.track_slider_decouple = true;
+            d.app().session.state.timeline_ui.track_slider_snap = false;
+            d.app().ui.timeline.video_track_h = 22.0;
+            d.app().ui.timeline.audio_track_h = 22.0;
+            d.frames(4);
+            let name = if video { "video" } else { "audio" };
+            let thumb_id = format!("timeline.trackSlider.{name}");
+            let circle_id = format!("timeline.trackSlider.{name}.{}Circle", if drag_top { "top" } else { "bottom" });
+            let before = d.rect(&thumb_id);
+            let c = d.rect(&circle_id);
+            let (x, y) = (c[0] + c[2] / 2.0, c[1] + c[3] / 2.0);
+            let target = y + if drag_top { 15.0 } else { -15.0 };
+            let fixed = if drag_top { before[1] + before[3] } else { before[1] };
+            d.press(x, y);
+            d.move_to(x, target);
+            let during = d.rect(&thumb_id);
+            let at = if drag_top { during[1] + during[3] } else { during[1] };
+            assert!((at - fixed).abs() < 0.1, "opposite edge moved during drag: video={video}, top={drag_top}, {before:?} {during:?}");
+            d.release(x, target);
+            d.frames(3);
+            let after = d.rect(&thumb_id);
+            let at = if drag_top { after[1] + after[3] } else { after[1] };
+            assert!((at - fixed).abs() < 0.1, "opposite edge moved on release: video={video}, top={drag_top}, {before:?} {after:?}");
+        }
+    }
+}
+
+#[test]
+fn inner_circle_snaps_scrolled_tracks_to_clip_edge() {
+    for video in [true, false] {
+        for decouple in [true] {
+            let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+            d.exec("sequence.addTracks", json!({"video": 5, "audio": 5}));
+            d.app().session.state.timeline_ui.track_slider_decouple = decouple;
+            d.app().session.state.timeline_ui.track_slider_snap = true;
+            d.app().ui.timeline.video_track_h = 100.0;
+            d.app().ui.timeline.audio_track_h = 100.0;
+            d.app().ui.timeline.v_scroll = 80.0;
+            d.app().ui.timeline.a_scroll = 80.0;
+            d.frames(4);
+            let id = if video { "timeline.trackSlider.video.bottomCircle" } else { "timeline.trackSlider.audio.topCircle" };
+            let (view_min, view_max) = track_view(&mut d, video);
+            let edge = if video { view_max } else { view_min };
+            let offset = if video { -0.5 } else { 0.5 };
+            let fixed_view = ((view_max - view_min) + 80.0 + offset) / 100.0;
+            let c = d.rect(id);
+            let (x, start) = (c[0] + c[2] / 2.0, c[1] + c[3] / 2.0);
+            d.press(x, start);
+            let mut found = false;
+            for step in 1..=90 {
+                let y = start + if video { -(step as f32) } else { step as f32 };
+                d.move_to(x, y);
+                let layout = d.app().tl.layout.as_ref().unwrap();
+                let matched = layout
+                    .rows
+                    .iter()
+                    .filter(|r| matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio)))
+                    .any(|r| {
+                        let clip_edge = if video { r.rect.max.y - 1.0 } else { r.rect.min.y + 1.0 };
+                        (clip_edge - edge).abs() < 0.02
+                    });
+                if matched {
+                    d.release(x, y);
+                    d.frames(3);
+                    let (height, scroll) = if video {
+                        (d.app().ui.timeline.video_track_h, d.app().ui.timeline.v_scroll)
+                    } else {
+                        (d.app().ui.timeline.audio_track_h, d.app().ui.timeline.a_scroll)
+                    };
+                    let after = ((view_max - view_min) + scroll + offset) / height;
+                    assert!((after - fixed_view).abs() < 0.0001, "opposite visible edge moved while snapping: {fixed_view} -> {after}");
+                    let layout = d.app().tl.layout.as_ref().unwrap();
+                    assert!(
+                        layout
+                            .rows
+                            .iter()
+                            .filter(|r| matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio)))
+                            .any(|r| {
+                                let clip_edge = if video { r.rect.max.y - 1.0 } else { r.rect.min.y + 1.0 };
+                                (clip_edge - edge).abs() < 0.02
+                            }),
+                        "inner snap moved away on release"
+                    );
+                    found = true;
+                    break;
+                }
+            }
+            assert!(found, "inner circle found no snap: video={video}, decouple={decouple}");
+        }
+    }
+}
+
+#[test]
+fn fine_track_drag_ignores_all_snap_detents() {
+    let drag = |snap: bool| {
+        let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+        d.exec("sequence.addTracks", json!({"video": 9, "audio": 9}));
+        d.app().session.state.timeline_ui.track_slider_snap = snap;
+        d.app().session.state.timeline_ui.track_slider_shift_drag_speed = 0.1;
+        d.app().ui.timeline.audio_track_h = 40.0;
+        d.frames(4);
+        let c = d.rect("timeline.trackSlider.audio.bottomCircle");
+        let (x, y) = (c[0] + c[2] / 2.0, c[1] + c[3] / 2.0);
+        d.ok("ui.drag", json!({"from": {"x": x, "y": y}, "to": {"x": x, "y": y + 30.0}, "steps": 15, "modifiers": {"shift": true}}));
+        d.frames(3);
+        d.app().ui.timeline.audio_track_h
+    };
+    let without_snap = drag(false);
+    let with_snap = drag(true);
+    assert!((with_snap - without_snap).abs() < 0.01, "fine drag changed when snapping was enabled: {with_snap} vs {without_snap}");
+    assert!(with_snap > 39.0, "fine drag jumped to the minimum height: {with_snap}");
+}
+
+#[test]
+fn track_separator_header_and_timeline_share_vertical_clip() {
+    for video in [true, false] {
+        let mut d = Driver::demo();
+        let layout = d.app().tl.layout.as_ref().unwrap();
+        let content_x = layout.content.min.x;
+        let row = layout
+            .rows
+            .iter()
+            .find(|r| {
+                r.index == if video { 1 } else { 0 }
+                    && matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio))
+            })
+            .unwrap();
+        let y = row.rect.max.y - 0.5;
+        let separator = d.app().tokens.separator;
+        let mut header = None;
+        let mut timeline = None;
+        for shape in &d.harness.output().shapes {
+            if let egui::Shape::LineSegment { points, stroke } = &shape.shape
+                && stroke.color == separator
+                && (points[0].y - y).abs() < 0.01
+                && (points[1].x - points[0].x).abs() > 50.0
+            {
+                if points[0].x < content_x - 1.0 && points[1].x <= content_x + 0.1 {
+                    header = Some(shape.clip_rect);
+                }
+                if (points[0].x - content_x).abs() < 0.1 {
+                    timeline = Some(shape.clip_rect);
+                }
+            }
+        }
+        let header = header.expect("painted header separator");
+        let timeline = timeline.expect("painted timeline separator");
+        assert!((header.min.y - timeline.min.y).abs() < 0.01 && (header.max.y - timeline.max.y).abs() < 0.01, "different clipping: {header:?} / {timeline:?}");
+    }
+}
+
+#[test]
+fn decoupled_scrolled_track_slider_holds_other_edge_while_snapping() {
+    for video in [true, false] {
+        for drag_top in [true, false] {
+            for snap in [true, false] {
+                let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+                d.exec("sequence.addTracks", json!({"video": 5, "audio": 5}));
+                d.app().session.state.timeline_ui.track_slider_decouple = true;
+                d.app().session.state.timeline_ui.track_slider_snap = true;
+                d.app().session.state.timeline_ui.track_slider_snap = snap;
+                d.app().ui.timeline.video_track_h = 100.0;
+                d.app().ui.timeline.audio_track_h = 100.0;
+                d.app().ui.timeline.v_scroll = 80.0;
+                d.app().ui.timeline.a_scroll = 80.0;
+                d.frames(4);
+                let name = if video { "video" } else { "audio" };
+                let thumb_id = format!("timeline.trackSlider.{name}");
+                let circle_id = format!("timeline.trackSlider.{name}.{}Circle", if drag_top { "top" } else { "bottom" });
+                let before = d.rect(&thumb_id);
+                let fixed = if drag_top { before[1] + before[3] } else { before[1] };
+                let circle = d.rect(&circle_id);
+                let (x, y) = (circle[0] + circle[2] / 2.0, circle[1] + circle[3] / 2.0);
+                let target = y + if drag_top { 5.0 } else { -5.0 };
+                d.press(x, y);
+                d.move_to(x, target);
+                d.release(x, target);
+                d.frames(3);
+                let after = d.rect(&thumb_id);
+                let other = if drag_top { after[1] + after[3] } else { after[1] };
+                assert!((other - fixed).abs() < 0.1, "other edge moved: video={video} top={drag_top} snap={snap}: {before:?} -> {after:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn snapping_requires_decoupled_edges_and_explains_why() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    let slider = d.rect("timeline.trackSlider.video");
+    d.click_at(slider[0] + slider[2] / 2.0, slider[1] + slider[3] / 2.0, "right");
+    d.ok("ui.click", json!({"id": "timeline.trackSlider.settings.decoupleEdges"}));
+    d.frames(2);
+    assert!(!d.app().session.state.timeline_ui.track_slider_decouple);
+    assert!(!d.app().session.state.timeline_ui.track_slider_snap);
+    d.ok("ui.click", json!({"id": "timeline.trackSlider.settings.snapToTracks"}));
+    d.frames(2);
+    assert!(!d.app().session.state.timeline_ui.track_slider_snap);
+    assert!(d.has("timeline.trackSlider.snapRequiresDecoupling.ok"));
+    let ok = d.rect("timeline.trackSlider.snapRequiresDecoupling.ok");
+    let layer = d.harness.ctx.layer_id_at(egui::pos2(ok[0] + ok[2] / 2.0, ok[1] + ok[3] / 2.0)).expect("popup layer");
+    assert_eq!(layer, egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("timeline-snap-requires-decoupling-window")));
+    d.ok("engine.execute", json!({"command": "file.newBin", "params": {"name": "Unsaved"}}));
+    d.ok("ui.menu.invoke", json!({"id": "file.closeProject"}));
+    d.frames(3);
+    let save = d.rect("closeProject.save");
+    let layer = d.harness.ctx.layer_id_at(egui::pos2(save[0] + save[2] / 2.0, save[1] + save[3] / 2.0)).expect("save layer");
+    assert_eq!(layer.order, egui::Order::Tooltip, "Save Project must remain above slider popups");
+    d.ok("ui.click", json!({"id": "closeProject.cancel"}));
+    d.ok("ui.click", json!({"id": "timeline.trackSlider.snapRequiresDecoupling.ok"}));
+    d.frames(2);
+    assert!(!d.has("timeline.trackSlider.snapRequiresDecoupling.ok"));
+}
+
+#[test]
+fn simple_left_click_binding_is_rejected() {
+    let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    let row = d.rect("timeline.zoomBar.settings.controls");
+    d.move_to(row[0] + 10.0, row[1] + row[3] / 2.0);
+    d.frames(2);
+    d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.controlsFlyout.box0"}));
+    let before = d.app().session.state.timeline_ui.control_center_on_playhead.clone();
+    d.click_at(row[0] + 20.0, row[1] + row[3] / 2.0, "left");
+    d.frames(30);
+    assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, before);
+    assert!(d.has("timeline.rightClickDialog.ok"));
+}
+
+#[test]
+fn decoupled_drag_keeps_opposite_visible_track_coordinate_fixed() {
+    for video in [true, false] {
+        for outer in [true, false] {
+            for snap in [true, false] {
+                let mut d = Driver::sized_with_step(1600.0, 980.0, 1.0 / 60.0);
+                d.exec("sequence.addTracks", json!({"video": 5, "audio": 5}));
+                d.app().session.state.timeline_ui.track_slider_decouple = true;
+                d.app().session.state.timeline_ui.track_slider_snap = snap;
+                d.app().ui.timeline.video_track_h = 100.0;
+                d.app().ui.timeline.audio_track_h = 100.0;
+                d.frames(4);
+                let (view_min, view_max) = track_view(&mut d, video);
+                let window = view_max - view_min;
+                let offset = if video { -0.5 } else { 0.5 };
+                let aligned_scroll = if outer { 100.0 - offset } else { 200.0 - window - offset };
+                if video {
+                    d.app().ui.timeline.v_scroll = aligned_scroll;
+                } else {
+                    d.app().ui.timeline.a_scroll = aligned_scroll;
+                }
+                d.frames(3);
+                let (height, scroll) = if video {
+                    (d.app().ui.timeline.video_track_h, d.app().ui.timeline.v_scroll)
+                } else {
+                    (d.app().ui.timeline.audio_track_h, d.app().ui.timeline.a_scroll)
+                };
+                let anchor = ((if outer { scroll } else { window + scroll }) + offset) / height;
+                let fixed_screen_edge = if video == outer { view_max } else { view_min };
+                let circle_id = match (video, outer) {
+                    (true, true) => "timeline.trackSlider.video.topCircle",
+                    (true, false) => "timeline.trackSlider.video.bottomCircle",
+                    (false, true) => "timeline.trackSlider.audio.bottomCircle",
+                    (false, false) => "timeline.trackSlider.audio.topCircle",
+                };
+                let c = d.rect(circle_id);
+                let (x, y) = (c[0] + c[2] / 2.0, c[1] + c[3] / 2.0);
+                let direction = if video == outer { 1.0 } else { -1.0 };
+                d.press(x, y);
+                d.move_to(x, y + direction * 12.0);
+                d.release(x, y + direction * 12.0);
+                d.frames(3);
+                let (height, scroll) = if video {
+                    (d.app().ui.timeline.video_track_h, d.app().ui.timeline.v_scroll)
+                } else {
+                    (d.app().ui.timeline.audio_track_h, d.app().ui.timeline.a_scroll)
+                };
+                let after = ((if outer { scroll } else { window + scroll }) + offset) / height;
+                assert!((height - 100.0).abs() > 0.01, "drag did not resize");
+                assert!((after - anchor).abs() < 0.0001, "visible edge shifted: video={video}, outer={outer}, snap={snap}, {anchor} -> {after}");
+                let index = match (video, outer) {
+                    (true, true) | (false, false) => 1,
+                    (true, false) => 2,
+                    (false, true) => 0,
+                };
+                let layout = d.app().tl.layout.as_ref().unwrap();
+                let row = layout
+                    .rows
+                    .iter()
+                    .find(|r| {
+                        r.index == index
+                            && matches!((video, r.kind), (true, filmcraft_project::TrackKind::Video) | (false, filmcraft_project::TrackKind::Audio))
+                    })
+                    .unwrap();
+                let line = row.rect.max.y - 0.5;
+                assert!(
+                    (line - fixed_screen_edge).abs() < 0.02,
+                    "painted line moved at the fixed viewport edge: video={video}, outer={outer}, snap={snap}, line={line}, edge={fixed_screen_edge}"
+                );
+            }
+        }
+    }
 }

@@ -274,6 +274,10 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         view_settings_changed |= app.session.state.timeline_ui.inverted_controls != v;
         app.session.state.timeline_ui.inverted_controls = v;
     }
+    if let Some(v) = tl.get("controlTracks").and_then(Value::as_bool) {
+        view_settings_changed |= app.session.state.timeline_ui.control_tracks != v;
+        app.session.state.timeline_ui.control_tracks = v;
+    }
     if let Some(v) = tl.get("playheadSideSeconds").and_then(Value::as_f64).filter(|v| v.is_finite() && (0.1..=3600.0).contains(v)) {
         view_settings_changed |= app.session.state.timeline_ui.playhead_side_seconds != v;
         app.session.state.timeline_ui.playhead_side_seconds = v;
@@ -319,6 +323,20 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
     }
     if let Some(v) = tl.get("trackSliderHidden").and_then(Value::as_bool) {
         crate::panels::timeline::set_track_slider_hidden(app, ctx, v);
+    }
+    if let Some(values) = tl.get("timelineControlBindings").and_then(Value::as_array) {
+        for (slot, value) in values.iter().take(14).enumerate() {
+            if let Some(binding) = value.as_str() {
+                let dst = app.session.state.timeline_ui.timeline_control_bindings.get_mut(slot);
+                if let Some(dst) = dst {
+                    let binding: String = binding.chars().take(64).collect();
+                    if *dst != binding {
+                        *dst = binding;
+                        view_settings_changed = true;
+                    }
+                }
+            }
+        }
     }
     if let Some(v) = tl.get("alternateSliderPosition").and_then(Value::as_bool) {
         view_settings_changed |= app.session.state.timeline_ui.alternate_slider_position != v;

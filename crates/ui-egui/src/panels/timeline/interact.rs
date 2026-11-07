@@ -1,7 +1,7 @@
 use super::clips::paint_hatch;
 use super::layout::{Layout, max_pps, max_scroll, min_pps, new_track_at};
 use super::menus::{CLIP_MENU, EditPointTarget, edit_point_menu, gap_menu, marker_menu, multicam_menu, ruler_menu};
-use super::snap::{snap, snap_playhead};
+use super::snap::{snap, snap_playhead, snap_transition};
 use super::{
     Align2, ClipId, Color32, CursorIcon, Drag, EdgeKind, FilmcraftApp, Grab, HashMap, Hit, MarkerId, MarqueeAnchor, Pos2, Pressed, Rect, Sense, Sequence,
     Stroke, StrokeKind, Tick, Tokens, Tool, TrackId, TrackItem, TrackKind, Value, edge_geometry, grab_at, hit, json, marker_at, marker_under_pointer, pos2,
@@ -146,7 +146,10 @@ fn marquee_clips(seq: &Sequence, layout: &Layout, r: Rect) -> Vec<ClipId> {
     layout
         .rows
         .iter()
-        .filter(|row| row.rect.intersects(r))
+        .filter(|row| {
+            let s = layout.shown(row);
+            s.height() > 0.0 && s.intersects(r)
+        })
         .filter_map(|row| seq.track(row.track))
         .flat_map(|tr| tr.items.iter().filter(|i| i.start < b && i.end() > a).map(|i| i.id))
         .collect()
@@ -247,6 +250,8 @@ fn scrub_playhead(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, p: Po
 /// Wheel input over the Timeline: the wheel scrolls the Timeline in time (up = backwards),
 /// Shift+wheel does the same a lot faster, Ctrl+wheel moves the tracks up and down and
 /// Option+wheel zooms about the pointer.
+// Keep the mutually exclusive wheel gestures together so one event only changes one view axis.
+#[allow(clippy::cognitive_complexity)]
 fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &Layout, seq: &Sequence) {
     let ctx = ui.ctx().clone();
     // ---- wheel:
@@ -265,16 +270,60 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
         && !app.tl.track_slider_dragging
     {
         let w = wheel_input(&ctx);
+        if w.command && w.shift && !w.alt {
+            return;
+        }
         let inv = app.session.state.timeline_ui.inverted_controls;
         // macOS delivers Shift+wheel sideways (delta.x only): treat it as the wheel's own axis
         let wdy = if w.delta.y == 0.0 { w.delta.x } else { w.delta.y };
+        let extra = &app.session.state.timeline_ui.timeline_control_bindings;
+        let wheel_name =
+            format!("{}{}{}Scroll", if w.command { "Ctrl + " } else { "" }, if w.shift { "Shift + " } else { "" }, if w.alt { "Alt + " } else { "" });
+        let track_height_binding = extra.first().is_none_or(String::is_empty);
+        let track_height_wheel = if track_height_binding { w.shift && !w.command && !w.alt } else { extra.first().is_some_and(|s| s == &wheel_name) };
+        let fast_scroll = extra.get(1).is_some_and(|s| !s.is_empty() && s == &wheel_name);
+        if track_height_wheel && !fast_scroll && wdy != 0.0 {
+            let video = p.y < layout.split_y;
+            let (height, scroll, window, slots) = if video {
+                (
+                    &mut app.ui.timeline.video_track_h,
+                    &mut app.ui.timeline.v_scroll,
+                    (layout.split_y - layout.content.min.y - seq.caption_tracks.len() as f32 * super::super::timeline_captions::ROW_H).max(1.0),
+                    seq.video_tracks.len() as f32 + 1.0 / 3.0,
+                )
+            } else {
+                (
+                    &mut app.ui.timeline.audio_track_h,
+                    &mut app.ui.timeline.a_scroll,
+                    (layout.content.max.y - layout.split_y - 39.0).max(1.0),
+                    seq.audio_tracks.len() as f32 + 1.0 / 3.0,
+                )
+            };
+            let min = super::scrollbars::track_min_height(window, slots);
+            let max = 220.0f32.max(min * 2.0);
+            let factor = (wdy / 600.0).clamp(-0.3, 0.3) * if inv { -1.0 } else { 1.0 };
+            let old_max = (slots * *height - window).max(0.0);
+            let fraction = if old_max > 0.0 { (*scroll / old_max).clamp(0.0, 1.0) } else { 0.0 };
+            *height = (*height * (1.0 + factor)).clamp(min, max);
+            *scroll = fraction * (slots * *height - window).max(0.0);
+            return;
+        }
+        let track_scroll_binding = extra.get(2).map_or("", String::as_str);
+        let zoom_binding = extra.get(3).map_or("", String::as_str);
+        let default_track_scroll = w.command && !w.shift && !w.alt;
+        let default_zoom = w.alt && !w.command && !w.shift;
+        let track_scroll = if track_scroll_binding.is_empty() { default_track_scroll } else { track_scroll_binding == wheel_name };
+        let zoom_scroll = if zoom_binding.is_empty() { default_zoom } else { zoom_binding == wheel_name };
+        if (default_track_scroll && !track_scroll && !zoom_scroll) || (default_zoom && !zoom_scroll && !track_scroll) {
+            return;
+        }
         // Ctrl + Shift + wheel zooms about the pointer, and Inverted controls turns that around
-        if (w.pinch - 1.0).abs() > 1e-4 || (w.alt && wdy != 0.0) || (w.command && w.shift && wdy != 0.0) {
+        if (w.pinch - 1.0).abs() > 1e-4 || (zoom_scroll && wdy != 0.0) {
             let f = if (w.pinch - 1.0).abs() > 1e-4 {
                 w.pinch as f64
             } else {
                 let mut d = wdy;
-                if w.command && w.shift && inv {
+                if inv {
                     d = -d;
                 }
                 (1.0_f64 + f64::from(d) * 0.01).clamp(0.5, 2.0)
@@ -291,9 +340,19 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
             // time. The wheel itself does the same -- up = backwards in time -- and with Shift a
             // lot faster; Ctrl + wheel moves the tracks up and down. Settings ▸ Timeline ▸
             // Timeline Mouse Scrolling "Horizontal" swaps those two.
+            if track_scroll && !default_track_scroll {
+                if p.y < layout.split_y {
+                    app.ui.timeline.v_scroll += if inv { -w.delta.y } else { w.delta.y };
+                } else {
+                    app.ui.timeline.a_scroll -= if inv { -w.delta.y } else { w.delta.y };
+                }
+                return;
+            }
             let swap = app.session.prefs.timeline.mouse_scrolling == "horizontal";
-            let time = if w.shift {
+            let time = if fast_scroll {
                 Some(wdy * 10.0)
+            } else if w.shift {
+                None
             } else if w.command == swap {
                 Some(wdy)
             } else {
@@ -780,9 +839,9 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
             }
             Drag::Transition { id, edge, from, start, duration } => {
                 let delta = rate.snap_nearest(t_here - from);
-                let span = seq.all_tracks().find_map(|tr| {
-                    tr.transitions.iter().find(|x| x.id == id).and_then(|x| filmcraft_edit::transitions::drag_span(tr, x, edge, delta, rate.frame_duration()))
-                });
+                let span = seq
+                    .all_tracks()
+                    .find_map(|tr| tr.transitions.iter().find(|x| x.id == id).and_then(|x| snap_transition(app, seq, layout, tr, x, edge, delta)));
                 let (start, duration) = span.unwrap_or((start, duration));
                 Some(Drag::Transition { id, edge, from, start, duration })
             }
@@ -1512,6 +1571,7 @@ pub(super) fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence
                     let r = ui.button(tl!("Track Slider Settings"));
                     app.auto.add("timeline.trackSliderSettings", r.rect, "Track Slider Settings");
                     if r.clicked() {
+                        super::scrollbars::track_slider_state_reset(&ctx);
                         app.tl.track_slider_settings_pos = Some(r.rect.min);
                         // the two settings menus are mutually exclusive
                         app.tl.zoombar_settings_pos = None;
@@ -1546,12 +1606,32 @@ pub(super) fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence
 
 #[cfg(test)]
 mod marquee_tests {
+    use super::super::layout::Row;
     use super::*;
 
     fn layout(v_scroll: f32, a_scroll: f32) -> Layout {
         let content = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 600.0));
         let ruler = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 20.0));
         Layout { content, ruler, rows: Vec::new(), pps: 100.0, scroll: 0.0, split_y: 300.0, v_scroll, a_scroll }
+    }
+
+    /// #2978: V1 scrolled down under the audio tracks, behind A1. A box drawn on A1 takes A1's
+    /// clip, not the hidden video clip there (which a box over the audio tracks used to select).
+    #[test]
+    fn a_box_on_the_audio_tracks_skips_video_rows_scrolled_under_them() {
+        let mut p = filmcraft_project::Project::new("t");
+        let id = p.new_sequence("s", filmcraft_project::SequenceSettings::default(), 1, 1, None);
+        let mut seq = p.sequence(id).cloned().expect("sequence");
+        seq.video_tracks[0].items = vec![crate::panels::timeline_hit::tests::clip(1, 100.0, 300.0)];
+        seq.audio_tracks[0].items = vec![crate::panels::timeline_hit::tests::clip(2, 100.0, 300.0)];
+        let mut l = layout(0.0, 0.0);
+        let band = Rect::from_min_max(pos2(0.0, 320.0), pos2(1000.0, 380.0));
+        l.rows = vec![
+            Row { track: seq.video_tracks[0].id, kind: TrackKind::Video, index: 0, rect: band, lane: false },
+            Row { track: seq.audio_tracks[0].id, kind: TrackKind::Audio, index: 0, rect: band, lane: false },
+        ];
+        let picked = marquee_clips(&seq, &l, Rect::from_min_max(pos2(150.0, 330.0), pos2(250.0, 360.0)));
+        assert_eq!(picked, vec![ClipId(2)]);
     }
 
     /// Review of #3583: a video corner scrolled down past the divider, with the pointer still over the

@@ -496,7 +496,7 @@
 	Are you sure you want to discard your changes to '{file}'?	Möchtest du deine Änderungen an „{file}“ wirklich verwerfen?
 	Yes	Ja
 	No	Nein
-	Add media to your project. Drop files anywhere in the window, or choose a source below.	Füge deinem Projekt Medien hinzu. Zieh Dateien irgendwo ins Fenster oder wähle unten eine Quelle.
+	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	Füge deinem Projekt Medien hinzu. Zieh Dateien oder Ordner irgendwo ins Fenster oder wähle unten eine Quelle.
 	Browse files…	Dateien durchsuchen…
 	Movies, audio and stills from disk	Filme, Audio und Standbilder von der Festplatte
 	Demo footage	Demomaterial
@@ -3484,6 +3484,7 @@
 	Clip Speed / Duration	Clipgeschwindigkeit/-dauer
 	Speed:	Geschwindigkeit:
 	Reverse Speed	Rückwärts abspielen
+	Maintain Audio Pitch	Tonhöhe beibehalten
 	Ripple Edit, Shifting Trailing Clips	Ripple-Bearbeitung, nachfolgende Clips verschieben
 	About	Über
 	Contributors	Mitwirkende
@@ -3692,3 +3693,43 @@
 	Previous	Zurück
 	Next	Weiter
 	Enter a valid HH:MM:SS:FF timecode	Gültigen Timecode als HH:MM:SS:FF eingeben
+
+# Export: H.264 High 10 and all-intra (#1221).
+	High 10	High 10
+	10-bit color	10-Bit-Farbe
+	All Intra	Nur Intra
+	Every frame a keyframe (edit-friendly, larger files)	Jedes Bild ein Keyframe (schnittfreundlich, größere Dateien)
+	H.264 High 10 Master	H.264 High 10 Master
+	H.264 High 10 Intra	H.264 High 10 Intra
+	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10 Bit 4:2:0) in der Größe der Sequenz, konstante Qualität CRF 16, AAC 320 kbps; ein 10-Bit-Master
+	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10 Bit 4:2:0, jedes Bild ein Keyframe), CRF 12, AAC 320 kbps; ein schnittfreundliches Zwischenformat
+
+	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	Wenn aktiviert, werden die Reglerkanten, das Zentrieren auf den Abspielkopf und das Spiegeln des Reglers weich animiert.
+	Reverses timeline scrolling and zooming when holding the center of the slider.	Kehrt das Scrollen und Zoomen der Zeitleiste um, wenn die Mitte des Reglers gehalten wird.
+	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	Ziehe den Zeitleistenregler senkrecht, um die Größe beider Spurbereiche zu ändern. Empfohlen, wenn die Spurregler ausgeblendet sind.
+	When the playhead enters the visible timeline, zooming in gravitates the view toward it.	Wenn der Abspielkopf in den sichtbaren Bereich gelangt, bewegt sich die Ansicht beim Vergrößern auf ihn zu.
+	Moves the timeline slider to the top.	Verschiebt den Zeitleistenregler nach oben.
+	Sets the maximum amount you can zoom in.	Legt die maximale Vergrößerung fest.
+	Mimics the feature in Blender. A high multiplier can make it faster than dragging normally.	Ahmt die Funktion in Blender nach. Ein hoher Multiplikator kann schneller als normales Ziehen sein.
+	Sets how much of the timeline is visible on each side of the playhead.	Legt fest, wie viel der Zeitleiste auf beiden Seiten des Abspielkopfs sichtbar ist.
+	Reverses zooming when holding the center of a slider and scrolling vertically on the timeline.	Kehrt das Zoomen um, wenn die Reglermitte gehalten und senkrecht über der Zeitleiste gescrollt wird.
+	Use Alternate Drag Speed for fine adjustments when enabled.	Verwende bei aktivierter Funktion die alternative Ziehgeschwindigkeit für Feineinstellungen.
+	Keeps the opposite slider edge fixed while resizing.	Hält beim Ändern der Größe die gegenüberliegende Reglerkante fest.
+	Moves the track sliders to the left side.	Verschiebt die Spurregler nach links.
+	Adjust Track Height:	Spurhöhe anpassen:
+	Fast Timeline Scroll:	Schnelles Scrollen der Zeitleiste:
+	Mirror Sliders:	Regler spiegeln:
+	Scroll Track Rows:	Spurzeilen scrollen:
+	Timeline Slider: Alternate Drag Speed	Zeitleistenregler: alternative Ziehgeschwindigkeit
+	Timeline Slider: Center on Playhead	Zeitleistenregler: auf Abspielkopf zentrieren
+	Timeline Slider: Explode	Zeitleistenregler: erweitern
+	Timeline: Fast Scroll	Zeitleiste: schnell scrollen
+	Timeline: Zoom	Zeitleiste: Zoom
+	Track Sliders: Adjust Track Height	Spurregler: Spurhöhe anpassen
+	Track Sliders: Alternate Drag Speed	Spurregler: alternative Ziehgeschwindigkeit
+	Track Sliders: Explode	Spurregler: erweitern
+	Track Sliders: Mirror	Spurregler: spiegeln
+	Track Sliders: Scroll Track Rows	Spurregler: Spurzeilen scrollen
+	Zoom In:	Vergrößern:
+	Zoom Out:	Verkleinern:
+	Zoom Timeline:	Zeitleiste zoomen:

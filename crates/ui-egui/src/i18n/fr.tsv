@@ -3737,7 +3737,7 @@
 	Hide Slider	Masquer le curseur
 	Unhide Slider	Afficher le curseur
 	Maximum Zoom Level	Niveau de zoom maximal
-	Alternate Drag Speed (Shift + Left Click)	Vitesse de déplacement alternative (Maj + clic gauche)
+	Alternate Drag Speed (Shift + Drag)	Vitesse de déplacement alternative (Maj + glisser)
 	Playhead Centering Range (Double Click)	Plage de centrage de la tête de lecture (double clic)
 	Alternate Drag Speed	Vitesse de déplacement alternative
 	Value:	Valeur :
@@ -3771,3 +3771,85 @@
 	Alternate drag speed multiplier	Multiplicateur de la vitesse de déplacement alternative
 	Playhead centering range in seconds	Plage de centrage de la tête de lecture en secondes
 	Alternate drag speed for the track sliders	Vitesse de déplacement alternative des curseurs de pistes
+
+	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	Lorsque cette option est activée, les bords des curseurs, le centrage sur la tête de lecture et la symétrie du curseur sont animés en douceur.
+	Reverses timeline scrolling and zooming when holding the center of the slider.	Inverse le défilement et le zoom de la timeline lorsque le centre du curseur est maintenu.
+	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	Faites glisser le curseur de la timeline verticalement pour redimensionner les deux sections de pistes. Recommandé lorsque les curseurs de piste sont masqués.
+	When the playhead enters the visible timeline, zooming in gravitates the view toward it.	Lorsque la tête de lecture entre dans la zone visible de la timeline, le zoom rapproche la vue de celle-ci.
+	Moves the timeline slider to the top.	Déplace le curseur de la timeline en haut.
+	Sets the maximum amount you can zoom in.	Définit le niveau maximal de zoom avant.
+	Mimics the feature in Blender. A high multiplier can make it faster than dragging normally.	Reproduit la fonction de Blender. Un multiplicateur élevé peut rendre le déplacement plus rapide qu’un glissement normal.
+	Sets how much of the timeline is visible on each side of the playhead.	Définit la durée visible de la timeline de chaque côté de la tête de lecture.
+	Reverses zooming when holding the center of a slider and scrolling vertically on the timeline.	Inverse le zoom lorsque le centre d’un curseur est maintenu et que l’on fait défiler la timeline verticalement.
+	Use Alternate Drag Speed for fine adjustments when enabled.	Utilisez la vitesse de glissement alternative pour des ajustements précis lorsqu’elle est activée.
+	Keeps the opposite slider edge fixed while resizing.	Maintient le bord opposé du curseur fixe pendant le redimensionnement.
+	Moves the track sliders to the left side.	Déplace les curseurs de piste vers la gauche.
+	Adjust Track Height:	Ajuster la hauteur des pistes :
+	Fast Timeline Scroll:	Défilement rapide de la timeline :
+	Mirror Sliders:	Mettre les curseurs en miroir :
+	Scroll Track Rows:	Faire défiler les pistes :
+	Timeline Slider: Alternate Drag Speed	Curseur de la timeline : vitesse de glissement alternative
+	Timeline Slider: Center on Playhead	Curseur de la timeline : centrer sur la tête de lecture
+	Timeline Slider: Explode	Curseur de la timeline : déployer
+	Timeline: Fast Scroll	Timeline : défilement rapide
+	Timeline: Zoom	Timeline : zoom
+	Track Sliders: Adjust Track Height	Curseurs de piste : ajuster la hauteur des pistes
+	Track Sliders: Alternate Drag Speed	Curseurs de piste : vitesse de glissement alternative
+	Track Sliders: Explode	Curseurs de piste : déployer
+	Track Sliders: Mirror	Curseurs de piste : mettre en miroir
+	Track Sliders: Scroll Track Rows	Curseurs de piste : faire défiler les pistes
+	Zoom In:	Zoom avant :
+	Zoom Out:	Zoom arrière :
+	Zoom Timeline:	Zoom de la timeline :
+
+	Shortcut unavailable	Raccourci indisponible
+	Left click is reserved for controlling the application and cannot be assigned.	Le clic gauche est réservé au contrôle de l’application et ne peut pas être attribué.
+	Right click is reserved for opening slider settings and cannot be assigned.	Le clic droit est réservé à l’ouverture des réglages du curseur et ne peut pas être attribué.
+	Turn on Decouple Edges to use Snap to Tracks; linked edges cannot snap independently.	Activez Dissocier les bords pour utiliser l’alignement sur les pistes ; les bords liés ne peuvent pas être alignés indépendamment.
+
+	This shortcut is already assigned. Open Keyboard Shortcuts to review it.	Ce raccourci est déjà attribué. Ouvrez les raccourcis clavier pour le vérifier.
+
+	10-bit color	Couleur 10 bits
+	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	Ajoutez des médias à votre projet. Déposez des fichiers ou des dossiers dans la fenêtre, ou choisissez une source ci-dessous.
+	All Intra	Tout intra
+	Copy of the project saved to {path}	Copie du projet enregistrée dans {path}
+	Every frame a keyframe (edit-friendly, larger files)	Chaque image est une image clé (montage facilité, fichiers plus volumineux)
+	From preset file:	Depuis le fichier de préréglage :
+	Imported {n} preset(s)	{n} préréglage(s) importé(s)
+	Imported {n} preset(s); {skipped} skipped	{n} préréglage(s) importé(s) ; {skipped} ignoré(s)
+	Imported {n} preset(s); {warnings} with unsupported parameters	{n} préréglage(s) importé(s) ; {warnings} avec des paramètres non pris en charge
+	Imported {n} preset(s); not imported: {error}	{n} préréglage(s) importé(s) ; non importé : {error}
+	Maintain Audio Pitch	Conserver la hauteur audio
+	No presets folder: the app has no data directory	Aucun dossier de préréglages : l’application ne possède pas de répertoire de données
+	Open Presets Folder	Ouvrir le dossier des préréglages
+	Preset library is up to date	La bibliothèque de préréglages est à jour
+	Preset library updated	Bibliothèque de préréglages mise à jour
+	Preset library updated: {imported} loaded, {removed} removed	Bibliothèque de préréglages mise à jour : {imported} chargés, {removed} supprimés
+	Project saved to {path}	Projet enregistré dans {path}
+	Scan Presets Folder	Analyser le dossier des préréglages
+	Ticked attributes are removed from the selected clips.	Les attributs cochés sont supprimés des clips sélectionnés.
+
+	Imported {n} preset(s); {skipped} skipped, {warnings} with unsupported parameters	{n} préréglage(s) importé(s) ; {skipped} ignoré(s), {warnings} avec des paramètres non pris en charge
+
+	No bin {id}	Aucun chutier {id}
+
+	Unbound	Non attribué
+	Track Control Angle:	Angle de contrôle des pistes :
+	to	à
+
+	Control Track Sliders	Contrôler les curseurs de piste
+
+	Full Screen Program Monitor	Moniteur programme en plein écran
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 10 Mbps, loudness normalized to −14 LUFS	H.264 vertical 9:16, mise à l’échelle pour remplir, VBR 1 passe, 10 Mbit/s, sonie normalisée à −14 LUFS
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 12 Mbps, loudness normalized to −14 LUFS	H.264 vertical 9:16, mise à l’échelle pour remplir, VBR 1 passe, 12 Mbit/s, sonie normalisée à −14 LUFS
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 8 Mbps, loudness normalized to −14 LUFS	H.264 vertical 9:16, mise à l’échelle pour remplir, VBR 1 passe, 8 Mbit/s, sonie normalisée à −14 LUFS
+	Instagram Reels 1080×1920	Instagram Reels 1080×1920
+	Key Out Brights	Incruster les hautes lumières
+	TikTok 1080×1920	TikTok 1080×1920
+	YouTube Shorts 1080×1920	YouTube Shorts 1080×1920
+
+	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10 bits 4:2:0) à la taille de la séquence, qualité constante CRF 16, AAC 320 kbit/s ; un master 10 bits
+	H.264 High 10 Intra	H.264 High 10 Intra
+	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10 bits 4:2:0, chaque image est une image clé), CRF 12, AAC 320 kbit/s ; un intermédiaire adapté au montage
+	H.264 High 10 Master	Master H.264 High 10
+	High 10	High 10

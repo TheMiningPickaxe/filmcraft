@@ -109,6 +109,7 @@ pub const PREMIERE: &[Entry] = &[
     ("sequence.lift", ";", ""),
     ("sequence.extract", "'", ""),
     ("view.zoomIn", "=", ""),
+    ("view.zoomIn", "+", ""),
     ("view.zoomOut", "-", ""),
     ("sequence.snap", "S", ""),
     // Markers
