@@ -1123,6 +1123,17 @@ fn minimap_clips_fit(bar_w: f32, screen_w: f32) -> bool {
     bar_w >= 0.25 * screen_w.max(1.0)
 }
 
+/// Keep the straight side of an edge indicator outside the full semicircle's tangent.
+fn minimap_indicator_bounds(mut xa: f32, mut xb: f32, left_tangent: f32, right_tangent: f32, hug_left: bool, hug_right: bool) -> (f32, f32) {
+    if hug_left {
+        xb = xb.max(left_tangent);
+    }
+    if hug_right {
+        xa = xa.min(right_tangent);
+    }
+    (xa, xb)
+}
+
 /// Accumulate clip boundaries so overlapping long clips cost constant work each, rather than
 /// repainting every covered column for every clip.
 fn minimap_add_span(boundaries: &mut [[i64; 3]], start: usize, end: usize, priority: usize) {
@@ -2295,7 +2306,7 @@ mod zoom_drag_scale_tests {
 
 #[cfg(test)]
 mod controls_tests {
-    use super::{SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, matches_gesture, minimap_clips_fit, shift_drag_rate};
+    use super::{SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, matches_gesture, minimap_clips_fit, minimap_indicator_bounds, shift_drag_rate};
 
     #[test]
     fn minimap_boundaries_match_per_column_priority_for_overlaps() {
@@ -2346,6 +2357,16 @@ mod controls_tests {
         assert!(!minimap_clips_fit(0.0, 1000.0));
         // a hostile screen width can never divide by zero or flip the answer
         assert!(minimap_clips_fit(10.0, 0.0) == minimap_clips_fit(10.0, 1.0));
+    }
+
+    #[test]
+    fn minimap_edge_caps_keep_full_semicircles_for_short_runs() {
+        // Even a sub-pixel run at an extreme gets its straight edge moved to the circle tangent.
+        assert_eq!(minimap_indicator_bounds(20.0, 20.2, 24.0, 76.0, true, false), (20.0, 24.0));
+        assert_eq!(minimap_indicator_bounds(79.8, 80.0, 24.0, 76.0, false, true), (76.0, 80.0));
+        // Interior runs and runs already beyond the tangent keep their existing bounds.
+        assert_eq!(minimap_indicator_bounds(40.0, 45.0, 24.0, 76.0, false, false), (40.0, 45.0));
+        assert_eq!(minimap_indicator_bounds(20.0, 30.0, 24.0, 76.0, true, false), (20.0, 30.0));
     }
 
     /// The Alternate Drag Speed setting squares: 1x keeps the slow rate, 0.5x a quarter of it and
@@ -2527,8 +2548,8 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         let outline = |x0: f32, x1: f32, inset: f32, hug_left: bool, hug_right: bool| -> Vec<Pos2> {
             let top = y0 + inset;
             let bot = y1 - inset;
-            let xa = x0 + inset;
-            let xb = x1 - inset;
+            let mut xa = x0 + inset;
+            let mut xb = x1 - inset;
             // a cap edge never sits ON the pill's boundary: the outline stroke is half outside
             // its path and the fill antialiases outward -- `inset + px` is what makes the two
             // modes land their edges on the SAME x (the stroke's outer edge == the fill's edge)
@@ -2537,10 +2558,16 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
             // the semicircle sits exactly 2 device pixels in from the slider's edge (the 1 px
             // stroke inset plus this 1 px), the same clearance the runs in the middle keep
             let sh = 1.0 * px;
-            let cap_r = ((bot - top) / 2.0).min((xb - (bar.min.x + ins + sh)).max(2.0 * px));
+            // Keep edge caps circular even when the clip itself is only a few pixels long.
+            // Previously the radius was limited by the run's opposite edge, which flattened
+            // the semicircle into a wedge as the Timeline window got narrower.
+            let cap_r = (bot - top) / 2.0;
             // the right cap is the left one mirrored exactly: its centre sits the same distance
             // in from the bar's right edge and the curve bends the other way
-            let cap_rr = ((bot - top) / 2.0).min(((bar.max.x - ins - sh) - x0).max(2.0 * px));
+            let cap_rr = (bot - top) / 2.0;
+            // A run that reaches a rounded end owns a full semicircle. Move its opposite edge
+            // to the circle's tangent when necessary, so the far edge cannot cut into the cap.
+            (xa, xb) = minimap_indicator_bounds(xa, xb, bar.min.x + ins + sh + cap_r, bar.max.x - ins - sh - cap_rr, hug_left, hug_right);
             let at = |y: f32, left: bool| -> f32 {
                 if left {
                     if hug_left {
