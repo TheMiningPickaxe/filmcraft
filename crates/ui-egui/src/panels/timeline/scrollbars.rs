@@ -2058,16 +2058,25 @@ fn last_custom_value(stored: f64, max: f64) -> f64 {
 
 /// A centered section heading for the settings popup (wrapped, so it stays inside a narrow menu).
 fn settings_heading(ui: &mut egui::Ui, t: &Tokens, label: &str, hint: &str) {
+    settings_heading_with_hint_center(ui, t, label, hint, None);
+}
+
+/// Draw a settings heading with an optional exact question-mark center.
+fn settings_heading_with_hint_center(ui: &mut egui::Ui, t: &Tokens, label: &str, hint: &str, hint_center_x: Option<f32>) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), Sense::hover());
     let galley = ui.painter().layout(label.to_string(), Tokens::ui(11.5), t.text, r.width().max(40.0));
     let right = r.center().x + galley.size().x / 2.0;
     ui.painter().galley(pos2(r.center().x - galley.size().x / 2.0, r.center().y - galley.size().y / 2.0), galley, t.text);
-    setting_hint(ui, Rect::from_center_size(pos2(right + 14.0, r.center().y), vec2(16.0, 18.0)), hint);
+    setting_hint_at(ui, pos2(hint_center_x.unwrap_or(right + 12.0), r.center().y), hint);
 }
 
 /// An immediate, non-interactive hint: it exists only while the question mark is hovered.
 fn setting_hint(ui: &egui::Ui, row: Rect, text: &str) {
-    let mark = Rect::from_center_size(pos2(row.right() - 10.0, row.center().y), vec2(16.0, 16.0));
+    setting_hint_at(ui, pos2(row.right() - 10.0, row.center().y), text);
+}
+
+fn setting_hint_at(ui: &egui::Ui, center: Pos2, text: &str) {
+    let mark = Rect::from_center_size(center, vec2(16.0, 16.0));
     ui.painter().circle_stroke(mark.center(), 5.2, Stroke::new(0.9, Color32::from_gray(125)));
     ui.painter().text(mark.center(), Align2::CENTER_CENTER, "?", Tokens::ui(7.15), Color32::from_gray(125));
     if ui.input(|i| i.pointer.hover_pos().is_some_and(|p| mark.contains(p))) {
@@ -3862,11 +3871,17 @@ pub(super) fn track_slider_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
 
 /// The rows of the track sliders' settings popup (see [`track_slider_settings`]).
 fn track_slider_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
-    /// Match the timeline slider's settings popup width.
-    const CONTENT_W: f32 = 257.4;
-    ui.set_max_width(CONTENT_W + 16.0);
-    ui.set_min_width(CONTENT_W + 16.0);
     let t = app.tokens;
+    let alt_speed_uses_default = uses_default_gesture(&app.session.state.timeline_ui.track_control_alternate_drag_speed, "Shift + Drag");
+    let alt_speed_label = if alt_speed_uses_default {
+        tl!("Alternate Drag Speed (Shift + Drag)")
+    } else {
+        tl!("Alternate Drag Speed")
+    };
+    // Track slider settings menu content width.
+    let content_w = 220.19;
+    ui.set_max_width(content_w + 16.0);
+    ui.set_min_width(content_w + 16.0);
     family_reset(ui);
     // every row spans the popup's full width and centers its content in it: rows of a fixed
     // narrower width left an uneven gap on the right of the Hide Slider row
@@ -3917,7 +3932,7 @@ fn track_slider_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
             (tl!("Adjust Track Height:"), "Shift + Scroll", 4),
         ],
     );
-    controls_arrow(ui, arow, CONTENT_W, r.max.x, controls_right, t.text_dim);
+    controls_arrow(ui, arow, content_w, r.max.x, controls_right, t.text_dim);
     // Smooth Animations eases the double-click moves (which land on the OTHER slider);
     // Alternate Slider Position moves the sliders to the left edge of the Timeline.
     let smooth = app.session.state.timeline_ui.track_slider_smooth;
@@ -4022,12 +4037,12 @@ fn track_slider_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     } else {
         2
     };
-    let alt_speed_label = if uses_default_gesture(&app.session.state.timeline_ui.track_control_alternate_drag_speed, "Shift + Drag") {
-        tl!("Alternate Drag Speed (Shift + Drag)")
+    let alt_speed_hint = tl!("Mimics the feature in Blender. A high multiplier can make it faster than dragging normally.");
+    if alt_speed_uses_default {
+        settings_heading_with_hint_center(ui, &t, alt_speed_label, alt_speed_hint, Some(r.right() - 10.0));
     } else {
-        tl!("Alternate Drag Speed")
-    };
-    settings_heading(ui, &t, alt_speed_label, tl!("Mimics the feature in Blender. A high multiplier can make it faster than dragging normally."));
+        settings_heading(ui, &t, alt_speed_label, alt_speed_hint);
+    }
     let (resp, ch) = tick_slider(ui, &mut idx, &[tl!("Slow"), tl!("Default"), tl!("Custom")], &t);
     app.auto.add("timeline.trackSlider.settings.shiftDragSpeed", resp.rect, "Alternate Drag Speed");
     if ch {
