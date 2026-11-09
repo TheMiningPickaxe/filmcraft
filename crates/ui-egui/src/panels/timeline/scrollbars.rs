@@ -3862,8 +3862,8 @@ pub(super) fn track_slider_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
 
 /// The rows of the track sliders' settings popup (see [`track_slider_settings`]).
 fn track_slider_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
-    /// Slightly wider than the original track-slider settings width.
-    const CONTENT_W: f32 = 212.72;
+    /// Match the timeline slider's settings popup width.
+    const CONTENT_W: f32 = 257.4;
     ui.set_max_width(CONTENT_W + 16.0);
     ui.set_min_width(CONTENT_W + 16.0);
     let t = app.tokens;
