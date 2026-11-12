@@ -142,7 +142,11 @@ fn timed_out_connection_releases_slot(partial: &[u8]) {
     let completion = finished.recv_timeout(Duration::from_secs(5));
     let mut unsolicited = String::new();
     if completion.is_ok() {
-        client.read_to_string(&mut unsolicited).unwrap();
+        if let Err(error) = client.read_to_string(&mut unsolicited) {
+            // Windows may reset a TCP connection closed with unread request bytes. It is still a
+            // closed connection with no reply; the assertion below guards against response data.
+            assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
+        }
     }
     // Always unblock and join the test worker before asserting, even on the unfixed server.
     let unexpected_command = rx.try_recv().is_ok();

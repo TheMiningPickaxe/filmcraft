@@ -4,10 +4,9 @@
 # Clean-room: every entry was written from the plain meaning of the English text using ordinary
 # Korean video-editing vocabulary (시퀀스, 타임라인, 트랙, 클립, 재생 헤드, 빈, 렌더, 내보내기…). No
 # proprietary localisation resource, string table or product UI was consulted or copied; add entries
-# the same way. Product and technology names (FilmCraft, ArtCraft, Lumetri, ProRes, LUFS…) keep their
+# the same way. Product and technology names (FilmCraft, ArtCraft, ProRes, LUFS…) keep their
 # spelling. Hangul is drawn with an installed system font (Malgun Gothic, Apple SD Gothic Neo, Noto
 # Sans CJK KR…, see cjk.rs); native-speaker review welcome.
-
 	   Angle	   각도
 	   Blur	   흐림
 	   Corner Radius	   모서리 반경
@@ -76,7 +75,6 @@
 	About FilmCraft	FilmCraft 정보
 	Accent Color	강조 색상
 	Accessible color contrast	접근성 색상 대비
-	Alternate Drag Speed:	대체 드래그 속도:
 	Animate zoom, scrolling and menus	확대/축소, 스크롤 및 메뉴 애니메이션
 	Action and Title Safe Areas	액션 및 제목 안전 영역
 	Action Safe Area	액션 안전 영역
@@ -103,10 +101,10 @@
 	Add Guide	안내선 추가
 	Add Guide…	안내선 추가…
 	Add keyframe	키프레임 추가
-	Add Lumetri Color to clip	클립에 Lumetri Color 추가
+	Add Color Grading to clip	클립에 색 보정 추가
 	Add Marker	마커 추가
 	Add Marker (M)	마커 추가(M)
-	Add media to your project. Drop files anywhere in the window, or choose a source below.	프로젝트에 미디어를 추가합니다. 창 아무 곳에나 파일을 놓거나 아래에서 소스를 선택하세요.
+	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	프로젝트에 미디어를 추가합니다. 창 아무 곳에나 파일이나 폴더를 놓거나 아래에서 소스를 선택하세요.
 	Add New Caption Track…	새 자막 트랙 추가…
 	Add Property…	속성 추가…
 	Add Range Marker	범위 마커 추가
@@ -232,12 +230,6 @@
 	APV 422-10	APV 422-10
 	APV 422-12	APV 422-12
 	Are you sure you want to discard your changes to '{file}'?	'{file}'의 변경 사항을 버릴까요?
-	Center on Playhead:	재생 헤드 중앙 맞춤:
-	Controls	컨트롤
-	Enter Shortcut	단축키 입력
-	Explode Slider:	슬라이더 펼치기:
-	Invert Scrolling	스크롤 반전
-	Playhead Centering Range	재생 헤드 중앙 맞춤 범위
 	Replace File	파일 바꾸기
 	“{file}” already exists in “{folder}”. Do you want to replace it?	“{folder}”에 “{file}” 파일이 이미 있습니다. 바꿀까요?
 	Replace	바꾸기
@@ -521,7 +513,6 @@
 	Center Channel Pan	센터 채널 팬
 	Center Gradient	중앙 그레이디언트
 	Center at Cut	컷 중앙
-	Snap to Tracks	트랙에 스냅
 	Start at Cut	컷 시작
 	End at Cut	컷 끝
 	Custom Start	사용자 정의 시작
@@ -1041,7 +1032,7 @@
 	Enable hardware accelerated decoding (requires restart)	하드웨어 가속 디코딩 사용(재시작 필요)
 	Enable HSL Secondary	HSL 보조 사용
 	Enable language auto-detection	언어 자동 감지 사용
-	Enable Mercury Transmit	Mercury Transmit 사용
+	Enable External Video Output	외부 비디오 출력 사용
 	Enable ProRes hardware accelerated encoding, if available	가능한 경우 ProRes 하드웨어 가속 인코딩 사용
 	Enable proxies	프록시 사용
 	Enable Remix	리믹스 사용
@@ -1230,7 +1221,7 @@
 	Font Size	글꼴 크기
 	Font Style	글꼴 스타일
 	Fonts used in the project:	프로젝트에 사용된 글꼴:
-	For color management parameters, go to the Settings tab in the Lumetri Color panel.	색상 관리 매개변수는 Lumetri 색상 패널의 설정 탭에서 지정합니다.
+	For color management parameters, go to the Settings tab in the Color Grading panel.	색 관리 매개변수는 색 보정 패널의 설정 탭에서 변경할 수 있습니다.
 	Forest	포레스트
 	Format	형식
 	Format and size	형식 및 크기
@@ -1762,10 +1753,9 @@
 	Luma Min / Max	루마 최소/최대
 	Luma Source	루마 소스
 	Luma vs Sat	휘도 대 채도
-	Lumetri	Lumetri
-	Lumetri Color	Lumetri 색상
-	Lumetri Presets	Lumetri 사전 설정
-	Lumetri Scopes	Lumetri 스코프
+	Color Grading	색 보정
+	Color Grading Presets	색 보정 사전 설정
+	Video Scopes	비디오 스코프
 	Luminance	휘도
 	Luminance Threshold	휘도 임계값
 	Luminosity	광도
@@ -2588,6 +2578,7 @@
 	Reverse Field Dominance	필드 우선순위 반전
 	Reverse Match Frame	역방향 프레임 일치
 	Reverse Speed	역방향 속도
+	Maintain Audio Pitch	오디오 피치 유지
 	Reverse the order	순서 반대로
 	Revert	되돌리기
 	Revert Remix	리믹스 되돌리기
@@ -2941,6 +2932,7 @@
 	Soften Harshness	거친 소리 완화
 	Softness	부드러움
 	software rendering	소프트웨어 렌더링
+	integrated GPU	내장 GPU
 	Solarize	솔라리스
 	Solid	단색
 	Solid Colors	단색
@@ -3623,10 +3615,8 @@
 	Show Audio Names	오디오 이름 표시
 	Video Names	비디오 이름
 	Audio Names	오디오 이름
-
 # Control server: the status-bar notice when --control cannot serve.
 	The control server is disabled: FILMCRAFT_CONTROL_TOKEN must contain 64 random hex characters (see docs/control-protocol.md)	제어 서버가 비활성화되었습니다: FILMCRAFT_CONTROL_TOKEN에는 64자리 무작위 16진수 문자가 필요합니다(docs/control-protocol.md 참조)
-
 # Markers: the Edit Marker dialog (#2416).
 	Edit Marker…	마커 편집…
 	In:	시작:
@@ -3698,6 +3688,31 @@
 	Previous	이전
 	Next	다음
 	Enter a valid HH:MM:SS:FF timecode	올바른 HH:MM:SS:FF 타임코드를 입력하세요
+# Export: H.264 High 10 and all-intra (#1221).
+	High 10	High 10
+	10-bit color	10비트 색상
+	All Intra	올 인트라
+	Every frame a keyframe (edit-friendly, larger files)	모든 프레임을 키프레임으로(편집하기 쉬움, 파일 크기 증가)
+	H.264 High 10 Master	H.264 High 10 마스터
+	H.264 High 10 Intra	H.264 High 10 Intra
+	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10비트 4:2:0), 시퀀스 크기, 고정 품질 CRF 16, AAC 320 kbps, 10비트 마스터
+	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10비트 4:2:0, 모든 프레임이 키프레임), CRF 12, AAC 320 kbps, 편집하기 쉬운 중간 파일
+	List Color Grading Presets	색 보정 사전 설정 목록
+	Apply Color Grading Preset	색 보정 사전 설정 적용
+	Color Grading Preset Thumbnails	색 보정 사전 설정 썸네일
+	Toggle Color Grading Section	색 보정 섹션 전환
+	Color Grading Section	색 보정 섹션
+	Read Video Scopes	비디오 스코프 읽기
+
+	Alternate Drag Speed:	대체 드래그 속도:
+	Add media to your project. Drop files anywhere in the window, or choose a source below.	프로젝트에 미디어를 추가합니다. 창 아무 곳에나 파일을 놓거나 아래에서 소스를 선택하세요.
+	Center on Playhead:	재생 헤드 중앙 맞춤:
+	Controls	컨트롤
+	Enter Shortcut	단축키 입력
+	Explode Slider:	슬라이더 펼치기:
+	Invert Scrolling	스크롤 반전
+	Playhead Centering Range	재생 헤드 중앙 맞춤 범위
+	Snap to Tracks	트랙에 스냅
 	Hide Slider	슬라이더 숨기기
 	Unhide Slider	슬라이더 표시
 	Maximum Zoom Level	최대 확대/축소 수준
@@ -3735,7 +3750,6 @@
 	Alternate drag speed multiplier	드래그 속도 변경 배율
 	Playhead centering range in seconds	재생 헤드 가운데 정렬 범위(초)
 	Alternate drag speed for the track sliders	트랙 슬라이더의 드래그 속도 변경
-
 	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	활성화하면 슬라이더 가장자리, 재생 헤드 중앙 정렬 및 슬라이더 미러링이 부드럽게 움직입니다.
 	Reverses timeline scrolling and zooming when holding the center of the slider.	슬라이더 중앙을 누른 상태에서 타임라인 스크롤과 확대 방향을 반대로 바꿉니다.
 	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	타임라인 슬라이더를 세로로 드래그하여 두 트랙 영역의 크기를 조정합니다. 트랙 슬라이더가 숨겨져 있을 때 권장합니다.
@@ -3765,25 +3779,17 @@
 	Zoom In:	확대:
 	Zoom Out:	축소:
 	Zoom Timeline:	타임라인 확대/축소:
-
 	Shortcut unavailable	단축키를 사용할 수 없음
 	Left click is reserved for controlling the application and cannot be assigned.	왼쪽 클릭은 애플리케이션 조작에 사용되므로 할당할 수 없습니다.
 	Right click is reserved for opening slider settings and cannot be assigned.	오른쪽 클릭은 슬라이더 설정을 여는 데 사용되므로 할당할 수 없습니다.
 	Turn on Decouple Edges to use Snap to Tracks; linked edges cannot snap independently.	트랙에 스냅하려면 가장자리 분리를 켜세요. 연결된 가장자리는 개별적으로 스냅할 수 없습니다.
-
 	This shortcut is already assigned. Open Keyboard Shortcuts to review it.	이 단축키는 이미 할당되어 있습니다. 키보드 단축키를 열어 확인하세요.
-
-	10-bit color	10비트 색상
-	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	프로젝트에 미디어를 추가하세요. 창의 아무 곳에나 파일이나 폴더를 놓거나 아래에서 소스를 선택하세요.
-	All Intra	전체 인트라
 	Copy of the project saved to {path}	프로젝트 사본을 {path}에 저장했습니다
-	Every frame a keyframe (edit-friendly, larger files)	모든 프레임이 키프레임입니다 (편집에 편리하지만 파일 크기가 커짐)
 	From preset file:	사전 설정 파일에서:
 	Imported {n} preset(s)	사전 설정 {n}개 가져옴
 	Imported {n} preset(s); {skipped} skipped	사전 설정 {n}개 가져옴; {skipped}개 건너뜀
 	Imported {n} preset(s); {warnings} with unsupported parameters	사전 설정 {n}개 가져옴; {warnings}개에 지원되지 않는 매개변수 포함
 	Imported {n} preset(s); not imported: {error}	사전 설정 {n}개 가져옴; 가져오지 못함: {error}
-	Maintain Audio Pitch	오디오 음높이 유지
 	No presets folder: the app has no data directory	사전 설정 폴더가 없습니다: 앱에 데이터 디렉터리가 없습니다
 	Open Presets Folder	사전 설정 폴더 열기
 	Preset library is up to date	사전 설정 라이브러리가 최신 상태입니다
@@ -3792,17 +3798,12 @@
 	Project saved to {path}	프로젝트를 {path}에 저장했습니다
 	Scan Presets Folder	사전 설정 폴더 검색
 	Ticked attributes are removed from the selected clips.	선택한 클립에서 체크한 속성이 제거됩니다.
-
 	Imported {n} preset(s); {skipped} skipped, {warnings} with unsupported parameters	사전 설정 {n}개 가져옴; {skipped}개 건너뜀, {warnings}개에 지원되지 않는 매개변수 포함
-
 	No bin {id}	빈 {id}이(가) 없습니다
-
 	Unbound	할당되지 않음
 	Track Control Angle:	트랙 제어 각도:
 	to	~
-
 	Control Track Sliders	트랙 슬라이더 제어
-
 	Full Screen Program Monitor	프로그램 모니터 전체 화면
 	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 10 Mbps, loudness normalized to −14 LUFS	H.264 세로 9:16, 화면에 맞게 채우기, VBR 1패스, 10 Mbps, 음량을 −14 LUFS로 정규화
 	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 12 Mbps, loudness normalized to −14 LUFS	H.264 세로 9:16, 화면에 맞게 채우기, VBR 1패스, 12 Mbps, 음량을 −14 LUFS로 정규화
@@ -3811,9 +3812,3 @@
 	Key Out Brights	밝은 영역 키 제거
 	TikTok 1080×1920	TikTok 1080×1920
 	YouTube Shorts 1080×1920	YouTube Shorts 1080×1920
-
-	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	시퀀스 크기의 H.264 High 10 (10비트 4:2:0), 고정 품질 CRF 16, AAC 320 kbps; 10비트 마스터
-	H.264 High 10 Intra	H.264 High 10 Intra
-	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10비트 4:2:0, 모든 프레임이 키프레임), CRF 12, AAC 320 kbps; 편집에 적합한 중간 파일
-	H.264 High 10 Master	H.264 High 10 마스터
-	High 10	High 10

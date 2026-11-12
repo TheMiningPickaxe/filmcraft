@@ -3873,11 +3873,7 @@ pub(super) fn track_slider_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
 fn track_slider_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let t = app.tokens;
     let alt_speed_uses_default = uses_default_gesture(&app.session.state.timeline_ui.track_control_alternate_drag_speed, "Shift + Drag");
-    let alt_speed_label = if alt_speed_uses_default {
-        tl!("Alternate Drag Speed (Shift + Drag)")
-    } else {
-        tl!("Alternate Drag Speed")
-    };
+    let alt_speed_label = if alt_speed_uses_default { tl!("Alternate Drag Speed (Shift + Drag)") } else { tl!("Alternate Drag Speed") };
     // Track slider settings menu content width.
     let content_w = 220.19;
     ui.set_max_width(content_w + 16.0);

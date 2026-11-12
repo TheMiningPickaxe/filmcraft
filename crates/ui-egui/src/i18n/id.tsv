@@ -5,7 +5,7 @@
 # string table or product UI was consulted or copied; add entries the same way. Commands use the
 # base verb ("Simpan Sebagai…", "Tambah Penanda"), messages address the user as "Anda", and menu
 # labels keep the title case of the English source. Product, format and technology names
-# (FilmCraft, ArtCraft, Lumetri, ProRes, LUFS, EDL, AAF…) keep their spelling, and common loanwords
+# (FilmCraft, ArtCraft, ProRes, LUFS, EDL, AAF…) keep their spelling, and common loanwords
 # of the trade (render, preset, mixer, gain, ripple, roll, slip, slide, snap, scrub, offline) stay
 # as they are. Decimal fractions in descriptions use a comma (29,97 fps). This catalog has the same
 # entries as `es.tsv` plus the native macOS Settings menu; strings added later show in English until
@@ -20,7 +20,6 @@
 # wipe = sapuan, glow = pendar, noise = derau, error = galat, file = berkas, guide = garis bantu,
 # thumbnail = gambar mini, voice-over = sulih suara, default = bawaan, preferences (also the native
 # macOS Settings menu) = Preferensi, settings = pengaturan.
-
 	About FilmCraft	Tentang FilmCraft
 	Add Audio Submix Track	Tambah Trek Submix Audio
 	Add Caption at Playhead	Tambah Takarir di Kepala Putar
@@ -41,7 +40,6 @@
 	Align to Video Frame as Group	Ratakan ke Bingkai Video sebagai Grup
 	All Panels	Semua Panel
 	Alpha	Alfa
-	Alternate Drag Speed:	Kecepatan Seret Alternatif:
 	Appearance	Penampilan
 	Appearance…	Penampilan…
 	Apply Audio Transition	Terapkan Transisi Audio
@@ -78,13 +76,6 @@
 	Captions…	Takarir…
 	Caribbean	Karibia
 	Center at Cut	Tengah di Titik Potong
-	Center on Playhead:	Pusatkan ke Kepala Putar:
-	Controls	Kontrol
-	Enter Shortcut	Masukkan Pintasan
-	Explode Slider:	Ledakkan Penggeser:
-	Invert Scrolling	Balik Arah Gulir
-	Playhead Centering Range	Rentang Pemusatan Kepala Putar
-	Snap to Tracks	Tempel ke Trek
 	Start at Cut	Mulai di Titik Potong
 	End at Cut	Akhir di Titik Potong
 	Custom Start	Awal Kustom
@@ -214,8 +205,8 @@
 	Refresh Changed Media	Segarkan Media yang Berubah
 	Linked Selection	Pilihan Tertaut
 	Lock Guides	Kunci Garis Bantu
-	Lumetri Color	Lumetri Color
-	Lumetri Scopes	Lumetri Scopes
+	Color Grading	Gradasi Warna
+	Video Scopes	Skop Video
 	Magnification	Pembesaran
 	Make Offline…	Jadikan Offline…
 	Make Subclip…	Buat Subklip…
@@ -472,7 +463,7 @@
 	Replace	Ganti
 	Yes	Ya
 	No	Tidak
-	Add media to your project. Drop files anywhere in the window, or choose a source below.	Tambahkan media ke proyek Anda. Letakkan berkas di mana saja di jendela, atau pilih sumber di bawah.
+	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	Tambahkan media ke proyek Anda. Letakkan berkas atau folder di mana saja di jendela, atau pilih sumber di bawah.
 	Browse files…	Telusuri berkas…
 	Movies, audio and stills from disk	Film, audio, dan gambar diam dari disk
 	Demo footage	Rekaman demo
@@ -910,7 +901,7 @@
 	Clip Volume	Volume Klip
 	(no clip selected)	(tidak ada klip yang dipilih)
 	Master · {name}	Master · {name}
-	Add Lumetri Color to clip	Tambahkan Lumetri Color ke klip
+	Add Color Grading to clip	Tambahkan Gradasi Warna ke klip
 	Input LUT	LUT Input
 	Color	Warna
 	Temperature	Suhu
@@ -1689,7 +1680,7 @@
 	Elliptical	Eliptis
 	Emboss	Emboss
 	Enable HSL Secondary	Aktifkan HSL Sekunder
-	Enable Mercury Transmit	Aktifkan Mercury Transmit
+	Enable External Video Output	Aktifkan Output Video Eksternal
 	Enable ProRes hardware accelerated encoding, if available	Aktifkan enkode ProRes dengan akselerasi perangkat keras, jika tersedia
 	Enable clip and XMP metadata linking	Aktifkan penautan metadata klip dan XMP
 	Enable developer mode	Aktifkan mode pengembang
@@ -1757,7 +1748,7 @@
 	Focus Size	Ukuran Fokus
 	Fold Motion	Gerak Lipat
 	Foldback	Foldback
-	For color management parameters, go to the Settings tab in the Lumetri Color panel.	Untuk parameter manajemen warna, buka tab Pengaturan di panel Lumetri Color.
+	For color management parameters, go to the Settings tab in the Color Grading panel.	Untuk parameter manajemen warna, buka tab Pengaturan di panel Gradasi Warna.
 	Format	Format
 	Four Scopes (RGB, 8 bit)	Empat Skop (RGB, 8 bit)
 	Four Scopes (YUV, float, no clamp)	Empat Skop (YUV, float, tanpa pembatasan)
@@ -2026,7 +2017,7 @@
 	Luma Key	Key Luma
 	Luma Source	Sumber Luma
 	Luma and Chroma	Luma dan Kroma
-	Lumetri Presets	Preset Lumetri
+	Color Grading Presets	Preset Gradasi Warna
 	Luminance	Luminans
 	Luminance Threshold	Ambang Luminans
 	Luminosity	Luminositas
@@ -3141,7 +3132,6 @@
 	Left align text	Rata kiri teks
 	Looping GIF, 640×360 at 15 fps	GIF berulang, 640×360 pada 15 fps
 	Lower First	Bawah Dulu
-	Lumetri	Lumetri
 	MXF OP-Atom	MXF OP-Atom
 	MXF OP-Atom DNxHR (Avid)	MXF OP-Atom DNxHR (Avid)
 	MXF OP1a	MXF OP1a
@@ -3475,6 +3465,7 @@
 	Clip Speed / Duration	Kecepatan / Durasi Klip
 	Speed:	Kecepatan:
 	Reverse Speed	Balik Kecepatan
+	Maintain Audio Pitch	Pertahankan Nada Audio
 	Ripple Edit, Shifting Trailing Clips	Edit Ripple, Geser Klip Berikutnya
 	About	Tentang
 	Contributors	Kontributor
@@ -3588,7 +3579,6 @@
 	Notes for this project: to-dos, instructions, frame numbers… Saved with the project.	Catatan untuk proyek ini: daftar tugas, instruksi, nomor bingkai… Disimpan bersama proyek.
 	Use Effect Shutter Angle	Gunakan Sudut Rana Efek
 	Settings	Preferensi
-
 	Appearance Settings…	Pengaturan Tampilan…
 	Add to favorites	Tambahkan ke favorit
 	Remove from favorites	Hapus dari favorit
@@ -3603,10 +3593,8 @@
 	Show Audio Names	Tampilkan Nama Audio
 	Video Names	Nama Video
 	Audio Names	Nama Audio
-
 # Control server: the status-bar notice when --control cannot serve.
 	The control server is disabled: FILMCRAFT_CONTROL_TOKEN must contain 64 random hex characters (see docs/control-protocol.md)	Server kontrol dinonaktifkan: FILMCRAFT_CONTROL_TOKEN harus berisi 64 karakter heksadesimal acak (lihat docs/control-protocol.md)
-
 # Markers: the Edit Marker dialog (#2416).
 	Edit Marker…	Edit Penanda…
 	In:	Masuk:
@@ -3677,6 +3665,31 @@
 	Previous	Sebelumnya
 	Next	Berikutnya
 	Enter a valid HH:MM:SS:FF timecode	Masukkan kode waktu HH:MM:SS:FF yang valid
+# Export: H.264 High 10 and all-intra (#1221).
+	High 10	High 10
+	10-bit color	Warna 10-bit
+	All Intra	Semua intra
+	Every frame a keyframe (edit-friendly, larger files)	Setiap bingkai adalah bingkai kunci (mudah disunting, file lebih besar)
+	H.264 High 10 Master	H.264 High 10 Master
+	H.264 High 10 Intra	H.264 High 10 Intra
+	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10-bit 4:2:0) pada ukuran sekuens, kualitas konstan CRF 16, AAC 320 kbps; master 10-bit
+	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10-bit 4:2:0, setiap bingkai adalah bingkai kunci), CRF 12, AAC 320 kbps; intermediate yang mudah disunting
+	List Color Grading Presets	Daftar Preset Gradasi Warna
+	Apply Color Grading Preset	Terapkan Preset Gradasi Warna
+	Color Grading Preset Thumbnails	Gambar Mini Preset Gradasi Warna
+	Toggle Color Grading Section	Aktifkan/Nonaktifkan Bagian Gradasi Warna
+	Color Grading Section	Bagian Gradasi Warna
+	Read Video Scopes	Baca Skop Video
+
+	Alternate Drag Speed:	Kecepatan Seret Alternatif:
+	Center on Playhead:	Pusatkan ke Kepala Putar:
+	Controls	Kontrol
+	Enter Shortcut	Masukkan Pintasan
+	Explode Slider:	Ledakkan Penggeser:
+	Invert Scrolling	Balik Arah Gulir
+	Playhead Centering Range	Rentang Pemusatan Kepala Putar
+	Snap to Tracks	Tempel ke Trek
+	Add media to your project. Drop files anywhere in the window, or choose a source below.	Tambahkan media ke proyek Anda. Letakkan berkas di mana saja di jendela, atau pilih sumber di bawah.
 	Hide Slider	Sembunyikan Penggeser
 	Unhide Slider	Tampilkan Penggeser
 	Maximum Zoom Level	Tingkat Zoom Maksimum
@@ -3714,7 +3727,6 @@
 	Alternate drag speed multiplier	Pengali kecepatan seret alternatif
 	Playhead centering range in seconds	Rentang pemusatan kepala putar dalam detik
 	Alternate drag speed for the track sliders	Kecepatan seret alternatif untuk penggeser trek
-
 	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	Jika diaktifkan, tepi penggeser, pemusatan pada playhead, dan pencerminan penggeser dianimasikan dengan halus.
 	Reverses timeline scrolling and zooming when holding the center of the slider.	Membalik arah gulir dan zoom linimasa saat bagian tengah penggeser ditahan.
 	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	Seret penggeser linimasa secara vertikal untuk mengubah ukuran kedua bagian trek. Disarankan saat penggeser trek disembunyikan.
@@ -3744,25 +3756,17 @@
 	Zoom In:	Perbesar:
 	Zoom Out:	Perkecil:
 	Zoom Timeline:	Zoom linimasa:
-
 	Shortcut unavailable	Pintasan tidak tersedia
 	Left click is reserved for controlling the application and cannot be assigned.	Klik kiri dicadangkan untuk mengendalikan aplikasi dan tidak dapat ditetapkan.
 	Right click is reserved for opening slider settings and cannot be assigned.	Klik kanan dicadangkan untuk membuka pengaturan penggeser dan tidak dapat ditetapkan.
 	Turn on Decouple Edges to use Snap to Tracks; linked edges cannot snap independently.	Aktifkan Pisahkan Tepi untuk menggunakan Lekatkan ke Trek; tepi yang terhubung tidak dapat melekat secara terpisah.
-
 	This shortcut is already assigned. Open Keyboard Shortcuts to review it.	Pintasan ini sudah ditetapkan. Buka Pintasan Keyboard untuk memeriksanya.
-
-	10-bit color	Warna 10-bit
-	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	Tambahkan media ke proyek. Letakkan berkas atau folder di mana saja pada jendela, atau pilih sumber di bawah.
-	All Intra	Semua Intra
 	Copy of the project saved to {path}	Salinan proyek disimpan ke {path}
-	Every frame a keyframe (edit-friendly, larger files)	Setiap bingkai adalah bingkai kunci (mudah diedit, berkas lebih besar)
 	From preset file:	Dari berkas preset:
 	Imported {n} preset(s)	{n} preset diimpor
 	Imported {n} preset(s); {skipped} skipped	{n} preset diimpor; {skipped} dilewati
 	Imported {n} preset(s); {warnings} with unsupported parameters	{n} preset diimpor; {warnings} dengan parameter yang tidak didukung
 	Imported {n} preset(s); not imported: {error}	{n} preset diimpor; tidak diimpor: {error}
-	Maintain Audio Pitch	Pertahankan nada audio
 	No presets folder: the app has no data directory	Tidak ada folder preset: aplikasi tidak memiliki direktori data
 	Open Presets Folder	Buka folder preset
 	Preset library is up to date	Pustaka preset sudah terbaru
@@ -3771,17 +3775,12 @@
 	Project saved to {path}	Proyek disimpan ke {path}
 	Scan Presets Folder	Pindai folder preset
 	Ticked attributes are removed from the selected clips.	Atribut yang dicentang dihapus dari klip yang dipilih.
-
 	Imported {n} preset(s); {skipped} skipped, {warnings} with unsupported parameters	{n} preset diimpor; {skipped} dilewati, {warnings} dengan parameter yang tidak didukung
-
 	No bin {id}	Tidak ada bin {id}
-
 	Unbound	Tidak ditetapkan
 	Track Control Angle:	Sudut kontrol trek:
 	to	hingga
-
 	Control Track Sliders	Kendalikan penggeser trek
-
 	Full Screen Program Monitor	Monitor Program Layar Penuh
 	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 10 Mbps, loudness normalized to −14 LUFS	H.264 potret 9:16, diskalakan hingga penuh, VBR 1 lintasan, 10 Mbps, kenyaringan dinormalisasi ke −14 LUFS
 	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 12 Mbps, loudness normalized to −14 LUFS	H.264 potret 9:16, diskalakan hingga penuh, VBR 1 lintasan, 12 Mbps, kenyaringan dinormalisasi ke −14 LUFS
@@ -3790,11 +3789,4 @@
 	Key Out Brights	Hilangkan bagian terang
 	TikTok 1080×1920	TikTok 1080×1920
 	YouTube Shorts 1080×1920	YouTube Shorts 1080×1920
-
-	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10-bit 4:2:0) sesuai ukuran sekuens, kualitas konstan CRF 16, AAC 320 kbps; master 10-bit
-	H.264 High 10 Intra	H.264 High 10 Intra
-	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10-bit 4:2:0, setiap bingkai adalah bingkai kunci), CRF 12, AAC 320 kbps; format perantara yang mudah diedit
-	H.264 High 10 Master	Master H.264 High 10
-	High 10	High 10
-
 	Compression	Kompresi

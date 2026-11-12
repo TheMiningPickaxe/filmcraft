@@ -53,7 +53,7 @@ pub const PANELS: &[&str] = &[
     "Essential Graphics",
     "Text",
     "Properties",
-    "Lumetri Color",
+    "Color Grading",
 ];
 
 pub const DEFAULT_PRESET: &str = "FilmCraft Default";
@@ -271,9 +271,16 @@ impl Chord {
                 c => text.push(c),
             }
         }
-        let text = text.replace("++", "+").trim_end_matches('+').to_string();
+        // A literal `+` key is written as `+` on its own or as a final `++` after a modifier
+        // (`Ctrl++`). Preserve that final plus as the key instead of treating it as a separator.
+        let plus_key = text == "+" || text.ends_with("++");
+        let text = if plus_key {
+            text.strip_suffix('+').unwrap_or(&text).trim_end_matches('+').to_string()
+        } else {
+            text.replace("++", "+").trim_end_matches('+').to_string()
+        };
         let mut mods = Mods::default();
-        let mut key = None;
+        let mut key = plus_key.then_some("+");
         let parts: Vec<&str> = text.split('+').map(str::trim).filter(|p| !p.is_empty()).collect();
         for (i, p) in parts.iter().enumerate() {
             let low = p.to_ascii_lowercase();
@@ -443,6 +450,8 @@ fn category_of(id: &str, menu: &[&str]) -> String {
         "view" => "View".into(),
         "app" | "help" | "mode" => "Application".into(),
         "captions" => "Captions".into(),
+        // Keep legacy command ids stable without exposing their old feature name.
+        "lumetri" => "Color Grading".into(),
         "tts" => "Text to Speech".into(),
         _ => menu.first().map(|s| s.to_string()).unwrap_or_else(|| {
             let mut c = prefix.chars();
@@ -1072,6 +1081,7 @@ fn check_panel(panel: Option<&str>) -> std::result::Result<Option<&'static str>,
                 "sourcemonitor" => "source",
                 "projects" => "project",
                 "timelines" => "timeline",
+                "lumetricolor" | "colorgrade" => "colorgrading",
                 _ => n.as_str(),
             };
             PANELS
@@ -1188,7 +1198,17 @@ fn list(s: &Session, p: &Value) -> Value {
 pub fn commands() -> Vec<CommandSpec> {
     macro_rules! sc {
         ($id:literal, $label:literal, $params:literal, $journal:expr, $run:expr) => {
-            CommandSpec { id: $id, label: $label, menu: &[], shortcut: None, params: $params, enabled: always, run: $run, journal: $journal }
+            CommandSpec {
+                id: $id,
+                label: $label,
+                menu: &[],
+                shortcut: None,
+                params: $params,
+                enabled: always,
+                run: $run,
+                journal: $journal,
+                named: crate::commands::NamedKeys::NONE,
+            }
         };
     }
     vec![
@@ -1275,4 +1295,41 @@ pub fn commands() -> Vec<CommandSpec> {
             Ok(json!({"count": a.len(), "assigned": a}))
         }),
     ]
+}
+
+#[cfg(test)]
+mod naming_tests {
+    use super::{Binding, Chord, CommandInfo, Platform, check_panel, convert};
+
+    #[test]
+    fn plus_shortcut_parses_as_a_key_with_or_without_modifiers() {
+        let plus = Chord::parse("+").expect("a literal plus is a key");
+        assert_eq!(plus.key, "+");
+        assert_eq!(plus.canonical(), "+");
+
+        let modified = Chord::parse_for("Ctrl++", Platform::Windows).expect("Ctrl+Plus is a key");
+        assert!(modified.mods.cmd);
+        assert_eq!(modified.key, "+");
+        assert_eq!(modified.canonical(), "Cmd++");
+    }
+
+    #[test]
+    fn grading_shortcut_category_preserves_legacy_command_identity() {
+        let command = CommandInfo::new("lumetri.setLook", "Set Creative Look", &[], Some("Cmd+Alt+L"));
+        assert_eq!(command.category, "Color Grading");
+        assert_eq!(command.id, "lumetri.setLook");
+        assert_eq!(command.label, "Set Creative Look");
+        assert!(command.menu.is_empty());
+        assert_eq!(command.defaults, [("Cmd+Alt+L".to_string(), None)]);
+    }
+
+    #[test]
+    fn grading_shortcuts_import_old_and_current_panel_names() {
+        for name in ["Lumetri Color", "Color Grade", "Color Grading"] {
+            assert_eq!(check_panel(Some(name)).unwrap(), Some("Color Grading"));
+            let bindings = convert(vec![Binding::new("playback.toggle", "Cmd+1", Some(name))], Some(Platform::Mac));
+            assert_eq!(bindings.len(), 1);
+            assert_eq!(bindings[0].panel.as_deref(), Some("Color Grading"));
+        }
+    }
 }

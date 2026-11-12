@@ -16,6 +16,14 @@ use filmcraft_codecs::hw::NalStreamInfo;
 use filmcraft_platform::HybridDecoder;
 use filmcraft_platform::media_foundation::MfDecoder;
 
+// Media Foundation decoders share the process D3D11 device. Running these parity tests
+// concurrently can starve the device and drop output frames, so serialize each test case.
+static HARDWARE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn hardware_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    HARDWARE_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// The hardware decoder for a stream, or `None` (skip) when this machine has none for it.
 fn hardware(s: &Stream) -> Option<Box<dyn VideoDecoder>> {
     match filmcraft_platform::media_foundation_factory(&s.entry) {
@@ -102,6 +110,7 @@ fn drained_decoder_restarts_only_at_idr(name: &str, s: &Stream) {
 
 #[test]
 fn bit_exact_with_the_software_decoders() {
+    let _hardware_test_guard = hardware_test_guard();
     let ff = filmcraft_testkit::require_ffmpeg!();
     for (name, s) in small_streams(&ff) {
         parity(&name, &s);
@@ -203,24 +212,28 @@ fn large(codec: &str, size: &str) {
 
 #[test]
 fn h264_1080p_and_2160p_are_bit_exact() {
+    let _hardware_test_guard = hardware_test_guard();
     large("h264", "1920x1080");
     large("h264", "3840x2160");
 }
 
 #[test]
 fn hevc_main_1080p_and_2160p_are_bit_exact() {
+    let _hardware_test_guard = hardware_test_guard();
     large("hevc", "1920x1080");
     large("hevc", "3840x2160");
 }
 
 #[test]
 fn hevc_main10_1080p_and_2160p_are_bit_exact() {
+    let _hardware_test_guard = hardware_test_guard();
     large("hevc10", "1920x1080");
     large("hevc10", "3840x2160");
 }
 
 #[test]
 fn mid_stream_failure_continues_in_software() {
+    let _hardware_test_guard = hardware_test_guard();
     let ff = filmcraft_testkit::require_ffmpeg!();
     for (name, s) in small_streams(&ff) {
         let name = name.as_str();
@@ -265,6 +278,7 @@ fn bounded(what: &str, limit: Duration, f: impl FnOnce() + Send + 'static) {
 
 #[test]
 fn damaged_samples_and_parameter_sets_never_crash_or_hang() {
+    let _hardware_test_guard = hardware_test_guard();
     let ff = filmcraft_testkit::require_ffmpeg!();
     for (name, s) in small_streams(&ff) {
         let name = name.as_str();
@@ -344,6 +358,7 @@ fn damaged_samples_and_parameter_sets_never_crash_or_hang() {
 /// match ffmpeg's decode exactly; when it does not, the factory declines.
 #[test]
 fn hevc_422_10bit_matches_ffmpeg_when_the_hardware_takes_it() {
+    let _hardware_test_guard = hardware_test_guard();
     let ff = filmcraft_testkit::require_ffmpeg!();
     let args = [
         "-f",
@@ -383,6 +398,7 @@ fn hevc_422_10bit_matches_ffmpeg_when_the_hardware_takes_it() {
 /// fails nor leaks Direct3D / Media Foundation objects into the next one.
 #[test]
 fn repeated_initialisation() {
+    let _hardware_test_guard = hardware_test_guard();
     let ff = filmcraft_testkit::require_ffmpeg!();
     let Some(path) = named(&ff, "h264_high.mp4") else { return };
     let s = read_stream(&path);
@@ -399,6 +415,7 @@ fn repeated_initialisation() {
 /// software decoder's pictures.
 #[test]
 fn concurrent_decoders_share_the_device() {
+    let _hardware_test_guard = hardware_test_guard();
     let ff = filmcraft_testkit::require_ffmpeg!();
     let jobs: Vec<_> = ["h264_high.mp4", "hevc_main.mp4", "hevc_main10.mp4", "h264_high.mp4", "hevc_main.mp4"]
         .into_iter()
@@ -425,6 +442,7 @@ fn concurrent_decoders_share_the_device() {
 /// A decoder dropped, used and moved between threads (decoders migrate between frame workers).
 #[test]
 fn decoder_moves_between_threads() {
+    let _hardware_test_guard = hardware_test_guard();
     let ff = filmcraft_testkit::require_ffmpeg!();
     let Some(path) = named(&ff, "hevc_main.mp4") else { return };
     let s = read_stream(&path);
@@ -579,21 +597,25 @@ fn frame_parity(codec: &str, sizes: &[&str]) {
 
 #[test]
 fn vp9_profile_0_is_bit_exact() {
+    let _hardware_test_guard = hardware_test_guard();
     frame_parity("vp9", &["640x360", "1920x1080", "3840x2160"]);
 }
 
 #[test]
 fn vp9_profile_2_10bit_is_bit_exact() {
+    let _hardware_test_guard = hardware_test_guard();
     frame_parity("vp9p2", &["640x360", "1920x1080", "3840x2160"]);
 }
 
 #[test]
 fn av1_8bit_is_bit_exact() {
+    let _hardware_test_guard = hardware_test_guard();
     frame_parity("av1", &["640x360", "1920x1080", "3840x2160"]);
 }
 
 #[test]
 fn av1_10bit_is_bit_exact() {
+    let _hardware_test_guard = hardware_test_guard();
     frame_parity("av1p10", &["640x360", "1920x1080", "3840x2160"]);
 }
 
@@ -634,6 +656,7 @@ fn damaged_av1c(name: &str, s: &Stream, c: &filmcraft_isobmff::Av1Config) {
 /// continues with the software decoder, whose output is the reference.
 #[test]
 fn in_band_format_changes_fall_back_to_software() {
+    let _hardware_test_guard = hardware_test_guard();
     let ff = filmcraft_testkit::require_ffmpeg!();
     for codec in ["vp9", "av1"] {
         let (Some(big), Some(small)) = (frame_fixture(&ff, codec, "1920x1080"), frame_fixture(&ff, codec, "640x360")) else { continue };

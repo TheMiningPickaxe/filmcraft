@@ -10,11 +10,10 @@
 # Swedish video-editing vocabulary (spår, spelmarkör, sekvens, bin, snitt, nyckelbildruta,
 # undertext, rendera…). No proprietary localisation resource, string table or product UI was
 # consulted or copied, and no other FilmCraft catalog was translated from; add entries the same
-# way. Product, technology and format names (FilmCraft, ArtCraft, Lumetri, ProRes, LUFS, H.264…)
+# way. Product, technology and format names (FilmCraft, ArtCraft, ProRes, LUFS, H.264…)
 # keep their spelling, as do key-cap names (Shift, Alt, Ctrl, Cmd, Opt, Esc).
 # Labels use sentence case; commands are imperatives; Delete = Radera, Remove = Ta bort,
 # Clear = Rensa; decimals use a comma and frame rates are written bild/s (29,97 bild/s).
-
 	About FilmCraft	Om FilmCraft
 	Add Audio Submix Track	Lägg till ljudsubmixspår
 	Add Caption at Playhead	Lägg till undertext vid spelmarkören
@@ -35,8 +34,6 @@
 	Align to Video Frame as Group	Justera mot videobildruta som grupp
 	All Panels	Alla paneler
 	Alpha	Alfa
-	Alternate Drag Speed	Alternativ draghastighet
-	Alternate Drag Speed:	Alternativ draghastighet:
 	Appearance	Utseende
 	Appearance…	Utseende…
 	Apply Audio Transition	Använd ljudövergång
@@ -73,7 +70,6 @@
 	Captions…	Undertexter…
 	Caribbean	Karibisk
 	Center Horizontally	Centrera horisontellt
-	Center on Playhead:	Centrera på uppspelninghuvudet:
 	Center Vertically	Centrera vertikalt
 	Cerulean	Azurblå
 	Clear	Rensa
@@ -93,7 +89,6 @@
 	Comparison View	Jämförelsevy
 	Composite Video	Kompositvideo
 	Consolidate Duplicates	Slå samman dubbletter
-	Controls	Styrning
 	Copy	Kopiera
 	Copy Paste Includes Sequence Markers	Kopiering och inklistring tar med sekvensmarkörer
 	Create Captions from Transcript…	Skapa undertexter från transkription…
@@ -127,11 +122,9 @@
 	Ellipse	Ellips
 	Enable	Aktivera
 	Enable Remix	Aktivera Remix
-	Enter Shortcut	Ange genväg
 	Essential Graphics	Grundläggande grafik
 	Essential Sound	Grundläggande ljud
 	Events	Händelser
-	Explode Slider:	Fäll ut reglaget:
 	Export	Exportera
 	Export As Motion Graphics Template…	Exportera som rörlig grafik-mall…
 	Extract	Extrahera
@@ -186,7 +179,6 @@
 	Insert Frame Hold Segment	Infoga frysbildssegment
 	Install Motion Graphics Template…	Installera rörlig grafik-mall…
 	Interpret Footage…	Tolka material…
-	Invert Scrolling	Invertera rullning
 	Join the ArtCraft Discord…	Gå med i ArtCraft på Discord…
 	Keyboard Shortcuts…	Kortkommandon…
 	Label	Etikett
@@ -200,12 +192,11 @@
 	Light	Ljus
 	Link	Länka
 	Link Media…	Länka media…
-	Playhead Centering Range	Intervall för centrering av uppspelninghuvudet
 	Refresh Changed Media	Uppdatera ändrad media
 	Linked Selection	Länkad markering
 	Lock Guides	Lås stödlinjer
-	Lumetri Color	Lumetri-färg
-	Lumetri Scopes	Lumetri-scope
+	Color Grading	Färggradering
+	Video Scopes	Videoskop
 	Magnification	Förstoring
 	Make Offline…	Gör offline…
 	Make Subclip…	Skapa delklipp…
@@ -334,7 +325,6 @@
 	Simplify Sequence…	Förenkla sekvens…
 	Snap in Program Monitor	Fäst i programmonitorn
 	Snap in Timeline	Fäst i tidslinjen
-	Snap to Tracks	Fäst vid spår
 	Source	Källa
 	Source Settings…	Källinställningar…
 	Speed/Duration…	Hastighet/längd…
@@ -899,7 +889,7 @@
 	Clip Volume	Klippvolym
 	(no clip selected)	(inget klipp markerat)
 	Master · {name}	Huvud · {name}
-	Add Lumetri Color to clip	Lägg till Lumetri-färg på klippet
+	Add Color Grading to clip	Lägg till färggradering i klippet
 	Input LUT	Ingångs-LUT
 	Color	Färg
 	Temperature	Temperatur
@@ -1677,7 +1667,7 @@
 	Elliptical	Elliptisk
 	Emboss	Relief
 	Enable HSL Secondary	Aktivera HSL-sekundär
-	Enable Mercury Transmit	Aktivera Mercury Transmit
+	Enable External Video Output	Aktivera extern videoutgång
 	Enable ProRes hardware accelerated encoding, if available	Aktivera hårdvaruaccelererad ProRes-kodning om tillgänglig
 	Enable clip and XMP metadata linking	Aktivera länkning av klipp- och XMP-metadata
 	Enable developer mode	Aktivera utvecklarläge
@@ -1745,7 +1735,7 @@
 	Focus Size	Fokusstorlek
 	Fold Motion	Vikrörelse
 	Foldback	Återvikning
-	For color management parameters, go to the Settings tab in the Lumetri Color panel.	Färghanteringsparametrarna finns på fliken Inställningar i panelen Lumetri-färg.
+	For color management parameters, go to the Settings tab in the Color Grading panel.	Öppna fliken Inställningar i panelen Färggradering för färghanteringsparametrar.
 	Format	Format
 	Four Scopes (RGB, 8 bit)	Fyra scope (RGB, 8 bitar)
 	Four Scopes (YUV, float, no clamp)	Fyra scope (YUV, flyttal, ingen begränsning)
@@ -2016,7 +2006,7 @@
 	Luma Key	Lumanyckel
 	Luma Source	Lumakälla
 	Luma and Chroma	Luma och kroma
-	Lumetri Presets	Lumetri-förinställningar
+	Color Grading Presets	Förinställningar för färggradering
 	Luminance	Luminans
 	Luminance Threshold	Luminanströskel
 	Luminosity	Luminositet
@@ -3138,7 +3128,6 @@
 	Left align text	Vänsterjustera text
 	Looping GIF, 640×360 at 15 fps	Loopande GIF, 640×360 i 15 bild/s
 	Lower First	Undre fält först
-	Lumetri	Lumetri
 	MXF OP-Atom	MXF OP-Atom
 	MXF OP-Atom DNxHR (Avid)	MXF OP-Atom DNxHR (Avid)
 	MXF OP1a	MXF OP1a
@@ -3600,6 +3589,7 @@
 	The default graphics are used from the next start.	Standardgrafiken används från och med nästa start.
 	DirectX 12 only	Endast DirectX 12
 	software rendering	programvarurendering
+	integrated GPU	integrerad GPU
 	Label Color Presets	Förinställningar för etikettfärger
 	{name} (Modified)	{name} (ändrad)
 	Revert to the preset's colors and names	Återgå till förinställningens färger och namn
@@ -3744,7 +3734,6 @@
 	Previous	Föregående
 	Next	Nästa
 	Enter a valid HH:MM:SS:FF timecode	Ange en giltig tidskod i formatet HH:MM:SS:FF
-
 # Export: H.264 High 10 and all-intra (#1221).
 	High 10	High 10
 	10-bit color	10-bitarsfärg
@@ -3754,7 +3743,22 @@
 	H.264 High 10 Intra	H.264 High 10 Intra
 	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10 bitar 4:2:0) i sekvensens storlek, konstant kvalitet CRF 16, AAC 320 kbit/s; en 10-bitars master
 	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10 bitar 4:2:0, varje bildruta en nyckelbildruta), CRF 12, AAC 320 kbit/s; ett redigeringsvänligt mellanformat
+	List Color Grading Presets	Lista förinställningar för färggradering
+	Apply Color Grading Preset	Tillämpa förinställning för färggradering
+	Color Grading Preset Thumbnails	Miniatyrer för färggraderingsförinställningar
+	Toggle Color Grading Section	Växla färggraderingsavsnitt
+	Color Grading Section	Färggraderingsavsnitt
+	Read Video Scopes	Läs av videoskop
 
+	Alternate Drag Speed	Alternativ draghastighet
+	Alternate Drag Speed:	Alternativ draghastighet:
+	Center on Playhead:	Centrera på uppspelninghuvudet:
+	Controls	Styrning
+	Enter Shortcut	Ange genväg
+	Explode Slider:	Fäll ut reglaget:
+	Invert Scrolling	Invertera rullning
+	Playhead Centering Range	Intervall för centrering av uppspelninghuvudet
+	Snap to Tracks	Fäst vid spår
 	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	När detta är aktiverat animeras reglagens kanter, centrering på spelhuvudet och spegling av reglage mjukt.
 	Reverses timeline scrolling and zooming when holding the center of the slider.	Vänder riktningen för rullning och zoomning av tidslinjen när mitten av reglaget hålls ned.
 	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	Dra tidslinjens reglage lodrätt för att ändra storlek på båda spårområdena. Rekommenderas när spårreglagen är dolda.

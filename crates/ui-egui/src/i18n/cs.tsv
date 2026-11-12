@@ -13,7 +13,6 @@
 #            other          disambiguating context for a source with multiple meanings
 #   escapes  \n  \t  \\ inside a column. Keep {name} placeholders in both columns.
 #   lines starting with # and blank lines are ignored.
-
 	About FilmCraft	O aplikaci FilmCraft
 	Add Audio Submix Track	Přidat stopu zvukové podskupiny
 	Add Caption at Playhead	Přidat titulek na pozici přehrávací hlavy
@@ -34,8 +33,6 @@
 	Align to Video Frame as Group	Zarovnat skupinu podle videosnímku
 	All Panels	Všechny panely
 	Alpha	Alfa
-	Alternate Drag Speed	Alternativní rychlost tazení
-	Alternate Drag Speed:	Alternativní rychlost tazení:
 	Appearance	Vzhled
 	Appearance…	Vzhled…
 	Apply Audio Transition	Použít zvukový přechod
@@ -72,7 +69,6 @@
 	Captions…	Titulky…
 	Caribbean	Karibská modř
 	Center Horizontally	Zarovnat vodorovně na střed
-	Center on Playhead:	Vystredit na prehrávací hlavu:
 	Center Vertically	Zarovnat svisle na střed
 	Cerulean	Nebeská modř
 	Clear	Vymazat
@@ -92,7 +88,6 @@
 	Comparison View	Porovnávací zobrazení
 	Composite Video	Složený obraz
 	Consolidate Duplicates	Sloučit duplicity
-	Controls	Ovládání
 	Copy	Kopírovat
 	Copy Paste Includes Sequence Markers	Zahrnout značky sekvence při kopírování a vložení
 	Create Captions from Transcript…	Vytvořit titulky z přepisu…
@@ -126,11 +121,9 @@
 	Ellipse	Elipsa
 	Enable	Povolit
 	Enable Remix	Povolit remix
-	Enter Shortcut	Zadejte klávesovou zkratku
 	Essential Graphics	Základní grafika
 	Essential Sound	Základní zvuk
 	Events	Události
-	Explode Slider:	Rozložit posuvník:
 	Export	Export
 	Export As Motion Graphics Template…	Exportovat jako šablonu pohyblivé grafiky…
 	Extract	Vyjmout s posunem
@@ -187,7 +180,6 @@
 	Insert Frame Hold Segment	Vložit segment se zmrazeným snímkem
 	Install Motion Graphics Template…	Nainstalovat šablonu pohyblivé grafiky…
 	Interpret Footage…	Interpretovat záběry…
-	Invert Scrolling	Invertovat posouvání
 	Join the ArtCraft Discord…	Připojit se k Discordu ArtCraft…
 	Keyboard Shortcuts…	Klávesové zkratky…
 	Label	Štítek
@@ -201,12 +193,11 @@
 	Light	Světlý
 	Link	Propojit
 	Link Media…	Propojit média…
-	Playhead Centering Range	Rozsah vycentrování prehrávací hlavy
 	Refresh Changed Media	Obnovit změněná média
 	Linked Selection	Propojený výběr
 	Lock Guides	Zamknout vodítka
-	Lumetri Color	Barvy Lumetri
-	Lumetri Scopes	Obrazové měřiče Lumetri
+	Color Grading	Barevné úpravy
+	Video Scopes	Videoskopy
 	Magnification	Zvětšení
 	Make Offline…	Přepnout do režimu offline…
 	Make Subclip…	Vytvořit podklip…
@@ -333,7 +324,6 @@
 	Simplify Sequence…	Zjednodušit sekvenci…
 	Snap in Program Monitor	Přichytávat v programovém monitoru
 	Snap in Timeline	Přichytávat na časové ose
-	Snap to Tracks	Prichytit ke stopám
 	Source	Zdroj
 	Source Settings…	Nastavení zdroje…
 	Speed/Duration…	Rychlost / doba trvání…
@@ -897,7 +887,7 @@
 	Clip Volume	Hlasitost klipu
 	(no clip selected)	(žádný vybraný klip)
 	Master · {name}	Hlavní klip · {name}
-	Add Lumetri Color to clip	Přidat barvy Lumetri do klipu
+	Add Color Grading to clip	Přidat barevné úpravy do klipu
 	Input LUT	Vstupní LUT
 	Color	Barva
 	Temperature	Teplota
@@ -1675,7 +1665,7 @@
 	Elliptical	Eliptický
 	Emboss	Reliéf
 	Enable HSL Secondary	Povolit sekundární korekci HSL
-	Enable Mercury Transmit	Povolit Mercury Transmit
+	Enable External Video Output	Povolit externí výstup videa
 	Enable ProRes hardware accelerated encoding, if available	Povolit hardwarově akcelerované kódování ProRes, je-li dostupné
 	Enable clip and XMP metadata linking	Povolit propojení metadat klipu a XMP
 	Enable developer mode	Povolit vývojářský režim
@@ -1743,7 +1733,7 @@
 	Focus Size	Velikost oblasti zaostření
 	Fold Motion	Pohyb přeložení
 	Foldback	Zpětné přeložení
-	For color management parameters, go to the Settings tab in the Lumetri Color panel.	Parametry správy barev najdete na kartě Nastavení v panelu Barvy Lumetri.
+	For color management parameters, go to the Settings tab in the Color Grading panel.	Parametry správy barev najdete na kartě Nastavení v panelu Barevné úpravy.
 	Format	Formát
 	Four Scopes (RGB, 8 bit)	Čtyři měřiče (RGB, 8bitové)
 	Four Scopes (YUV, float, no clamp)	Čtyři měřiče (YUV, plovoucí desetinná čárka, bez omezení)
@@ -2012,7 +2002,7 @@
 	Luma Key	Klíčování podle jasové složky
 	Luma Source	Zdroj jasové složky
 	Luma and Chroma	Jasová a barevná složka
-	Lumetri Presets	Přednastavení Lumetri
+	Color Grading Presets	Přednastavení barevných úprav
 	Luminance	Luminance
 	Luminance Threshold	Práh luminance
 	Luminosity	Světlost
@@ -3122,7 +3112,6 @@
 	Left align text	Zarovnat text vlevo
 	Looping GIF, 640×360 at 15 fps	Opakovaný GIF, 640×360 při 15 sn./s
 	Lower First	Dolní půlsnímek první
-	Lumetri	Lumetri
 	MXF OP-Atom	MXF OP-Atom
 	MXF OP-Atom DNxHR (Avid)	MXF OP-Atom DNxHR (Avid)
 	MXF OP1a	MXF OP1a
@@ -3589,6 +3578,7 @@
 	Delete this preset	Odstranit toto přednastavení
 	DirectX 12 only	Pouze DirectX 12
 	software rendering	softwarové vykreslování
+	integrated GPU	integrovaný GPU
 	Drag inward to round the corners	Tažením dovnitř zaoblíte rohy
 	Export the labels to a preset file…	Exportovat štítky do souboru přednastavení…
 	Import a preset file…	Importovat soubor přednastavení…
@@ -3643,7 +3633,6 @@
 	Could not check for updates:\n{error}	Aktualizace se nepodařilo zkontrolovat:\n{error}
 	FilmCraft {version} is currently the newest version available.	FilmCraft {version} je nejnovější dostupná verze.
 	Looks for a newer FilmCraft release and offers to update.	Vyhledá novější vydání FilmCraftu a nabídne aktualizaci.
-
 # Export: H.264 High 10 and all-intra (#1221).
 	High 10	High 10
 	10-bit color	10bitová barva
@@ -3653,3 +3642,19 @@
 	H.264 High 10 Intra	H.264 High 10 Intra
 	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10bitové 4:2:0) ve velikosti sekvence, konstantní kvalita CRF 16, AAC 320 kb/s; 10bitový master
 	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10bitové 4:2:0, každý snímek klíčový), CRF 12, AAC 320 kb/s; mezilehlý formát vhodný pro střih
+	List Color Grading Presets	Vypsat přednastavení barevných úprav
+	Apply Color Grading Preset	Použít přednastavení barevných úprav
+	Color Grading Preset Thumbnails	Náhledy přednastavení barevných úprav
+	Toggle Color Grading Section	Přepnout sekci barevných úprav
+	Color Grading Section	Sekce barevných úprav
+	Read Video Scopes	Načíst videoskopy
+
+	Alternate Drag Speed	Alternativní rychlost tazení
+	Alternate Drag Speed:	Alternativní rychlost tazení:
+	Center on Playhead:	Vystredit na prehrávací hlavu:
+	Controls	Ovládání
+	Enter Shortcut	Zadejte klávesovou zkratku
+	Explode Slider:	Rozložit posuvník:
+	Invert Scrolling	Invertovat posouvání
+	Playhead Centering Range	Rozsah vycentrování prehrávací hlavy
+	Snap to Tracks	Prichytit ke stopám

@@ -11,9 +11,8 @@
 # Clean-room: every entry was written from the plain meaning of the English text using ordinary
 # Spanish video-editing vocabulary (pista, cabezal, secuencia, bandeja, procesar…). No proprietary
 # localisation resource, string table or product UI was consulted or copied; add entries the same
-# way. Product and technology names (FilmCraft, ArtCraft, Lumetri, ProRes, LUFS…) keep their
+# way. Product and technology names (FilmCraft, ArtCraft, ProRes, LUFS…) keep their
 # spelling. "video" is written without an accent, as in the rest of this catalog.
-
 	About FilmCraft	Acerca de FilmCraft
 	Add Audio Submix Track	Añadir pista de submezcla de audio
 	Add Caption at Playhead	Añadir subtítulo en el cabezal
@@ -34,7 +33,6 @@
 	Align to Video Frame as Group	Alinear con el fotograma de video como grupo
 	All Panels	Todos los paneles
 	Alpha	Alfa
-	Alternate Drag Speed:	Velocidad de arrastre alternativa:
 	Appearance	Apariencia
 	Appearance…	Apariencia…
 	Apply Audio Transition	Aplicar transición de audio
@@ -70,8 +68,11 @@
 	Captions and Graphics	Subtítulos y gráficos
 	Captions…	Subtítulos…
 	Caribbean	Caribe
+	Center at Cut	Centrado en el corte
+	Start at Cut	Inicio en el corte
+	End at Cut	Fin en el corte
+	Custom Start	Inicio personalizado
 	Center Horizontally	Centrar horizontalmente
-	Center on Playhead:	Centrar en el cabezal:
 	Center Vertically	Centrar verticalmente
 	Cerulean	Cerúleo
 	Clear	Borrar
@@ -91,7 +92,6 @@
 	Comparison View	Vista de comparación
 	Composite Video	Video compuesto
 	Consolidate Duplicates	Consolidar duplicados
-	Controls	Controles
 	Copy	Copiar
 	Copy Paste Includes Sequence Markers	Copiar y pegar incluye marcadores de secuencia
 	Create Captions from Transcript…	Crear subtítulos a partir de la transcripción…
@@ -125,11 +125,9 @@
 	Ellipse	Elipse
 	Enable	Activar
 	Enable Remix	Activar remezcla
-	Enter Shortcut	Introducir atajo
 	Essential Graphics	Gráficos esenciales
 	Essential Sound	Sonido esencial
 	Events	Eventos
-	Explode Slider:	Expandir el control deslizante:
 	Export	Exportar
 	Export As Motion Graphics Template…	Exportar como plantilla de animación…
 	Extract	Extraer
@@ -187,7 +185,6 @@
 	Insert Frame Hold Segment	Insertar segmento de fotograma congelado
 	Install Motion Graphics Template…	Instalar plantilla de animación…
 	Interpret Footage…	Interpretar material…
-	Invert Scrolling	Invertir desplazamiento
 	Join the ArtCraft Discord…	Únete al Discord de ArtCraft…
 	Keyboard Shortcuts…	Atajos de teclado…
 	Label	Etiqueta
@@ -201,12 +198,11 @@
 	Light	Claro
 	Link	Vincular
 	Link Media…	Vincular medios…
-	Playhead Centering Range	Rango de centrado del cabezal
 	Refresh Changed Media	Actualizar medios cambiados
 	Linked Selection	Selección vinculada
 	Lock Guides	Bloquear guías
-	Lumetri Color	Color Lumetri
-	Lumetri Scopes	Ámbitos Lumetri
+	Color Grading	Gradación de color
+	Video Scopes	Medidores de vídeo
 	Magnification	Ampliación
 	Make Offline…	Desconectar…
 	Make Subclip…	Crear subclip…
@@ -336,7 +332,6 @@
 	Simplify Sequence…	Simplificar secuencia…
 	Snap in Program Monitor	Ajustar en el monitor de programa
 	Snap in Timeline	Ajustar en la línea de tiempo
-	Snap to Tracks	Ajustar a pistas
 	Source	Origen
 	Source Settings…	Ajustes de origen…
 	Speed/Duration…	Velocidad/duración…
@@ -460,6 +455,9 @@
 	Recover	Recuperar
 	Not Now	Ahora no
 	Are you sure you want to discard your changes to '{file}'?	¿Seguro que quieres descartar los cambios en '{file}'?
+	Replace File	Reemplazar archivo
+	“{file}” already exists in “{folder}”. Do you want to replace it?	“{file}” ya existe en “{folder}”. ¿Quieres reemplazarlo?
+	Replace	Reemplazar
 	Yes	Sí
 	No	No
 	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	Añade medios a tu proyecto. Suelta archivos o carpetas en cualquier parte de la ventana o elige un origen abajo.
@@ -906,7 +904,7 @@
 	Clip Volume	Volumen del clip
 	(no clip selected)	(ningún clip seleccionado)
 	Master · {name}	Maestro · {name}
-	Add Lumetri Color to clip	Añadir Color Lumetri al clip
+	Add Color Grading to clip	Añadir gradación de color al clip
 	Input LUT	LUT de entrada
 	Color	Color
 	Temperature	Temperatura
@@ -1007,7 +1005,6 @@
 	Eyedropper (pick a color from the Program monitor)	Cuentagotas (tomar un color del monitor de programa)
 	Eyedropper: no picture to sample	Cuentagotas: no hay imagen de la que tomar el color
 	Add/Remove Keyframe	Añadir/quitar fotograma clave
-	Temporal Interpolation	Interpolación temporal
 	Linear	Lineal
 	Bezier	Bézier
 	Auto Bezier	Bézier automático
@@ -1056,6 +1053,7 @@
 	All Caps	Todo mayúsculas
 	Small Caps	Versalitas
 	Underline	Subrayado
+	Strikethrough	Tachado
 	OpenType	OpenType
 	Kerning	Ajuste entre pares
 	Ligatures	Ligaduras
@@ -1196,7 +1194,7 @@
 	New Bin	Nueva bandeja
 	Find	Buscar
 	Automate to Sequence	Automatizar a secuencia
-	Select items to clear	Selecciona los elementos que quieres borrar
+	Select one clip (or a linked clip) in the Timeline, or one item in the Project panel, to rename	Selecciona un clip (o un clip vinculado) en la línea de tiempo, o un elemento en el panel Proyecto, para cambiarle el nombre
 	User Order	Orden del usuario
 	Descending	Descendente
 	Refresh Project	Actualizar proyecto
@@ -1685,7 +1683,7 @@
 	Elliptical	Elíptico
 	Emboss	Relieve
 	Enable HSL Secondary	Activar HSL secundaria
-	Enable Mercury Transmit	Activar Mercury Transmit
+	Enable External Video Output	Activar salida de vídeo externa
 	Enable ProRes hardware accelerated encoding, if available	Activar la codificación ProRes acelerada por hardware, si está disponible
 	Enable clip and XMP metadata linking	Activar la vinculación de metadatos de clip y XMP
 	Enable developer mode	Activar el modo de desarrollador
@@ -1753,7 +1751,7 @@
 	Focus Size	Tamaño del foco
 	Fold Motion	Movimiento de plegado
 	Foldback	Retorno
-	For color management parameters, go to the Settings tab in the Lumetri Color panel.	Para los parámetros de gestión del color, ve a la pestaña Ajustes del panel Color Lumetri.
+	For color management parameters, go to the Settings tab in the Color Grading panel.	Para los parámetros de gestión del color, vaya a la pestaña Ajustes del panel Gradación de color.
 	Format	Formato
 	Four Scopes (RGB, 8 bit)	Cuatro ámbitos (RGB, 8 bits)
 	Four Scopes (YUV, float, no clamp)	Cuatro ámbitos (YUV, coma flotante, sin limitar)
@@ -2024,7 +2022,7 @@
 	Luma Key	Incrustación de luminancia
 	Luma Source	Origen de luminancia
 	Luma and Chroma	Luminancia y croma
-	Lumetri Presets	Ajustes preestablecidos de Lumetri
+	Color Grading Presets	Ajustes preestablecidos de gradación de color
 	Luminance	Luminancia
 	Luminance Threshold	Umbral de luminancia
 	Luminosity	Luminosidad
@@ -3008,6 +3006,9 @@
 	AAC Audio	AAC Audio
 	AAC Audio 48 kHz 320 kbps	AAC Audio 48 kHz 320 kbps
 	MPEG-4 audio (.m4a), stereo 48 kHz AAC-LC at 320 kbps	Audio MPEG-4 (.m4a), estéreo, AAC-LC de 48 kHz a 320 kbps
+	MP3	MP3
+	MP3 48 kHz 320 kbps	MP3 48 kHz 320 kbps
+	MPEG audio (.mp3), joint stereo 48 kHz at 320 kbps	Audio MPEG (.mp3), estéreo conjunto de 48 kHz a 320 kbps
 	AIFF	AIFF
 	AIFF 48 kHz 16-bit	AIFF 48 kHz 16 bits
 	AIFF, stereo 48 kHz 16-bit PCM	AIFF, estéreo, PCM de 48 kHz y 16 bits
@@ -3146,7 +3147,6 @@
 	Left align text	Alinear texto a la izquierda
 	Looping GIF, 640×360 at 15 fps	GIF en bucle, 640×360 a 15 fps
 	Lower First	Inferior primero
-	Lumetri	Lumetri
 	MXF OP-Atom	MXF OP-Atom
 	MXF OP-Atom DNxHR (Avid)	MXF OP-Atom DNxHR (Avid)
 	MXF OP1a	MXF OP1a
@@ -3570,7 +3570,6 @@
 	tracks	pistas
 	Clear Transition	Borrar transición
 	Set Transition Duration	Establecer duración de la transición
-
 # System appearance modes and theme cards.
 	Active	Activo
 	Appearance Mode	Modo de apariencia
@@ -3591,7 +3590,6 @@
 	Composite on the GPU when available	Componer en la GPU cuando esté disponible
 	Text to Speech	Texto a voz
 	Edit Narration	Editar narración
-
 	Dock Panel	Acoplar panel
 	Undock Panel	Desacoplar panel
 	Docking Action	Acción de acoplamiento
@@ -3601,11 +3599,8 @@
 	Edit Project Notes	Editar notas del proyecto
 	Notes for this project: to-dos, instructions, frame numbers… Saved with the project.	Notas de este proyecto: tareas pendientes, instrucciones, números de fotograma… Se guardan con el proyecto.
 	Use Effect Shutter Angle	Usar el ángulo de obturación del efecto
-
 	Appearance Settings…	Ajustes de apariencia…
-
 	Add to favorites	Añadir a favoritos
-
 	Remove from favorites	Quitar de favoritos
 	Compression	Compresión
 	ZIP (1 scan line)	ZIP (1 línea de exploración)
@@ -3616,6 +3611,7 @@
 	The default graphics are used from the next start.	Los gráficos predeterminados se usarán a partir del próximo inicio.
 	DirectX 12 only	Solo DirectX 12
 	software rendering	procesamiento por software
+	integrated GPU	GPU integrada
 	Label Color Presets	Ajustes preestablecidos de color de etiqueta
 	{name} (Modified)	{name} (modificado)
 	Revert to the preset's colors and names	Volver a los colores y nombres del ajuste preestablecido
@@ -3623,7 +3619,6 @@
 	Export the labels to a preset file…	Exportar las etiquetas a un archivo de ajuste preestablecido…
 	Show the presets folder	Mostrar la carpeta de ajustes preestablecidos
 	Delete this preset	Eliminar este ajuste preestablecido
-	Opens in your web browser: {url}	Se abre en el navegador web: {url}
 	Saves this session's log and shows it in your file manager.	Guarda el registro de esta sesión y lo muestra en el explorador de archivos.
 	Shows a report on this computer.	Muestra un informe sobre este equipo.
 	Shows the version, community links and credits in a FilmCraft window.	Muestra la versión, los enlaces de la comunidad y los créditos en una ventana de FilmCraft.
@@ -3635,57 +3630,7 @@
 	Open a sequence to search its graphics	Abre una secuencia para buscar en sus gráficos
 	No text graphics in this sequence. Add text with the Type tool.	Esta secuencia no tiene gráficos con texto. Añade texto con la herramienta Texto.
 	No matching text.	Ningún texto coincide.
-	H.265 (HEVC) needs a hardware encoder (NVENC on NVIDIA GPUs, VideoToolbox on macOS); none was found on this machine, and FilmCraft has no software H.265 encoder yet. Choose H.264 or ProRes instead.	H.265 (HEVC) necesita un codificador por hardware (NVENC en GPU NVIDIA, VideoToolbox en macOS); no se encontró ninguno en este equipo y FilmCraft aún no tiene un codificador H.265 por software. Elija H.264 o ProRes.
-	AV1 needs a hardware encoder; none was found on this machine, and FilmCraft has no software AV1 encoder yet.	AV1 necesita un codificador por hardware; no se encontró ninguno en este equipo y FilmCraft aún no tiene un codificador AV1 por software.
-	Smooth Animations	Animaciones suaves
-	Playhead Centering	Centrado del cabezal de reproducci├│n
-
-	Hide Slider	Ocultar control deslizante
-	Unhide Slider	Mostrar control deslizante
-	Maximum Zoom Level	Nivel máximo de zoom
-	Alternate Drag Speed (Shift + Drag)	Velocidad de arrastre alternativa (Shift + arrastre)
-	Playhead Centering Range (Double Click)	Rango de centrado del cabezal (clic doble)
-	Alternate Drag Speed	Velocidad de arrastre alternativa
-	Value:	Valor:
-	Closest	Más cerca
-	Very Slow	Muy lenta
-	Far	Lejos
-	3s	3 s
-	5s	5 s
-	10s	10 s
-	30s	30 s
-	Position Indicator Color:	Color del indicador de posición:
-	Video Indicator Color:	Color del indicador de vídeo:
-	Audio Indicator Color:	Color del indicador de audio:
-	Offline Indicator Color:	Color del indicador de medios sin conexión:
-	Timeline Slider Settings	Ajustes del control deslizante de la línea de tiempo
-	Track Slider Settings	Ajustes del control deslizante de pistas
-	Unhide Timeline Slider	Mostrar control deslizante de la línea de tiempo
-	Unhide Track Slider	Mostrar control deslizante de pistas
-	Inverted Controls	Controles invertidos
-	Slider Minimap	Minimapa del control deslizante
-	Show Whole Timeline	Mostrar toda la línea de tiempo
-	Prioritise Audio	Priorizar audio
-	Position Indicator	Indicador de posición
-	Fill Clips	Rellenar clips
-	Decouple Edges	Desacoplar extremos
-	Alternate Slider Position	Posición alternativa del control deslizante
-	You can bring it back anytime by right clicking the timeline and selecting "{row}" at the bottom of the list.	Puedes recuperarlo en cualquier momento haciendo clic derecho en la línea de tiempo y seleccionando "{row}" al final de la lista.
-	Maximum zoom level in seconds	Nivel máximo de zoom en segundos
-	Alternate drag speed multiplier	Multiplicador de la velocidad de arrastre alternativa
-	Playhead centering range in seconds	Rango de centrado del cabezal en segundos
-	Alternate drag speed for the track sliders	Velocidad de arrastre alternativa de los controles deslizantes de pistas
-
-# Entries the 0.16 catalogs gained upstream (kept exactly as upstream wrote them).
-	Center at Cut	Centrado en el corte
-	Start at Cut	Inicio en el corte
-	End at Cut	Fin en el corte
-	Custom Start	Inicio personalizado
-	Replace File	Reemplazar archivo
-	“{file}” already exists in “{folder}”. Do you want to replace it?	“{file}” ya existe en “{folder}”. ¿Quieres reemplazarlo?
-	Replace	Reemplazar
-	Strikethrough	Tachado
-	Select one clip (or a linked clip) in the Timeline, or one item in the Project panel, to rename	Selecciona un clip (o un clip vinculado) en la línea de tiempo, o un elemento en el panel Proyecto, para cambiarle el nombre
+# Markers: the Edit Marker dialog (#2416).
 	Edit Marker…	Editar marcador…
 	In:	Entrada:
 	Marker Color:	Color del marcador:
@@ -3696,12 +3641,17 @@
 	Web Link	Vínculo web
 	Flash Cue Point	Punto de referencia Flash
 	Invalid duration: {error}	Duración no válida: {error}
+	H.265 (HEVC) needs a hardware encoder (NVENC on NVIDIA GPUs, VideoToolbox on macOS); none was found on this machine, and FilmCraft has no software H.265 encoder yet. Choose H.264 or ProRes instead.	H.265 (HEVC) necesita un codificador por hardware (NVENC en GPU NVIDIA, VideoToolbox en macOS); no se encontró ninguno en este equipo y FilmCraft aún no tiene un codificador H.265 por software. Elija H.264 o ProRes.
+	AV1 needs a hardware encoder; none was found on this machine, and FilmCraft has no software AV1 encoder yet.	AV1 necesita un codificador por hardware; no se encontró ninguno en este equipo y FilmCraft aún no tiene un codificador AV1 por software.
 	Enter a positive duration within the supported speed range.	Introduce una duración positiva dentro del rango de velocidad admitido.
 	Show Video Names	Mostrar nombres de vídeo
 	Show Audio Names	Mostrar nombres de audio
 	Video Names	Nombres de vídeo
 	Audio Names	Nombres de audio
+# Control server: the status-bar notice when --control cannot serve.
 	The control server is disabled: FILMCRAFT_CONTROL_TOKEN must contain 64 random hex characters (see docs/control-protocol.md)	El servidor de control está desactivado: FILMCRAFT_CONTROL_TOKEN debe contener 64 caracteres hexadecimales aleatorios (ver docs/control-protocol.md)
+# Control server: the bind-failure notice (port collisions; #3318 may show it too).
+# Clip Mismatch Warning dialog.
 	Clip Mismatch Warning	Aviso de discrepancia de clip
 	This clip does not match the sequence settings.	Este clip no coincide con los ajustes de la secuencia.
 	Clip: {settings}	Clip: {settings}
@@ -3709,6 +3659,9 @@
 	Change the sequence to match the clip's settings?	¿Cambiar la secuencia para que coincida con los ajustes del clip?
 	Change Sequence Settings	Cambiar ajustes de secuencia
 	Keep Existing Settings	Mantener los ajustes actuales
+	Temporal Interpolation	Interpolación temporal
+	Select items to clear	Selecciona los elementos que quieres borrar
+	Opens in your web browser: {url}	Se abre en el navegador web: {url}
 	A range marker needs a positive duration	Un marcador de rango necesita una duración positiva
 	Add Custom Color	Añadir color personalizado
 	Add and apply	Añadir y aplicar
@@ -3777,7 +3730,6 @@
 	Preset library updated: {imported} loaded, {removed} removed	Biblioteca de ajustes preestablecidos actualizada: {imported} cargados, {removed} eliminados
 	Preset library updated	Biblioteca de ajustes preestablecidos actualizada
 	Preset library is up to date	La biblioteca de ajustes preestablecidos está actualizada
-
 # Export: H.264 High 10 and all-intra (#1221).
 	High 10	High 10
 	10-bit color	Color de 10 bits
@@ -3787,7 +3739,58 @@
 	H.264 High 10 Intra	H.264 High 10 Intra
 	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10 bits 4:2:0) con el tamaño de la secuencia, calidad constante CRF 16, AAC 320 kbps; un máster de 10 bits
 	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10 bits 4:2:0, cada fotograma es clave), CRF 12, AAC 320 kbps; un intermedio fácil de editar
+	List Color Grading Presets	Listar ajustes preestablecidos de gradación de color
+	Apply Color Grading Preset	Aplicar ajuste preestablecido de gradación de color
+	Color Grading Preset Thumbnails	Miniaturas de ajustes preestablecidos de gradación de color
+	Toggle Color Grading Section	Alternar sección de gradación de color
+	Color Grading Section	Sección de gradación de color
+	Read Video Scopes	Leer medidores de vídeo
 
+	Alternate Drag Speed:	Velocidad de arrastre alternativa:
+	Center on Playhead:	Centrar en el cabezal:
+	Controls	Controles
+	Enter Shortcut	Introducir atajo
+	Explode Slider:	Expandir el control deslizante:
+	Invert Scrolling	Invertir desplazamiento
+	Playhead Centering Range	Rango de centrado del cabezal
+	Snap to Tracks	Ajustar a pistas
+	Smooth Animations	Animaciones suaves
+	Playhead Centering	Centrado del cabezal de reproducci├│n
+	Hide Slider	Ocultar control deslizante
+	Unhide Slider	Mostrar control deslizante
+	Maximum Zoom Level	Nivel máximo de zoom
+	Alternate Drag Speed (Shift + Drag)	Velocidad de arrastre alternativa (Shift + arrastre)
+	Playhead Centering Range (Double Click)	Rango de centrado del cabezal (clic doble)
+	Alternate Drag Speed	Velocidad de arrastre alternativa
+	Value:	Valor:
+	Closest	Más cerca
+	Very Slow	Muy lenta
+	Far	Lejos
+	3s	3 s
+	5s	5 s
+	10s	10 s
+	30s	30 s
+	Position Indicator Color:	Color del indicador de posición:
+	Video Indicator Color:	Color del indicador de vídeo:
+	Audio Indicator Color:	Color del indicador de audio:
+	Offline Indicator Color:	Color del indicador de medios sin conexión:
+	Timeline Slider Settings	Ajustes del control deslizante de la línea de tiempo
+	Track Slider Settings	Ajustes del control deslizante de pistas
+	Unhide Timeline Slider	Mostrar control deslizante de la línea de tiempo
+	Unhide Track Slider	Mostrar control deslizante de pistas
+	Inverted Controls	Controles invertidos
+	Slider Minimap	Minimapa del control deslizante
+	Show Whole Timeline	Mostrar toda la línea de tiempo
+	Prioritise Audio	Priorizar audio
+	Position Indicator	Indicador de posición
+	Fill Clips	Rellenar clips
+	Decouple Edges	Desacoplar extremos
+	Alternate Slider Position	Posición alternativa del control deslizante
+	You can bring it back anytime by right clicking the timeline and selecting "{row}" at the bottom of the list.	Puedes recuperarlo en cualquier momento haciendo clic derecho en la línea de tiempo y seleccionando "{row}" al final de la lista.
+	Maximum zoom level in seconds	Nivel máximo de zoom en segundos
+	Alternate drag speed multiplier	Multiplicador de la velocidad de arrastre alternativa
+	Playhead centering range in seconds	Rango de centrado del cabezal en segundos
+	Alternate drag speed for the track sliders	Velocidad de arrastre alternativa de los controles deslizantes de pistas
 	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	Al activarlo, los bordes de los deslizadores, Centrar en el cabezal y Reflejar deslizador se animan suavemente.
 	Reverses timeline scrolling and zooming when holding the center of the slider.	Invierte el desplazamiento y el zoom de la línea de tiempo al mantener pulsado el centro del deslizador.
 	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	Arrastra el deslizador de la línea de tiempo verticalmente para cambiar el tamaño de ambas secciones de pistas. Recomendado cuando los deslizadores de pistas están ocultos.
@@ -3817,26 +3820,19 @@
 	Zoom In:	Ampliar:
 	Zoom Out:	Reducir:
 	Zoom Timeline:	Zoom de la línea de tiempo:
-
 	Shortcut unavailable	Atajo no disponible
 	Left click is reserved for controlling the application and cannot be assigned.	El clic izquierdo está reservado para controlar la aplicación y no se puede asignar.
 	Right click is reserved for opening slider settings and cannot be assigned.	El clic derecho está reservado para abrir los ajustes del deslizador y no se puede asignar.
 	Turn on Decouple Edges to use Snap to Tracks; linked edges cannot snap independently.	Activa Desvincular bordes para usar Ajustar a pistas; los bordes vinculados no pueden ajustarse de forma independiente.
-
 	This shortcut is already assigned. Open Keyboard Shortcuts to review it.	Este atajo ya está asignado. Abre Atajos de teclado para revisarlo.
-
 	Copy of the project saved to {path}	Copia del proyecto guardada en {path}
 	Project saved to {path}	Proyecto guardado en {path}
 	Ticked attributes are removed from the selected clips.	Los atributos marcados se eliminan de los clips seleccionados.
-
 	No bin {id}	No existe la bandeja {id}
-
 	Unbound	Sin asignar
 	Track Control Angle:	Ángulo de control de pista:
 	to	a
-
 	Control Track Sliders	Controlar deslizadores de pistas
-
 	Full Screen Program Monitor	Monitor de programa a pantalla completa
 	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 10 Mbps, loudness normalized to −14 LUFS	H.264 vertical 9:16, escalado para llenar, VBR de 1 pasada, 10 Mbps, sonoridad normalizada a −14 LUFS
 	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 12 Mbps, loudness normalized to −14 LUFS	H.264 vertical 9:16, escalado para llenar, VBR de 1 pasada, 12 Mbps, sonoridad normalizada a −14 LUFS

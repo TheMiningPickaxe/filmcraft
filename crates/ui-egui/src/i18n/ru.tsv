@@ -23,8 +23,6 @@
 	Align to Video Frame as Group	Выровнять как группу по видеокадру
 	All Panels	Все панели
 	Alpha	Альфа
-	Alternate Drag Speed	Альтернативная скорость перетаскивания
-	Alternate Drag Speed:	Альтернативная скорость перетаскивания:
 	Appearance	Оформление
 	Appearance…	Оформление…
 	Apply Audio Transition	Применить аудиопереход
@@ -61,7 +59,6 @@
 	Captions…	Субтитры…
 	Caribbean	Карибский
 	Center Horizontally	По центру по горизонтали
-	Center on Playhead:	Центрировать на головке воспроизведения:
 	Center Vertically	По центру по вертикали
 	Cerulean	Лазурный
 	Clear	Очистить
@@ -81,7 +78,6 @@
 	Comparison View	Режим сравнения
 	Composite Video	Композитное видео
 	Consolidate Duplicates	Объединить дубликаты
-	Controls	Управление
 	Copy	Копировать
 	Copy Paste Includes Sequence Markers	Копирование и вставка включают маркеры последовательности
 	Create Captions from Transcript…	Создать субтитры из транскрипта…
@@ -115,11 +111,9 @@
 	Ellipse	Эллипс
 	Enable	Включить
 	Enable Remix	Включить ремикс
-	Enter Shortcut	Введите сочетание клавиш
 	Essential Graphics	Основные графические элементы
 	Essential Sound	Основной звук
 	Events	События
-	Explode Slider:	Развернуть ползунок:
 	Export	Экспорт
 	Export As Motion Graphics Template…	Экспортировать как шаблон анимированной графики…
 	Extract	Извлечь
@@ -174,7 +168,6 @@
 	Insert Frame Hold Segment	Вставить сегмент стоп-кадра
 	Install Motion Graphics Template…	Установить шаблон анимированной графики…
 	Interpret Footage…	Интерпретировать материал…
-	Invert Scrolling	Инвертировать прокрутку
 	Join the ArtCraft Discord…	Присоединиться к Discord ArtCraft…
 	Keyboard Shortcuts…	Сочетания клавиш…
 	Label	Метка
@@ -188,12 +181,11 @@
 	Light	Светлый
 	Link	Связать
 	Link Media…	Связать медиа…
-	Playhead Centering Range	Диапазон центрирования головки воспроизведения
 	Refresh Changed Media	Обновить изменённые медиа
 	Linked Selection	Связанное выделение
 	Lock Guides	Заблокировать направляющие
-	Lumetri Color	Цвет Lumetri
-	Lumetri Scopes	Осциллограммы Lumetri
+	Color Grading	Грейдинг
+	Video Scopes	Видеоскопы
 	Magnification	Увеличение
 	Make Offline…	Сделать офлайн…
 	Make Subclip…	Создать субклип…
@@ -323,7 +315,6 @@
 	Simplify Sequence…	Упростить последовательность…
 	Snap in Program Monitor	Привязка в мониторе программы
 	Snap in Timeline	Привязка на таймлайне
-	Snap to Tracks	Привязка к дорожкам
 	Source	Источник
 	Source Settings…	Настройки источника…
 	Speed/Duration…	Скорость/Длительность…
@@ -889,7 +880,7 @@
 	Clip Volume	Громкость клипа
 	(no clip selected)	(клип не выбран)
 	Master · {name}	Мастер · {name}
-	Add Lumetri Color to clip	Добавить «Цвет Lumetri» к клипу
+	Add Color Grading to clip	Добавить грейдинг к клипу
 	Input LUT	Входной LUT
 	Color	Цвет
 	Temperature	Температура
@@ -1668,7 +1659,7 @@
 	Elliptical	Эллиптический
 	Emboss	Рельеф
 	Enable HSL Secondary	Включить вторичную коррекцию HSL
-	Enable Mercury Transmit	Включить Mercury Transmit
+	Enable External Video Output	Включить внешний видеовыход
 	Enable ProRes hardware accelerated encoding, if available	Включить аппаратное ускорение кодирования ProRes, если доступно
 	Enable clip and XMP metadata linking	Включить связывание метаданных клипов и XMP
 	Enable developer mode	Включить режим разработчика
@@ -1736,7 +1727,7 @@
 	Focus Size	Размер фокуса
 	Fold Motion	Складывание
 	Foldback	Фолдбэк
-	For color management parameters, go to the Settings tab in the Lumetri Color panel.	Параметры управления цветом находятся на вкладке «Настройки» панели «Цвет Lumetri».
+	For color management parameters, go to the Settings tab in the Color Grading panel.	Параметры управления цветом находятся на вкладке «Настройки» панели «Грейдинг».
 	Format	Формат
 	Four Scopes (RGB, 8 bit)	Четыре осциллограммы (RGB, 8 бит)
 	Four Scopes (YUV, float, no clamp)	Четыре осциллограммы (YUV, с плавающей запятой, без отсечения)
@@ -2007,7 +1998,7 @@
 	Luma Key	Кеинг по яркости
 	Luma Source	Источник яркости
 	Luma and Chroma	Яркость и цветность
-	Lumetri Presets	Пресеты Lumetri
+	Color Grading Presets	Пресеты грейдинга
 	Luminance	Яркость
 	Luminance Threshold	Порог яркости
 	Luminosity	Светлота
@@ -3129,7 +3120,6 @@
 	Left align text	Выровнять текст по левому краю
 	Looping GIF, 640×360 at 15 fps	GIF-цикл, 640×360, 15 кадр/с
 	Lower First	Нижний первым
-	Lumetri	Lumetri
 	MXF OP-Atom	MXF OP-Atom (контейнер Avid)
 	MXF OP-Atom DNxHR (Avid)	MXF OP-Atom DNxHR от Avid
 	MXF OP1a	MXF OP1a (один файл)
@@ -3592,6 +3582,7 @@
 	The default graphics are used from the next start.	Графика по умолчанию будет использоваться при следующем запуске.
 	DirectX 12 only	Только DirectX 12
 	software rendering	программная визуализация
+	integrated GPU	встроенный GPU
 	Label Color Presets	Пресеты цвета меток
 	{name} (Modified)	{name} (изменён)
 	Revert to the preset's colors and names	Вернуть цвета и имена пресета
@@ -3668,7 +3659,6 @@
 	Previous	Предыдущий
 	Next	Следующий
 	Enter a valid HH:MM:SS:FF timecode	Введите допустимый тайм-код ЧЧ:ММ:СС:КК (HH:MM:SS:FF)
-
 # The strings the missing-translations report listed for ru (#1674).
 	1 frame ({seconds} s)	1 кадр ({seconds} с)
 	1/2	1/2
@@ -3733,7 +3723,6 @@
 	{frames} frames ({seconds} s)	{frames} кадров ({seconds} с)
 	{name} already exists, so nothing was exported. To replace it, choose it in the save dialog.	«{name}» уже существует, поэтому ничего не было экспортировано. Чтобы заменить его, выберите этот файл в диалоге сохранения.
 	“{file}” already exists in “{folder}”. Do you want to replace it?	«{file}» уже существует в «{folder}». Заменить его?
-
 # Export: H.264 High 10 and all-intra (#1221).
 	High 10	High 10
 	10-bit color	10-битный цвет
@@ -3743,7 +3732,22 @@
 	H.264 High 10 Intra	H.264 High 10 Intra
 	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10 бит 4:2:0) в размере последовательности, постоянное качество CRF 16, AAC 320 кбит/с; 10-битный мастер
 	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10 бит 4:2:0, каждый кадр ключевой), CRF 12, AAC 320 кбит/с; промежуточный файл, удобный для монтажа
+	List Color Grading Presets	Список пресетов грейдинга
+	Apply Color Grading Preset	Применить пресет грейдинга
+	Color Grading Preset Thumbnails	Миниатюры пресетов грейдинга
+	Toggle Color Grading Section	Переключить раздел грейдинга
+	Color Grading Section	Раздел грейдинга
+	Read Video Scopes	Считать данные видеоскопов
 
+	Alternate Drag Speed	Альтернативная скорость перетаскивания
+	Alternate Drag Speed:	Альтернативная скорость перетаскивания:
+	Center on Playhead:	Центрировать на головке воспроизведения:
+	Controls	Управление
+	Enter Shortcut	Введите сочетание клавиш
+	Explode Slider:	Развернуть ползунок:
+	Invert Scrolling	Инвертировать прокрутку
+	Playhead Centering Range	Диапазон центрирования головки воспроизведения
+	Snap to Tracks	Привязка к дорожкам
 	The edges of sliders, Center on Playhead, and Mirror Slider have smooth animations when enabled.	При включении края ползунков, центрирование по указателю воспроизведения и отражение ползунка анимируются плавно.
 	Reverses timeline scrolling and zooming when holding the center of the slider.	Меняет направление прокрутки и масштабирования таймлайна при удержании центра ползунка.
 	Drag the timeline slider vertically to resize both track sections. Recommended for when Track Sliders are hidden.	Перетащите ползунок таймлайна по вертикали, чтобы изменить размер обеих областей дорожек. Рекомендуется, когда ползунки дорожек скрыты.
