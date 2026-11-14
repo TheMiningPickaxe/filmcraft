@@ -939,6 +939,36 @@ fn the_minimap_flyout_stays_open_on_the_way_in_and_its_settings_click() {
     assert_eq!(d.app().session.state.timeline_ui.fill_clips, !before_fill, "Fill Clips presses too");
 }
 
+#[test]
+fn fullscreen_timeline_settings_shows_every_row() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(3);
+    let rows: Vec<_> = d.harness.state().auto.elements.iter()
+        .filter(|e| e.id.starts_with("timeline.zoomBar.settings.")).collect();
+    assert!(!rows.is_empty(), "settings are visible");
+    for row in rows {
+        assert!(row.rect[1] >= 0.0 && row.rect[1] + row.rect[3] <= 980.0, "row outside fullscreen window: {} {:?}", row.id, row.rect);
+    }
+}
+
+#[test]
+fn fullscreen_timeline_settings_does_not_scroll() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(3);
+    let id = "timeline.zoomBar.settings.sliderMinimap";
+    let before = d.rect(id);
+    for dy in [-2000.0, 2000.0] {
+        d.ok("ui.scroll", json!({"id": id, "fx": 0.5, "fy": 0.5, "dx": 0.0, "dy": dy, "modifiers": {}}));
+        d.frames(3);
+        let after = d.rect(id);
+        assert!((after[1] - before[1]).abs() < 0.5, "menu scrolled: {before:?} -> {after:?}");
+    }
+}
+
 /// The zoom-bar settings popup must use its measured height before its first visible frame.
 #[test]
 fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {

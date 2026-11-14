@@ -103,12 +103,24 @@ fn zoombar_popup_content(app: &mut FilmcraftApp, ui: &mut egui::Ui, screen_heigh
     ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_gray(100);
     let content_height = ui.ctx().data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
     let needs_scroll = !measuring && content_height + 16.0 > screen_height;
+    let fresh_key = egui::Id::unique("timeline-zoombar-popup-fresh");
+    let fresh = ui.ctx().data(|data| data.get_temp::<bool>(fresh_key)).unwrap_or(false);
+    if measuring {
+        ui.ctx().data_mut(|data| data.insert_temp(fresh_key, true));
+    } else if fresh {
+        ui.ctx().data_mut(|data| data.insert_temp(fresh_key, false));
+    }
     let scroll = egui::ScrollArea::vertical().id_salt("timeline-zoombar-context-popup").scroll_bar_visibility(if needs_scroll {
         egui::containers::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
     } else {
         egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden
     });
-    let scroll = if needs_scroll { scroll.max_height((screen_height - 32.0).max(1.0)) } else { scroll };
+    let scroll = if needs_scroll {
+        let scroll = scroll.max_height((screen_height - 32.0).max(1.0));
+        if fresh { scroll.vertical_scroll_offset(content_height) } else { scroll }
+    } else {
+        scroll
+    };
     let output = scroll.show(ui, |ui| {
         ui.visuals_mut().widgets.inactive.bg_fill = original_inactive;
         zoombar_settings_rows(app, ui);
@@ -2878,7 +2890,8 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
     } else {
         let is_open = ctx.data(|data| data.get_temp::<bool>(zoombar_popup_open_key())).unwrap_or(false);
         if is_open && let Some(size) = area_size {
-            let popup_height = size.y.min((screen.height() - 12.0).max(1.0)).max(1.0);
+            let content_height = ctx.data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(size.y);
+            let popup_height = (content_height + 16.0).min((screen.height() - 12.0).max(1.0)).max(1.0);
             let x = popup_pos.x;
             let y = if above { popup_pos.y - popup_height - 6.0 } else { popup_pos.y + 6.0 };
             let y = y.clamp(screen.top(), (screen.bottom() - popup_height).max(screen.top()));
