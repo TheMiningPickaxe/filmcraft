@@ -85,6 +85,25 @@ impl Driver {
         [0, 1, 2, 3].map(|k| r[k].as_f64().unwrap() as f32)
     }
 
+    fn rect_now(&self, id: &str) -> [f32; 4] {
+        self.harness.state().auto.elements.iter().find(|element| element.id == id).map(|element| element.rect).unwrap_or_else(|| panic!("no current-frame element {id}"))
+    }
+
+    fn right_click_first_visible_frame(&mut self, x: f32, y: f32) {
+        let pos = egui::pos2(x, y);
+        let input = self.harness.input_mut();
+        input.events.push(egui::Event::PointerMoved(pos));
+        input.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed: true, modifiers: egui::Modifiers::default() });
+        self.frames(1);
+        self.harness.input_mut().events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        self.frames(1);
+    }
+
     /// Whether an element with this exact id is registered (drawn) this frame.
     fn has(&mut self, id: &str) -> bool {
         self.ok("ui.elements", json!({"prefix": id})).as_array().is_some_and(|a| a.iter().any(|e| e["id"] == json!(id)))
@@ -924,17 +943,29 @@ fn the_minimap_flyout_stays_open_on_the_way_in_and_its_settings_click() {
 #[test]
 fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
     let mut d = Driver::demo();
+    // A minimized native window can keep the app at its last tiny client size until it is
+    // maximized from the title bar. Recreate that viewport transition before the first menu open.
+    d.harness.set_size(egui::vec2(1.0, 1.0));
+    d.harness.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().minimized = Some(true);
+    d.frames(1);
+    d.harness.set_size(egui::vec2(1600.0, 980.0));
+    d.harness.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().minimized = Some(false);
+    d.frames(1);
     let bar = d.rect("timeline.zoomBar.track");
     let point = (bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0);
-    d.click_at(point.0, point.1, "right");
+    d.right_click_first_visible_frame(point.0, point.1);
 
-    let row = |d: &mut Driver| d.rect("timeline.zoomBar.settings.smoothAnimations");
-    let first = row(&mut d);
+    let row = "timeline.zoomBar.settings.smoothAnimations";
+    assert!(!d.harness.state().auto.elements.iter().any(|element| element.id == row), "the sizing pass must not expose a partially positioned menu");
+    d.frames(1);
+    let first = d.rect_now(row);
     assert!(first[1] + first[3] <= point.1 + 1.0, "the menu opens above the clicked slider: {first:?}, pointer={point:?}");
+    let last = d.rect_now("timeline.zoomBar.settings.hideSlider");
+    assert!(last[1] + last[3] <= 980.0, "the full menu fits without a default scrollbar: {last:?}");
 
     d.frames(1);
-    let next = row(&mut d);
-    assert!((next[1] - first[1]).abs() <= 1.0, "the menu stays in place after the first frame: {first:?} -> {next:?}");
+    let next = d.rect_now(row);
+    assert!((next[1] - first[1]).abs() <= 1.0, "the menu stays in place after its first visible frame: {first:?} -> {next:?}");
 }
 /// "Timeline Slider Settings": the Timeline menu's row above Unhide Timeline Slider, only while
 /// the bar is hidden, opening the exact same settings as right-clicking the bar itself.
