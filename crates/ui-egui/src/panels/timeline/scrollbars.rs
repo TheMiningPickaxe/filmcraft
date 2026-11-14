@@ -91,18 +91,29 @@ pub(super) fn zoombar_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     settings_menu(app, ui, "timeline-zoombar", zoombar_settings_rows);
 }
 
-/// Draw the right-click popup's rows at their natural height. The surrounding Area is constrained
-/// to the viewport; the scroll area only needs to scroll when that viewport cannot fit the rows.
-fn zoombar_popup_content(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
+fn zoombar_popup_content_height_key() -> egui::Id {
+    egui::Id::unique("timeline-zoombar-popup-content-height")
+}
+
+/// Draw the right-click popup at its natural height. Hide the scrollbar when the full content fits
+/// the window; only cap the content and allow scrolling when it cannot fit the window at all.
+fn zoombar_popup_content(app: &mut FilmcraftApp, ui: &mut egui::Ui, screen_height: f32, measuring: bool) {
     ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
     let original_inactive = ui.visuals().widgets.inactive.bg_fill;
     ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_gray(100);
-    egui::ScrollArea::vertical()
-        .id_salt("timeline-zoombar-context-popup")
-        .show(ui, |ui| {
-            ui.visuals_mut().widgets.inactive.bg_fill = original_inactive;
-            zoombar_settings_rows(app, ui);
-        });
+    let content_height = ui.ctx().data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
+    let needs_scroll = !measuring && content_height + 16.0 > screen_height;
+    let scroll = egui::ScrollArea::vertical().id_salt("timeline-zoombar-context-popup").scroll_bar_visibility(if needs_scroll {
+        egui::containers::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
+    } else {
+        egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden
+    });
+    let scroll = if needs_scroll { scroll.max_height((screen_height - 32.0).max(1.0)) } else { scroll };
+    let output = scroll.show(ui, |ui| {
+        ui.visuals_mut().widgets.inactive.bg_fill = original_inactive;
+        zoombar_settings_rows(app, ui);
+    });
+    ui.ctx().data_mut(|data| data.insert_temp(zoombar_popup_content_height_key(), output.content_size.y));
 }
 
 fn zoombar_popup_open_key() -> egui::Id {
@@ -2860,7 +2871,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
             .fade_in(false)
             .interactable(false)
             .sizing_pass(true)
-            .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui)).inner);
+            .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true)).inner);
         app.auto.elements.truncate(auto_count);
         ctx.request_repaint();
         None
@@ -2878,7 +2889,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
                 .constrain_to(screen)
                 .fade_in(false)
                 .interactable(true)
-                .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui)).inner);
+                .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), false)).inner);
             Some(panel)
         } else {
             None
