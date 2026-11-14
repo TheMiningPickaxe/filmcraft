@@ -2123,7 +2123,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         .open_memory(popup_open)
         .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
         .at_position(popup_pos)
-        .align(if above { egui::RectAlign::TOP_START } else { egui::RectAlign::BOTTOM_START })
+        .align(if above { egui::RectAlign::BOTTOM_START } else { egui::RectAlign::TOP_START })
         .align_alternatives(&[if above { egui::RectAlign::TOP_START } else { egui::RectAlign::BOTTOM_START }])
         .show(|ui| zoombar_settings(app, ui));
     if let Some(click_pos) = ui.input(|input| input.pointer.button_clicked(egui::PointerButton::Primary).then(|| input.pointer.interact_pos()).flatten())
