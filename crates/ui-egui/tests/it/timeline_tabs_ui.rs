@@ -131,6 +131,63 @@ impl Driver {
 }
 
 #[test]
+fn replacing_project_discards_animation_even_when_sequence_id_is_reused() {
+    let mut d = Driver::new();
+    let old = d.active();
+    d.app().session.state.timeline_ui.track_slider_smooth = true;
+    d.app().tl.track_anim = Some([180.0, 0.0, 120.0, 0.0]);
+    d.exec("file.openDemoProject", json!({}));
+    d.frames(3);
+    assert_eq!(d.active(), old, "the replacement deliberately reuses the sequence id");
+    assert!(d.app().tl.track_anim.is_none());
+}
+
+#[test]
+fn changing_sequence_discards_pending_track_slider_animation() {
+    let mut d = Driver::new();
+    let main = d.active();
+    d.new_sequence("Other");
+    d.app().session.state.timeline_ui.track_slider_smooth = true;
+    d.app().tl.track_anim = Some([180.0, 0.0, 120.0, 0.0]);
+    d.show(main);
+    assert!(d.app().tl.track_anim.is_none(), "animation from the previous sequence must not carry over");
+    assert!(d.app().ui.timeline.video_track_h < 180.0);
+}
+
+#[test]
+fn direct_height_edit_cancels_pending_slider_animation() {
+    let mut d = Driver::new();
+    d.app().session.state.timeline_ui.track_slider_smooth = true;
+    d.app().tl.track_anim = Some([180.0, 0.0, 120.0, 0.0]);
+    d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 90.0}}));
+    assert!(d.app().tl.track_anim.is_none());
+    assert_eq!(d.app().ui.timeline.video_track_h, 90.0);
+}
+
+#[test]
+fn invalid_track_height_rejects_timeline_changes() {
+    let mut d = Driver::new();
+    let before = d.app().session.state.timeline_ui.smooth_animations;
+    for field in ["videoTrackHeight", "audioTrackHeight"] {
+        let response = d.call("ui.set", json!({"timeline": {"smoothAnimations": !before, field: 7}}));
+        assert_eq!(response["ok"], false);
+        assert!(response.to_string().contains(field));
+        assert_eq!(d.app().session.state.timeline_ui.smooth_animations, before);
+    }
+}
+
+#[test]
+fn setting_preset_value_marks_custom_flag_change_dirty() {
+    let mut d = Driver::new();
+    d.app().session.state.timeline_ui.playhead_side_seconds = 10.0;
+    d.app().session.state.timeline_ui.playhead_side_custom = true;
+    let epoch = d.app().session.view_epoch;
+    d.ok("ui.set", json!({"timeline": {"playheadSideSeconds": 10.0}}));
+    assert!(!d.app().session.state.timeline_ui.playhead_side_custom);
+    assert_ne!(d.app().session.view_epoch, epoch);
+}
+
+#[test]
 fn each_sequence_tab_keeps_its_own_zoom_scroll_and_track_heights() {
     let mut d = Driver::new();
     let main = d.active();
@@ -269,14 +326,26 @@ fn a_reopened_project_shows_its_tabs_as_they_were_left() {
     d.ok("ui.set", json!({"timeline": {"pps": 15.0, "scroll": 0.5}}));
     d.frames(3);
     d.exec("sequence.moveTab", json!({"item": other, "index": 0}));
+    assert_eq!(d.open(), vec![other, main], "both tabs are open before saving");
+    assert!(d.app().session.project.sequence(filmcraft_project::ItemId(other)).is_some(), "second sequence exists before save");
     d.exec("file.saveAs", json!({"path": path}));
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["view"]["open_sequences"], json!([other, main]), "both tabs are stored in the project view");
+    let saved_item_ids = saved["project"]["items"].as_object().map(|items| items.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
+    assert!(saved["project"]["items"][other.to_string()].is_object(), "the saved project contains the second sequence item; ids: {saved_item_ids:?}");
+    let decoded_project: filmcraft_project::Project = serde_json::from_value(saved["project"].clone()).unwrap();
+    assert!(decoded_project.sequence(filmcraft_project::ItemId(other)).is_some(), "the serialized project decodes with the second sequence");
+    let decoded_view: filmcraft_project::ProjectView = serde_json::from_value(saved["view"].clone()).unwrap();
+    assert_eq!(decoded_view.open_sequences, [filmcraft_project::ItemId(other), filmcraft_project::ItemId(main)]);
 
     // another window of the app opens the file
     let mut e = Driver::new();
-    e.ok("ui.set", json!({"timeline": {"pps": 77.0, "scroll": 9.0}}));
+    assert!(e.app().session.prefs.timeline.restore_open_sequences, "the test expects tab restoration to be enabled");
+    let opened = e.exec("file.open", json!({"path": path}));
+    assert_eq!(opened["path"], json!(path));
+    assert!(e.app().session.project.sequence(filmcraft_project::ItemId(other)).is_some(), "the second sequence is present immediately after open");
     e.frames(3);
-    e.exec("file.open", json!({"path": path}));
-    e.frames(3);
+    assert!(e.app().session.project.sequence(filmcraft_project::ItemId(other)).is_some(), "the saved project contains the second sequence");
     assert_eq!((e.open(), e.active()), (vec![other, main], other));
     assert_eq!(e.view(), (15.0, 0.5, 60.0));
     e.click(&format!("timeline.tab.{main}"));

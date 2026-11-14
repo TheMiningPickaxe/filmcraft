@@ -187,6 +187,7 @@ impl FilmcraftApp {
     pub(super) fn sync_timeline_view(&mut self) {
         let Some(active) = self.session.state.active_sequence else {
             self.timeline_view_of = None;
+            self.tl.track_anim = None;
             return;
         };
         let stored = self.session.state.timeline_views.get(&active).copied();
@@ -204,8 +205,12 @@ impl FilmcraftApp {
             (v.v_scroll, v.a_scroll, v.video_track_h, v.audio_track_h) = (s.v_scroll, s.a_scroll, s.video_track_h, s.audio_track_h);
             (v.fit_pending, v.fit_empty) = (false, None);
         };
-        if self.timeline_view_of != Some(active) {
+        if self.timeline_view_of != Some(active) || self.timeline_view_document != self.session.document_epoch {
             self.timeline_view_of = Some(active);
+            self.timeline_view_document = self.session.document_epoch;
+            self.tl.track_anim = None;
+            // the zoom ceiling is applied by animate_view with the measured content width --
+            // clamping here (before the first layout) would use the placeholder width
             match stored.and_then(|s| s.checked()) {
                 Some(s) => {
                     show(v, s);
@@ -220,9 +225,14 @@ impl FilmcraftApp {
             }
         } else if v.fit_pending {
             // the panel has not fitted the sequence yet: nothing to keep
+        } else if self.timeline_view_last.is_none() {
+            // The first layout fit is a display default, not a user edit that needs saving.
+            self.session.state.timeline_views.insert(active, shown);
+            self.timeline_view_last = Some(shown);
         } else if self.timeline_view_last != Some(shown) {
             self.session.state.timeline_views.insert(active, shown);
             self.timeline_view_last = Some(shown);
+            self.session.view_changed();
         } else if let Some(s) = stored.filter(|s| *s != shown).and_then(|s| s.checked()) {
             show(v, s);
             self.timeline_view_last = Some(s);

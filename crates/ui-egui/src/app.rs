@@ -104,6 +104,7 @@ impl FilmcraftApp {
             integrated_titlebar: false,
             last_timeline_width: 1000.0,
             timeline_view_of: None,
+            timeline_view_document: ime_document_epoch,
             pending_timeline_drop: None,
             clip_mismatch: None,
             file_drag_hover: None,
@@ -271,7 +272,7 @@ impl FilmcraftApp {
         if self.session.trim_play.active() {
             ctx.request_repaint();
         }
-        if self.session.persistence.is_some() && self.session.is_dirty() {
+        if self.session.persistence.is_some() && self.session.has_unsaved_changes() {
             // Keep polling the auto-save worker (status, "also save the project" results) while hidden.
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
@@ -316,6 +317,11 @@ impl FilmcraftApp {
     /// logic subsystems, advance playback, poll jobs, then drain completed screenshots and ask
     /// for hidden paints. Safe on hidden logic-only callbacks.
     pub fn logic_inner(&mut self, ctx: &egui::Context) {
+        // a hidden zoom-bar drag cursor is always released exactly when it should be, so a lag
+        // spike, a focus loss or anything else can never leave it stuck on the mouse. The
+        // watchdog also covers the track sliders' Shift drags (same lock), and those stay live
+        // while the zoom bar is hidden, so it runs unconditionally (it is a no-op without a lock)
+        crate::panels::timeline::zoombar_cursor_watchdog(&mut self.tl, ctx);
         // Remember the pass's clock before anything reads `now()`. A hidden logic-only tick keeps
         // the last UI time (which is stale there), so `now()` never runs behind the host clock.
         self.ui_clock = self.ui_clock.max(ctx.input(|i| i.time));

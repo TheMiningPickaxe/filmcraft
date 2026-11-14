@@ -350,6 +350,7 @@ pub struct FilmcraftApp {
     /// The sequence whose view `ui.timeline` holds, and that view as it was last exchanged with
     /// `session.state.timeline_views` (see `sync_timeline_view`).
     timeline_view_of: Option<filmcraft_engine::project::ItemId>,
+    timeline_view_document: u64,
     /// Items imported by an OS file drop, to place on the Timeline at the drop point this frame
     /// (in the coordinates of the viewport the files were dropped on).
     pending_timeline_drop: Option<(Vec<filmcraft_engine::project::ItemId>, egui::Pos2, egui::ViewportId)>,
