@@ -920,6 +920,22 @@ fn the_minimap_flyout_stays_open_on_the_way_in_and_its_settings_click() {
     assert_eq!(d.app().session.state.timeline_ui.fill_clips, !before_fill, "Fill Clips presses too");
 }
 
+/// The zoom-bar settings popup must use its measured height before its first visible frame.
+#[test]
+fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    let point = (bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0);
+    d.click_at(point.0, point.1, "right");
+
+    let row = |d: &mut Driver| d.rect("timeline.zoomBar.settings.smoothAnimations");
+    let first = row(&mut d);
+    assert!(first[1] + first[3] <= point.1 + 1.0, "the menu opens above the clicked slider: {first:?}, pointer={point:?}");
+
+    d.frames(1);
+    let next = row(&mut d);
+    assert!((next[1] - first[1]).abs() <= 1.0, "the menu stays in place after the first frame: {first:?} -> {next:?}");
+}
 /// "Timeline Slider Settings": the Timeline menu's row above Unhide Timeline Slider, only while
 /// the bar is hidden, opening the exact same settings as right-clicking the bar itself.
 #[test]

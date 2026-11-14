@@ -2837,6 +2837,23 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         ctx.data_mut(|d| d.insert_temp(open_key, open));
     }
     let is_open = ctx.data(|d| d.get_temp::<bool>(open_key)).unwrap_or(false);
+    // On the first open there is no measured content height yet. Measure the disabled, invisible
+    // menu before placing the real one so its first visible frame uses the final height, instead of
+    // opening with the fallback height and jumping when the real layout arrives.
+    if is_open && open_at.is_some() {
+        let auto_count = app.auto.elements.len();
+        egui::Area::new(egui::Id::unique("timeline-zoombar-settings-measure"))
+            .order(egui::Order::Background)
+            .fixed_pos(pos2(screen.left(), screen.top()))
+            .fade_in(false)
+            .interactable(false)
+            .show(&ctx, |ui| {
+                ui.set_opacity(0.0);
+                ui.disable();
+                egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_settings(app, ui));
+            });
+        app.auto.elements.truncate(auto_count);
+    }
     let height = ctx
         .data(|d| d.get_temp::<f32>(egui::Id::NULL.with(("timeline-settings-content-height", "timeline-zoombar"))))
         .unwrap_or(700.0)
