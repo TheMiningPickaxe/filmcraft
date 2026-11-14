@@ -948,6 +948,10 @@ fn fullscreen_timeline_settings_shows_every_row() {
     let rows: Vec<_> = d.harness.state().auto.elements.iter()
         .filter(|e| e.id.starts_with("timeline.zoomBar.settings.")).collect();
     assert!(!rows.is_empty(), "settings are visible");
+    let top = rows.iter().map(|r| r.rect[1]).fold(f32::INFINITY, f32::min);
+    let bottom = rows.iter().map(|r| r.rect[1] + r.rect[3]).fold(f32::NEG_INFINITY, f32::max);
+    assert!(bottom - top > 400.0, "all settings must occupy their full natural height");
+    assert!((bar[1] + bar[3] / 2.0 - bottom).abs() < 40.0, "menu bottom must be beside the click: bottom={bottom}, bar={bar:?}");
     for row in rows {
         assert!(row.rect[1] >= 0.0 && row.rect[1] + row.rect[3] <= 980.0, "row outside fullscreen window: {} {:?}", row.id, row.rect);
     }

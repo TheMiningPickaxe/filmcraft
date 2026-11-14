@@ -104,6 +104,15 @@ fn zoombar_popup_content(app: &mut FilmcraftApp, ui: &mut egui::Ui, screen_heigh
     let content_height = ui.ctx().data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
     let needs_scroll = !measuring && content_height + 16.0 > screen_height;
     let fresh_key = egui::Id::unique("timeline-zoombar-popup-fresh");
+    if measuring {
+        ui.ctx().data_mut(|data| data.insert_temp(fresh_key, true));
+    }
+    if !needs_scroll {
+        ui.visuals_mut().widgets.inactive.bg_fill = original_inactive;
+        let rows = ui.scope(|ui| zoombar_settings_rows(app, ui));
+        ui.ctx().data_mut(|data| data.insert_temp(zoombar_popup_content_height_key(), rows.response.rect.height()));
+        return;
+    }
     let fresh = ui.ctx().data(|data| data.get_temp::<bool>(fresh_key)).unwrap_or(false);
     if measuring {
         ui.ctx().data_mut(|data| data.insert_temp(fresh_key, true));
