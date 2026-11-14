@@ -663,7 +663,8 @@ fn cleanup_stale_sessions(data_dir: &Path) {
 
 /// Load a candidate's snapshot.
 pub fn load_candidate(c: &RecoveryCandidate) -> Result<filmcraft_format::Loaded, String> {
-    let b = fs::read(c.dir.join(SNAPSHOT)).map_err(|e| format!("{}: {e}", c.dir.display()))?;
+    let b = filmcraft_media::reader::read_regular_file_bounded(&c.dir.join(SNAPSHOT), filmcraft_format::MAX_PROJECT_BYTES)
+        .map_err(|e| format!("{}: {e}", c.dir.display()))?;
     filmcraft_format::decode(&b).map_err(|e| e.to_string())
 }
 
