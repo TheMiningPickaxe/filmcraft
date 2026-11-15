@@ -943,7 +943,7 @@ fn the_minimap_flyout_stays_open_on_the_way_in_and_its_settings_click() {
 fn fullscreen_timeline_settings_shows_every_row() {
     let mut d = Driver::demo();
     let bar = d.rect("timeline.zoomBar.track");
-    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.right_click_first_visible_frame(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0);
     d.frames(3);
     let rows: Vec<_> = d.harness.state().auto.elements.iter()
         .filter(|e| e.id.starts_with("timeline.zoomBar.settings.")).collect();
@@ -954,6 +954,17 @@ fn fullscreen_timeline_settings_shows_every_row() {
     assert!((bar[1] + bar[3] / 2.0 - bottom).abs() < 40.0, "menu bottom must be beside the click: bottom={bottom}, bar={bar:?}");
     for row in rows {
         assert!(row.rect[1] >= 0.0 && row.rect[1] + row.rect[3] <= 980.0, "row outside fullscreen window: {} {:?}", row.id, row.rect);
+    }
+    for label in ["Hide Slider", "Controls", "Smooth Animations", "Invert Scrolling", "Control Track Sliders", "Playhead Centering", "Alternate Slider Position", "Maximum Zoom Level", "Alternate Drag Speed", "Playhead Centering Range", "Slider Minimap"] {
+        let found = d.harness.output().shapes.iter().any(|clipped| {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                let bounds = clipped.shape.visual_bounding_rect();
+                text.galley.job.text.contains(label) && text.opacity_factor > 0.0 && clipped.clip_rect.contains_rect(bounds)
+            } else {
+                false
+            }
+        });
+        assert!(found, "menu label is missing or clipped: {label}");
     }
 }
 
@@ -992,11 +1003,16 @@ fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
     let row = "timeline.zoomBar.settings.smoothAnimations";
     assert!(d.harness.state().auto.elements.iter().any(|element| element.id == row), "the menu must be visible on the release frame");
     let first = d.rect_now(row);
-    let painted = |d: &Driver, rect: [f32; 4]| {
-        let center = egui::pos2(rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
-        d.harness.output().shapes.iter().any(|shape| shape.clip_rect.contains(center) && shape.shape.visual_bounding_rect().contains(center))
+    let painted = |d: &Driver| {
+        d.harness.output().shapes.iter().any(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape {
+                text.galley.job.text == "Smooth Animations" && text.opacity_factor > 0.0 && shape.clip_rect.contains_rect(shape.shape.visual_bounding_rect())
+            } else {
+                false
+            }
+        })
     };
-    assert!(painted(&d, first), "menu must be painted on the release frame");
+    assert!(painted(&d), "menu must be painted on the release frame");
     let popup = d.harness.ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("timeline-zoombar-popup-rect"))).expect("popup rectangle");
     assert!((popup.bottom() - point.1).abs() < 1.0, "popup must touch the click: {popup:?}, {point:?}");
     assert!(first[1] + first[3] <= point.1 + 1.0, "the menu opens above the clicked slider: {first:?}, pointer={point:?}");
@@ -1015,7 +1031,7 @@ fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
     d.frames(1);
     d.right_click_first_visible_frame(point.0, point.1);
     let reopened = d.rect_now(row);
-    assert!(painted(&d, reopened), "reopened menu must be painted on the release frame");
+    assert!(painted(&d), "reopened menu must be painted on the release frame");
     d.frames(1);
     let reopened_next = d.rect_now(row);
     assert!((reopened_next[1] - reopened[1]).abs() < 1.0, "reopened menu jumped: {reopened:?} -> {reopened_next:?}");
