@@ -227,6 +227,7 @@ pub fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Val
             let w = (app.last_timeline_width.max(200.0) - tv.header_w) as f64;
             let page = w / tv.pps.max(1e-6);
             let d = if id == "timeline.nextScreen" { page } else { -page };
+            app.timeline_auto_scroll_pending = None;
             tv.target_scroll = (tv.target_scroll + d).max(0.0);
             Ok(json!({"scroll": tv.target_scroll}))
         }
