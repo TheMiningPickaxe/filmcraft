@@ -745,6 +745,52 @@ mod tests {
         assert_eq!(normalize_numeric_input(&"1".repeat(33), false), None);
     }
 
+    fn numeric_hot_number_frame(ctx: &egui::Context, id: egui::Id, value: f64, events: Vec<egui::Event>) -> Option<f64> {
+        let t = Tokens::for_kind(ThemeKind::Dark);
+        let mut changed = None;
+        ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+            changed = hot_number_numeric(ui, "Value", id, value, HotNumberOptions::new(1.0, (-100.0, 100.0), 1, "", &t)).1;
+        })
+        .textures_delta
+        .clear();
+        changed
+    }
+
+    #[test]
+    fn numeric_hot_number_restores_cursor_after_rejecting_invalid_input() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique("numeric-hot-number-cursor");
+        ctx.data_mut(|data| data.insert_temp(id.with("editing"), "12.5".to_string()));
+        numeric_hot_number_frame(&ctx, id, 12.5, vec![]);
+
+        let edit_id = id.with("edit");
+        let mut state = egui::text_edit::TextEditState::load(&ctx, edit_id).unwrap_or_default();
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(2))));
+        state.store(&ctx, edit_id);
+        assert_eq!(numeric_hot_number_frame(&ctx, id, 12.5, vec![egui::Event::Text("x".to_string())]), None);
+
+        assert_eq!(ctx.data(|data| data.get_temp::<String>(id.with("editing"))), Some("12.5".to_string()));
+        let state = egui::text_edit::TextEditState::load(&ctx, edit_id).unwrap_or_default();
+        assert_eq!(state.cursor.char_range().map(|range| range.sorted_cursors()), Some([egui::text::CCursor::new(2), egui::text::CCursor::new(2)]));
+    }
+
+    #[test]
+    fn numeric_hot_number_accepts_and_commits_negative_values_when_allowed() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique("numeric-hot-number-negative");
+        ctx.data_mut(|data| {
+            data.insert_temp(id.with("editing"), "12.5".to_string());
+            data.insert_temp(id.with("select-all"), true);
+        });
+        numeric_hot_number_frame(&ctx, id, 12.5, vec![]);
+        numeric_hot_number_frame(&ctx, id, 12.5, vec![]);
+        assert_eq!(numeric_hot_number_frame(&ctx, id, 12.5, vec![egui::Event::Text("-12.5".to_string())]), None);
+        assert_eq!(ctx.data(|data| data.get_temp::<String>(id.with("editing"))), Some("-12.5".to_string()));
+
+        let enter = egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        assert_eq!(numeric_hot_number_frame(&ctx, id, 12.5, vec![enter]), Some(-12.5));
+    }
+
     #[test]
     fn numeric_hot_number_does_not_step_an_invalid_expression_draft() {
         let ctx = egui::Context::default();
