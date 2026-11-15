@@ -913,7 +913,7 @@
 	Disabled clips	비활성 클립
 	Discard	버리기
 	Discard take	테이크 삭제
-	Discard Unsaved Changes	저장 안 된 변경 사항 취소
+	Discard Recovery Candidate	복구 후보 삭제저장 안 된 변경 사항 취소
 	Disk space: original {original} · resulting {result} ({n} files)	디스크 공간: 원본 {original} · 결과 {result}(파일 {n}개)
 	Disk space: —	디스크 공간: —
 	Disperse	분산

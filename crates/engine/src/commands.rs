@@ -2007,7 +2007,7 @@ fn build() -> Vec<CommandSpec> {
             open_project(s, &path)
         }),
         cmd!("file.recover", "Open Recovery Session…", ["File"], None, r#"{"id":str?}"#, has_recovery, |s, p| recover(s, str_p(p, "id"))),
-        cmd!("file.discardRecovery", "Discard Unsaved Changes", [], None, r#"{"id":str?,"all":bool?}"#, has_recovery, |s, p| {
+        cmd!("file.discardRecovery", "Discard Recovery Candidate", [], None, r#"{"id":str?,"all":bool?}"#, has_recovery, |s, p| {
             let all = bool_p(p, "all").unwrap_or(false);
             let id = str_p(p, "id").map(str::to_string);
             let Some(per) = s.persistence.as_mut() else { return Ok(json!({"discarded": 0})) };

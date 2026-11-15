@@ -110,6 +110,24 @@ fn session_after_crash(data: &Path) -> Session {
     next
 }
 
+fn session_after_view_only_crash(data: &Path) -> Session {
+    for _ in 0..2 {
+        let mut crashed = demo();
+        let mut cfg = AutosaveConfig::new(data);
+        cfg.journal_debounce = Duration::from_millis(20);
+        crashed.start_autosave(cfg).unwrap();
+        crashed.state.timeline_ui.inverted_controls = true;
+        crashed.project_view_changed();
+        crashed.persistence.as_ref().unwrap().flush().unwrap();
+        crashed.persistence.take().unwrap().simulate_crash();
+    }
+
+    let mut next = Session::default();
+    next.start_autosave(AutosaveConfig::new(data)).unwrap();
+    assert_eq!(next.recovery_candidates().len(), 2);
+    next
+}
+
 #[test]
 fn recovery_prompt_buttons_show_the_pointing_hand() {
     let data = temp_dir("recovery");
@@ -122,6 +140,17 @@ fn recovery_prompt_buttons_show_the_pointing_hand() {
     assert_eq!(d.cursor_at(gap), CursorIcon::Default, "between the buttons");
     drop(d);
     let _ = std::fs::remove_dir_all(&data);
+}
+
+#[test]
+fn view_only_recovery_prompt_uses_timeline_settings_labels() {
+    let data = tempfile::tempdir().unwrap();
+    let mut d = Driver::new(session_after_view_only_crash(data.path()));
+    let elements = d.ok("ui.elements", json!({"prefix": "recovery."}));
+    let label = |id: &str| elements.as_array().and_then(|items| items.iter().find(|e| e["id"] == id)).and_then(|e| e["label"].as_str());
+    assert_eq!(label("recovery.title"), Some("Recover Timeline View Settings"));
+    assert_eq!(label("recovery.heading"), Some("2 sessions have unsaved Timeline view settings:"));
+    assert_eq!(label("recovery.discard"), Some("Discard Timeline View Settings"));
 }
 
 #[test]

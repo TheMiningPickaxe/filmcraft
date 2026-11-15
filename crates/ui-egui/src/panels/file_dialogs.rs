@@ -46,14 +46,16 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     egui::Modal::new(egui::Id::unique("recovery-modal")).frame(modal_frame(&t)).show(ctx, |ui| {
         ui.set_width(520.0);
         Frame::new().inner_margin(Margin { left: 28, right: 28, top: 24, bottom: 20 }).show(ui, |ui| {
-            ui.label(RichText::new(tl!("Recover Unsaved Changes")).size(18.0).strong().color(t.text));
+            let c = &items[choice];
+            let view_only = c["dirty"].as_bool() == Some(false) && c["viewDirty"].as_bool() == Some(true);
+            let title = if view_only { tl!("Recover Timeline View Settings") } else { tl!("Recover Unsaved Changes") };
+            let title_response = ui.label(RichText::new(title).size(18.0).strong().color(t.text));
+            app.auto.add("recovery.title", title_response.rect, title);
             ui.add_space(6.0);
             ui.separator();
             ui.add_space(6.0);
-            let c = &items[choice];
             let name = c["projectName"].as_str().unwrap_or(tl!("Untitled"));
             let when = c["savedAt"].as_str().unwrap_or("");
-            let view_only = c["dirty"].as_bool() == Some(false) && c["viewDirty"].as_bool() == Some(true);
             let why = if view_only && c["cleanExit"].as_bool() == Some(true) {
                 tlf!("FilmCraft was closed with unsaved Timeline view settings for “{name}”.", name)
             } else if view_only {
@@ -75,7 +77,16 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
             }
             if items.len() > 1 {
                 ui.add_space(8.0);
-                ui.label(RichText::new(tlf!("{n} sessions have unsaved changes:", n = items.len())).size(12.0).color(t.text_dim));
+                let view_only_count = items.iter().filter(|item| item["dirty"].as_bool() == Some(false) && item["viewDirty"].as_bool() == Some(true)).count();
+                let heading = if view_only_count == items.len() {
+                    tlf!("{n} sessions have unsaved Timeline view settings:", n = view_only_count)
+                } else if view_only_count == 0 {
+                    tlf!("{n} sessions have unsaved changes:", n = items.len())
+                } else {
+                    tlf!("{n} recovery sessions ({view_only} with unsaved Timeline view settings):", n = items.len(), view_only = view_only_count)
+                };
+                let heading_response = ui.label(RichText::new(&heading).size(12.0).color(t.text_dim));
+                app.auto.add("recovery.heading", heading_response.rect, &heading);
                 for (i, it) in items.iter().enumerate() {
                     let label = format!("{} — {}", it["projectName"].as_str().unwrap_or(tl!("Untitled")), it["savedAt"].as_str().unwrap_or(""));
                     let r = ui.radio(choice == i, RichText::new(&label).size(12.5));
@@ -87,8 +98,10 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
             }
             ui.add_space(18.0);
             let id = items[choice]["id"].as_str().unwrap_or("").to_string();
+            let view_only = items[choice]["dirty"].as_bool() == Some(false) && items[choice]["viewDirty"].as_bool() == Some(true);
             ui.horizontal(|ui| {
-                if button(app, ui, "recovery.discard", tl!("Discard"), false) {
+                let discard_label = if view_only { tl!("Discard Timeline View Settings") } else { tl!("Discard") };
+                if button(app, ui, "recovery.discard", discard_label, false) {
                     if let Err(e) = app.session.execute("file.discardRecovery", json!({ "id": id })) {
                         app.ui.status = e.to_string();
                     }

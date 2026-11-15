@@ -542,7 +542,7 @@ pub struct Session {
     last_view_snapshot_sent: Option<web_time::Instant>,
     /// A project view is unchanged while only project content revisions advance. Reuse it for
     /// those recovery snapshots; document and view epochs invalidate it when the view can differ.
-    persistence_view_cache: Option<(u64, u64, u64, filmcraft_project::ProjectView)>,
+    persistence_view_cache: Option<(u64, u64, filmcraft_project::ProjectView)>,
     pub path: Option<String>,
     pub state: EditorState,
     pub media: Arc<MediaPool>,
@@ -1067,15 +1067,14 @@ impl Session {
     }
 
     fn persistence_project_view(&mut self) -> filmcraft_project::ProjectView {
-        if let Some((document_epoch, revision, view_epoch, view)) = &self.persistence_view_cache
+        if let Some((document_epoch, view_epoch, view)) = &self.persistence_view_cache
             && *document_epoch == self.document_epoch
-            && *revision == self.revision
             && *view_epoch == self.view_epoch
         {
             return view.clone();
         }
         let view = self.project_view();
-        self.persistence_view_cache = Some((self.document_epoch, self.revision, self.view_epoch, view.clone()));
+        self.persistence_view_cache = Some((self.document_epoch, self.view_epoch, view.clone()));
         view
     }
 
