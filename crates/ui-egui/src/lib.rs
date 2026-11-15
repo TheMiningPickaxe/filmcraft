@@ -353,7 +353,7 @@ pub struct FilmcraftApp {
     timeline_view_document: u64,
     /// The next stored-view sync may see only a playback-driven scroll; that movement is not a
     /// user edit and must not advance the save prompt's view epoch.
-    timeline_auto_scroll_pending: bool,
+    timeline_auto_scroll_pending: Option<(filmcraft_engine::project::ItemId, u64, f64)>,
     /// Items imported by an OS file drop, to place on the Timeline at the drop point this frame
     /// (in the coordinates of the viewport the files were dropped on).
     pending_timeline_drop: Option<(Vec<filmcraft_engine::project::ItemId>, egui::Pos2, egui::ViewportId)>,
