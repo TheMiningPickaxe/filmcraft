@@ -115,6 +115,104 @@ fn parse_audio_rate(s: &str) -> Option<u32> {
     r.filter(|&sr| sr > 0 && sr <= 384_000)
 }
 
+fn audio_track_index(lane: i32) -> usize {
+    let index = if lane < 0 { lane.unsigned_abs().saturating_sub(1) } else { lane as u32 };
+    usize::try_from(index).unwrap_or(usize::MAX)
+}
+
+#[cfg(test)]
+mod deferred_audio_tests {
+    use super::TICKS_PER_SECOND;
+    use super::{DeferredAudioRef, Imp};
+    use crate::common::{Builder, empty_sequence};
+    use crate::{ImportOptions, Report};
+    use filmcraft_project::{SequenceSettings, TrackKind};
+    use filmcraft_time::Tick;
+    use std::collections::HashMap;
+
+    #[test]
+    fn deferred_audio_repairs_parent_chains_and_keeps_each_reference_adjustment() {
+        let opts = ImportOptions::default();
+        let mut report = Report::default();
+        let mut builder = Builder::new("deferred audio");
+        let settings = SequenceSettings::default();
+        let parent = builder.reserve_sequence("Parent", settings.clone(), None);
+        let middle = builder.reserve_sequence("Middle", settings.clone(), None);
+        let child = builder.reserve_sequence("Child", settings, None);
+
+        let mut parent_sequence = empty_sequence(SequenceSettings::default());
+        let mut parent_video = builder.clip(middle, TrackKind::Video, "Middle A", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        parent_video.link = Some(41);
+        let parent_video_id = parent_video.id;
+        assert!(builder.place(&mut parent_sequence, TrackKind::Video, 0, parent_video).is_some());
+        let mut second_parent_video = builder.clip(child, TrackKind::Video, "Child sibling", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        second_parent_video.link = Some(43);
+        let second_parent_video_id = second_parent_video.id;
+        assert!(builder.place(&mut parent_sequence, TrackKind::Video, 0, second_parent_video).is_some());
+        builder.put_sequence(parent, parent_sequence);
+
+        let mut middle_sequence = empty_sequence(SequenceSettings::default());
+        let mut middle_video = builder.clip(child, TrackKind::Video, "Child", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        middle_video.link = Some(42);
+        let middle_video_id = middle_video.id;
+        assert!(builder.place(&mut middle_sequence, TrackKind::Video, 0, middle_video).is_some());
+        builder.put_sequence(middle, middle_sequence);
+
+        let mut child_sequence = empty_sequence(SequenceSettings::default());
+        let child_audio = builder.clip(child, TrackKind::Audio, "Recovered audio", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        assert!(builder.place(&mut child_sequence, TrackKind::Audio, 0, child_audio).is_some());
+        builder.put_sequence(child, child_sequence);
+
+        let mut parent_audio = builder.clip(middle, TrackKind::Audio, "Middle A", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        parent_audio.gain_db = 4.0;
+        let second_parent_audio = builder.clip(child, TrackKind::Audio, "Child sibling", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        let mut audio_only = builder.clip(child, TrackKind::Audio, "Audio only ref", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        let middle_audio = builder.clip(child, TrackKind::Audio, "Child", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        audio_only.gain_db = -12.0;
+        let mut deferred = vec![
+            DeferredAudioRef { parent, child: middle, video: Some(parent_video_id), link: 41, lane: 0, audio: parent_audio },
+            DeferredAudioRef { parent, child, video: Some(second_parent_video_id), link: 43, lane: 0, audio: second_parent_audio },
+            DeferredAudioRef { parent, child, video: None, link: 44, lane: 1, audio: audio_only },
+            DeferredAudioRef { parent: middle, child, video: Some(middle_video_id), link: 42, lane: 0, audio: middle_audio },
+        ];
+        let mut imp = Imp {
+            b: builder,
+            opts: &opts,
+            report: &mut report,
+            formats: HashMap::new(),
+            asset_nodes: HashMap::new(),
+            assets: HashMap::new(),
+            media_nodes: HashMap::new(),
+            media_items: HashMap::new(),
+            media_active: Default::default(),
+            sequence_stack: Vec::new(),
+            deferred_audio_refs: std::mem::take(&mut deferred),
+            truncation_hits: 0,
+            media_truncated_at: HashMap::new(),
+            reimports_left: 0,
+            effects: HashMap::new(),
+            depth: 0,
+        };
+        imp.restore_deferred_audio_refs();
+
+        let parent_audio: Vec<_> = imp.b.p.sequence(parent).unwrap().audio_tracks.iter().flat_map(|track| &track.items).collect();
+        let middle_audio = &imp.b.p.sequence(middle).unwrap().audio_tracks[0].items[0];
+        assert_eq!(parent_audio.len(), 3, "distinct and audio-only references to the same child recover audio");
+        assert!(parent_audio.iter().any(|item| item.link == Some(41) && item.gain_db == 4.0));
+        assert!(parent_audio.iter().any(|item| item.link == Some(43)));
+        assert!(parent_audio.iter().any(|item| item.link == Some(44) && item.gain_db == -12.0));
+        assert_eq!(middle_audio.link, Some(42));
+    }
+
+    #[test]
+    fn negative_audio_lanes_map_to_their_requested_track() {
+        assert_eq!(super::audio_track_index(-1), 0);
+        assert_eq!(super::audio_track_index(-2), 1);
+        assert_eq!(super::audio_track_index(0), 0);
+        assert_eq!(super::audio_track_index(2), 2);
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Import
 // ---------------------------------------------------------------------------------------------
@@ -146,7 +244,7 @@ struct Imp<'a, 'i, 'r> {
     media_items: HashMap<String, ItemId>,
     media_active: HashSet<String>,
     sequence_stack: Vec<ItemId>,
-    deferred_audio_refs: Vec<(ItemId, ItemId, filmcraft_project::ClipId, usize)>,
+    deferred_audio_refs: Vec<DeferredAudioRef>,
     /// Nested media, storylines or elements cut off by the depth limits.
     truncation_hits: usize,
     /// Media imported incomplete (a nested one below it was left out), by id: the nesting depth
@@ -165,6 +263,15 @@ struct LocalTiming {
     local_start: Tick,
     src_in: Tick,
     speed: f64,
+}
+
+struct DeferredAudioRef {
+    parent: ItemId,
+    child: ItemId,
+    video: Option<filmcraft_project::ClipId>,
+    link: u64,
+    lane: usize,
+    audio: TrackItem,
 }
 
 /// Where a written clip element sits: offset in its parent's local time, connected lane, and
@@ -406,34 +513,40 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
     /// already created a video-only reference. Repair only the references recorded at that
     /// incomplete import site, preserving explicit video-only `srcEnable` choices.
     fn restore_deferred_audio_refs(&mut self) {
-        for (parent_id, child_id, video_id, audio_lane) in std::mem::take(&mut self.deferred_audio_refs) {
-            let child_has_audio = self.b.p.sequence(child_id).is_some_and(|sequence| sequence.audio_tracks.iter().any(|track| !track.items.is_empty()));
-            if !child_has_audio {
-                continue;
+        let mut pending = std::mem::take(&mut self.deferred_audio_refs);
+        loop {
+            let mut retry = Vec::new();
+            let mut repaired = false;
+            for deferred in pending {
+                let DeferredAudioRef { parent: parent_id, child: child_id, video: video_id, link, lane: audio_lane, mut audio } = deferred;
+                let child_has_audio = self.b.p.sequence(child_id).is_some_and(|sequence| sequence.audio_tracks.iter().any(|track| !track.items.is_empty()));
+                if !child_has_audio {
+                    retry.push(DeferredAudioRef { parent: parent_id, child: child_id, video: video_id, link, lane: audio_lane, audio });
+                    continue;
+                }
+                let Some(mut parent) = self.b.p.sequence(parent_id).cloned() else { continue };
+                if let Some(video_id) = video_id {
+                    let Some(video) = parent.video_tracks.iter_mut().find_map(|track| track.items.iter_mut().find(|item| item.id == video_id)) else {
+                        continue;
+                    };
+                    video.link = Some(link);
+                }
+                if parent.audio_tracks.iter().any(|track| track.items.iter().any(|item| item.link == Some(link))) {
+                    continue;
+                }
+                audio.link = Some(link);
+                if self.b.place(&mut parent, TrackKind::Audio, audio_lane, audio).is_some() {
+                    self.b.put_sequence(parent_id, parent);
+                    repaired = true;
+                } else {
+                    self.report.warn("FCPXML recovered nested audio could not be placed within the track limit");
+                }
             }
-            let Some(mut parent) = self.b.p.sequence(parent_id).cloned() else { continue };
-            let Some(video) = parent.video_tracks.iter_mut().find_map(|track| track.items.iter_mut().find(|item| item.id == video_id)) else { continue };
-            let has_audio_ref = parent
-                .audio_tracks
-                .iter()
-                .any(|track| track.items.iter().any(|item| item.item == child_id && item.start == video.start && item.duration == video.duration));
-            if has_audio_ref {
-                continue;
+            if retry.is_empty() || !repaired {
+                self.deferred_audio_refs = retry;
+                break;
             }
-            let link = self.b.link_id();
-            video.link = Some(link);
-            let mut audio = self.b.clip(child_id, TrackKind::Audio, &video.name, video.start, video.duration, video.source_in);
-            audio.speed = video.speed;
-            audio.reverse = video.reverse;
-            audio.enabled = video.enabled;
-            audio.label = video.label;
-            audio.link = Some(link);
-            audio.markers = video.markers.clone();
-            if self.b.place(&mut parent, TrackKind::Audio, audio_lane, audio).is_some() {
-                self.b.put_sequence(parent_id, parent);
-            } else {
-                self.report.warn("FCPXML recovered nested audio could not be placed within the track limit");
-            }
+            pending = retry;
         }
     }
 
@@ -591,7 +704,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
             let src_enable = el.attribute("srcEnable").unwrap_or("all");
             let want_v = has_v && src_enable != "audio" && lane >= 0;
             let want_a = has_a && src_enable != "video";
-            let link = if want_v && want_a { Some(self.b.link_id()) } else { None };
+            let link = if want_v && want_a || deferred_audio_reference.is_some() { Some(self.b.link_id()) } else { None };
             for (kind, want) in [(TrackKind::Video, want_v), (TrackKind::Audio, want_a)] {
                 if !want {
                     continue;
@@ -613,13 +726,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
                 }
                 let pref = match kind {
                     TrackKind::Video => lane.max(0) as usize,
-                    TrackKind::Audio => {
-                        if lane < 0 {
-                            lane.unsigned_abs() as usize - 1
-                        } else {
-                            lane as usize
-                        }
-                    }
+                    TrackKind::Audio => audio_track_index(lane),
                 };
                 let id = ti.id;
                 if self.b.place(seq, kind, pref, ti).is_none() {
@@ -629,10 +736,21 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
                 placed.push((kind, id));
                 if kind == TrackKind::Video {
                     vclip = Some(id);
-                    if let (Some(child), Some(parent)) = (deferred_audio_reference, self.sequence_stack.last().copied()) {
-                        self.deferred_audio_refs.push((parent, child, id, lane.max(0) as usize));
-                    }
                 }
+            }
+            if let (Some(child), Some(parent), Some(link)) = (deferred_audio_reference, self.sequence_stack.last().copied(), link) {
+                let mut audio = self.b.clip(item, TrackKind::Audio, &name, t0, dur, src_in.max(Tick::ZERO));
+                audio.speed = speed;
+                audio.reverse = reverse;
+                audio.link = Some(link);
+                audio.enabled = flag(el, "enabled").unwrap_or(true);
+                if let Some(label) = el.attribute("label").and_then(Label::from_name) {
+                    audio.label = label;
+                }
+                self.adjustments(&mut audio, el, LocalTiming { local_start, src_in, speed }, ctx, TrackKind::Audio);
+                audio.markers = self.markers(el, local_start, src_in, speed, ctx.seq_rate);
+                let audio_lane = audio_track_index(lane);
+                self.deferred_audio_refs.push(DeferredAudioRef { parent, child, video: vclip, link, lane: audio_lane, audio });
             }
         }
         if primary {

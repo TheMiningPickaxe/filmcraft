@@ -179,11 +179,12 @@ pub fn zoomed_thumbnail_tiles(
     tiles.into_iter().map(|(x, t)| (x0 + (x - x0) * r, tile_w * r, t)).collect()
 }
 
-fn thumbnail_render_height(width: f32, aspect: f32, max_height: f32) -> f32 {
+fn thumbnail_render_size(width: f32, aspect: f32, max_height: f32) -> egui::Vec2 {
     if !width.is_finite() || !aspect.is_finite() || aspect <= 0.0 || !max_height.is_finite() {
-        return 0.0;
+        return egui::Vec2::ZERO;
     }
-    (width / aspect).clamp(0.0, max_height.max(0.0))
+    let height = width / aspect;
+    if height > max_height.max(0.0) { egui::vec2(max_height.max(0.0) * aspect, max_height.max(0.0)) } else { egui::vec2(width.max(0.0), height.max(0.0)) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -274,8 +275,8 @@ pub(super) fn draw_clip(
                 if let Some((tex, _)) = app.thumbnail(ctx, thumb_item, mt, 160) {
                     // Continuous tiles stretch horizontally with live zoom; derive their height
                     // from that same rendered width to preserve the source aspect ratio.
-                    let tile_h = thumbnail_render_height(w, aspect, th.height());
-                    let r = Rect::from_min_size(pos2(x, th.min.y), vec2(w, tile_h));
+                    let tile_size = thumbnail_render_size(w, aspect, th.height());
+                    let r = Rect::from_min_size(pos2(x, th.min.y), tile_size);
                     cp.image(tex, r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 }
             }
@@ -394,12 +395,14 @@ pub(super) fn draw_transition(p: &egui::Painter, r: Rect, trn: &filmcraft_projec
 
 #[cfg(test)]
 mod thumbnail_height_tests {
-    use super::thumbnail_render_height;
+    use super::thumbnail_render_size;
 
     #[test]
     fn rendered_thumbnail_height_tracks_live_width_and_stays_in_clip() {
-        assert_eq!(thumbnail_render_height(160.0, 16.0 / 9.0, 120.0), 90.0);
-        assert_eq!(thumbnail_render_height(320.0, 16.0 / 9.0, 100.0), 100.0);
-        assert_eq!(thumbnail_render_height(100.0, 0.0, 100.0), 0.0);
+        assert_eq!(thumbnail_render_size(160.0, 16.0 / 9.0, 120.0), egui::vec2(160.0, 90.0));
+        let fitted = thumbnail_render_size(320.0, 16.0 / 9.0, 100.0);
+        assert!((fitted.x - 100.0 * 16.0 / 9.0).abs() < 0.001);
+        assert_eq!(fitted.y, 100.0);
+        assert_eq!(thumbnail_render_size(100.0, 0.0, 100.0), egui::Vec2::ZERO);
     }
 }

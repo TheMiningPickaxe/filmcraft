@@ -1593,6 +1593,7 @@ fn build() -> Vec<CommandSpec> {
         cmd!("file.newProject", "Project…", ["File", "New"], Some("Cmd+Alt+N"), r#"{"name":str}"#, always, |s, p| {
             let name = str_p(p, "name").unwrap_or("Untitled").to_string();
             crate::masks::discard_jobs(s);
+            s.clear_transient_playhead();
             s.project = std::sync::Arc::new(filmcraft_project::Project::new(&name));
             s.project_instance = std::sync::Arc::new(());
             s.document_epoch = s.document_epoch.wrapping_add(1);
@@ -1611,6 +1612,7 @@ fn build() -> Vec<CommandSpec> {
         }),
         cmd!("file.openDemoProject", "Demo Project", ["File", "New"], None, "{}", always, |s, _| {
             let (p, seq) = crate::demo::demo_project(&s.media);
+            s.clear_transient_playhead();
             s.project = std::sync::Arc::new(p);
             s.project_instance = std::sync::Arc::new(());
             s.document_epoch = s.document_epoch.wrapping_add(1);
@@ -5309,7 +5311,7 @@ pub fn inspect_sequence(s: &Session, id: ItemId, q: &filmcraft_project::Sequence
         "settings": q.settings,
         "duration": q.duration().0,
         "durationFrames": f1 - f0,
-        "playhead": s.state.playheads.get(&id).map(|t| t.0),
+        "playhead": s.playhead_for_sequence(id).map(|t| t.0),
         "in": q.mark_in.map(|t| t.0),
         "out": q.mark_out.map(|t| t.0),
         "split": q.split,
@@ -5374,6 +5376,7 @@ fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
         s.saved_revision = s.revision;
         // the file now holds this view: a later zoom or scroll is new unsaved state again
         s.saved_view_epoch = s.view_epoch;
+        s.persistence_view_cache = None;
         s.loaded_schema = filmcraft_format::SCHEMA_VERSION;
     }
     Ok(json!({"path": path, "bytes": bytes.len(), "ms": t0.elapsed().as_secs_f64() * 1000.0, "backup": backup}))
@@ -5386,6 +5389,7 @@ fn schema_backup_path(path: &str, schema: u32) -> String {
 
 /// Make `proj` the session's project (fresh history, media pool and editor state).
 pub(crate) fn install_project(s: &mut Session, proj: filmcraft_project::Project, path: Option<String>, clean: bool) {
+    s.clear_transient_playhead();
     let proxies = s.media.use_proxies();
     s.media = std::sync::Arc::new(crate::MediaPool::default());
     s.media.set_use_proxies(proxies);
@@ -5452,7 +5456,9 @@ fn recover(s: &mut Session, id: Option<&str>) -> Result<Value> {
     let c = per.candidates.get(idx).cloned().ok_or_else(|| bad("file.recover", "no recovery session"))?;
     let saved_at = per.local_time(c.meta.saved_unix);
     let loaded = crate::autosave::load_candidate(&c).map_err(EngineError::Other)?;
-    install_project(s, loaded.project, c.meta.project_path.clone(), !c.meta.dirty);
+    let has_original_project = c.meta.project_path.as_deref().is_some_and(|path| !path.is_empty());
+    let content_is_clean = !c.meta.dirty && (!has_original_project || crate::autosave::candidate_content_matches_project(&c, &loaded.project));
+    install_project(s, loaded.project, c.meta.project_path.clone(), content_is_clean);
     if let Some(view) = loaded.view {
         s.restore_project_view(view);
     }

@@ -3,6 +3,7 @@ use super::{Align2, Color32, CursorIcon, Drag, FilmcraftApp, MinimapCache, Pos2,
 use crate::icons::{self, Icon};
 use crate::widgets::{HotNumberOptions, hot_number_numeric};
 use filmcraft_project::{Sequence, TrackItem};
+use filmcraft_time::Tick;
 
 /// The narrowest the zoom scroll bar's thumb gets: room for its two handles and a part between
 /// them to grab.
@@ -53,9 +54,61 @@ fn record_minimap_track_coverage(top: &mut [(u64, u8)], next: &mut [(u64, u8)], 
     }
 }
 
+#[cfg(test)]
 fn minimap_coverage_excluding(top: &[(u64, u8)], next: &[(u64, u8)], cell: usize, track: u64) -> u8 {
     let Some(best) = top.get(cell) else { return 0 };
     if best.0 == track { next.get(cell).map_or(0, |coverage| coverage.1) } else { best.1 }
+}
+
+fn clip_crosses_cut(start: Tick, end: Tick, cut: Tick) -> bool {
+    start < cut && cut < end
+}
+
+#[cfg(test)]
+fn finish_minimap_cuts(candidates: &[(usize, u64, u8, f32)], top: &[(u64, u8)], next: &[(u64, u8)], cols: usize) -> Vec<usize> {
+    let mut cuts: Vec<usize> = candidates
+        .iter()
+        .filter_map(|&(cell, track, class, x)| {
+            (minimap_coverage_excluding(top, next, cell, track) < class).then_some(((x.floor() as isize).clamp(1, (cols - 1) as isize)) as usize)
+        })
+        .collect();
+    cuts.sort_unstable();
+    cuts.dedup();
+    cuts
+}
+
+fn finish_minimap_cuts_strict(
+    candidates: &[(usize, u64, u8, f32, Tick)],
+    seq: &Sequence,
+    project: &filmcraft_project::Project,
+    cols: usize,
+    prioritise_audio: bool,
+) -> Vec<usize> {
+    let media_class = |item: &TrackItem, is_audio: bool| {
+        let offline = project.item(item.item).and_then(|item| item.as_media()).is_some_and(|media| media.offline);
+        if offline {
+            3u8
+        } else if is_audio == prioritise_audio {
+            2
+        } else {
+            1
+        }
+    };
+    let mut cuts: Vec<usize> = candidates
+        .iter()
+        .filter_map(|&(_, track_id, class, x, cut)| {
+            let covered = [(&seq.video_tracks, false), (&seq.audio_tracks, true)].into_iter().any(|(tracks, is_audio)| {
+                tracks
+                    .iter()
+                    .filter(|track| track.id.0 != track_id)
+                    .any(|track| track.items.iter().any(|item| clip_crosses_cut(item.start, item.end(), cut) && media_class(item, is_audio) >= class))
+            });
+            (!covered).then_some(((x.floor() as isize).clamp(1, (cols - 1) as isize)) as usize)
+        })
+        .collect();
+    cuts.sort_unstable();
+    cuts.dedup();
+    cuts
 }
 
 fn minimap_coverage(seq: &Sequence, project: &filmcraft_project::Project, span: f64, width: f32, cols: usize, prioritise_audio: bool) -> (Vec<u8>, Vec<usize>) {
@@ -99,15 +152,14 @@ fn minimap_coverage(seq: &Sequence, project: &filmcraft_project::Project, span: 
                 }
                 let x = x_of(left.end().seconds());
                 let cell = ((x.floor() as isize).clamp(0, cols.saturating_sub(1) as isize)) as usize;
-                if minimap_coverage_excluding(&top_track, &next_track, cell, track.id.0) < media_class(left, is_audio) && cols > 1 {
-                    adjacent_cuts.push(((x.floor() as isize).clamp(1, (cols - 1) as isize)) as usize);
+                if cols > 1 {
+                    adjacent_cuts.push((cell, track.id.0, media_class(left, is_audio), x, left.end()));
                 }
             }
         }
     }
-    adjacent_cuts.sort_unstable();
-    adjacent_cuts.dedup();
-    (class, adjacent_cuts)
+    let cuts = finish_minimap_cuts_strict(&adjacent_cuts, seq, project, cols, prioritise_audio);
+    (class, cuts)
 }
 
 fn minimap_runs(class: &[u8], cuts: &[usize]) -> Vec<(usize, usize, u8)> {
@@ -338,10 +390,10 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         "timeline.zoomBar.settings.controlsFlyout",
         "Controls",
         &[
-            (tl!("Center on Playhead:"), "Double Click", 0),
-            (tl!("Explode Slider:"), "Triple Click", 1),
-            (tl!("Alternate Drag Speed:"), "Shift + Drag", 2),
-            (tl!("Settings:"), "Right Click", 3),
+            (tl!("Center on Playhead:"), tl!("Double Click").to_string(), 0),
+            (tl!("Explode Slider:"), tl!("Triple Click").to_string(), 1),
+            (tl!("Alternate Drag Speed:"), tl!("Shift + Drag").to_string(), 2),
+            (tl!("Settings:"), tl!("Right Click").to_string(), 3),
         ],
     );
     let sequence_seconds = app.session.active_sequence().map(|seq| seq.duration().seconds()).unwrap_or(0.0);
@@ -898,25 +950,28 @@ fn input_text(ui: &egui::Ui, pressed_only: bool) -> Option<String> {
 
 /// Let custom slider bindings reach their owning widget before a menu shortcut consumes them.
 pub fn custom_control_shortcut_pending(app: &FilmcraftApp, ctx: &egui::Context) -> bool {
+    let events = ctx.input(|input| input.events.clone());
+    custom_control_shortcut_pending_for_events(app, ctx, &events)
+}
+
+pub fn custom_control_shortcut_pending_for_events(app: &FilmcraftApp, ctx: &egui::Context, events: &[egui::Event]) -> bool {
     if controls_listening(app, ctx) {
         return false;
     }
-    let chord = ctx.input(|input| {
-        input.events.iter().find_map(|event| {
-            let egui::Event::Key { key, modifiers, pressed: true, .. } = event else { return None };
-            let mut text = String::new();
-            if modifiers.ctrl || modifiers.mac_cmd {
-                text.push_str("Ctrl + ");
-            }
-            if modifiers.shift {
-                text.push_str("Shift + ");
-            }
-            if modifiers.alt {
-                text.push_str("Alt + ");
-            }
-            text.push_str(&format!("{key:?}"));
-            Some(text)
-        })
+    let chord = events.iter().find_map(|event| {
+        let egui::Event::Key { key, modifiers, pressed: true, .. } = event else { return None };
+        let mut text = String::new();
+        if modifiers.ctrl || modifiers.mac_cmd {
+            text.push_str("Ctrl + ");
+        }
+        if modifiers.shift {
+            text.push_str("Shift + ");
+        }
+        if modifiers.alt {
+            text.push_str("Alt + ");
+        }
+        text.push_str(&format!("{key:?}"));
+        Some(text)
     });
     let Some(chord) = chord else { return false };
     let chord_allowed = chord.contains("Ctrl") || chord.contains("Alt") || !ctx.text_edit_focused();
@@ -924,18 +979,33 @@ pub fn custom_control_shortcut_pending(app: &FilmcraftApp, ctx: &egui::Context) 
         return false;
     }
     let settings = &app.session.state.timeline_ui;
-    [
-        settings.control_center_on_playhead.as_str(),
-        settings.control_explode_slider.as_str(),
-        settings.control_alternate_drag_speed.as_str(),
-        settings.control_settings.as_str(),
-        settings.track_control_copy_slider.as_str(),
-        settings.track_control_minimum_height.as_str(),
-        settings.track_control_alternate_drag_speed.as_str(),
-        settings.track_control_settings.as_str(),
-    ]
-    .into_iter()
-    .any(|binding| !binding.is_empty() && !binding.ends_with("Click") && binding == chord)
+    let matches = |binding: &str| !binding.is_empty() && !binding.ends_with("Click") && binding == chord;
+    let pointer = ctx.input(|input| input.pointer.hover_pos());
+    let zoom_over_bar = pointer.is_some_and(|pos| automation_contains(app, "timeline.zoomBar.track", pos));
+    let zoom_action = !settings.zoom_bar_hidden
+        && [settings.control_center_on_playhead.as_str(), settings.control_explode_slider.as_str(), settings.control_alternate_drag_speed.as_str()]
+            .into_iter()
+            .any(matches)
+        || !settings.zoom_bar_hidden && zoom_over_bar && matches(&settings.control_settings);
+    let track_action = !settings.track_slider_hidden
+        && pointer
+            .is_some_and(|pos| ["timeline.trackSlider.video.bar", "timeline.trackSlider.audio.bar"].into_iter().any(|id| automation_contains(app, id, pos)))
+        && [
+            settings.track_control_copy_slider.as_str(),
+            settings.track_control_minimum_height.as_str(),
+            settings.track_control_alternate_drag_speed.as_str(),
+            settings.track_control_settings.as_str(),
+        ]
+        .into_iter()
+        .any(matches);
+    zoom_action || track_action
+}
+
+fn automation_contains(app: &FilmcraftApp, id: &str, pos: Pos2) -> bool {
+    app.auto.find(id).is_some_and(|element| {
+        let [x, y, width, height] = element.rect;
+        Rect::from_min_size(pos2(x, y), vec2(width, height)).contains(pos)
+    })
 }
 
 /// One Controls binding (0 = Center on Playhead, 1 = Explode Slider, 2 = Alternate Drag Speed,
@@ -1015,7 +1085,7 @@ fn controls_arrow(ui: &egui::Ui, row: Rect, menu_w: f32, content_right: f32, to_
 }
 
 /// Where a Controls box that is listening for a new input remembers itself.
-fn controls_listen_key() -> egui::Id {
+pub(crate) fn controls_listen_key() -> egui::Id {
     egui::Id::unique("tl-controls-listening")
 }
 
@@ -1081,7 +1151,7 @@ fn hover_flyout(
     open_now: bool,
     auto_id: &str,
     auto_label: &str,
-    items: &[(&str, &str, usize)],
+    items: &[(&str, String, usize)],
 ) {
     let rect_key = flyout_id.with("rect");
     let height_key = flyout_id.with("height");
@@ -1147,17 +1217,17 @@ fn hover_flyout(
                 // the circular arrow at the row's end restores the default. (The listening itself
                 // happens in [`capture_controls`], from the menus, every frame.)
                 let listening = ui.ctx().data(|d| d.get_temp::<Option<usize>>(controls_listen_key())).flatten();
-                for (idx, &(name, default, slot)) in items.iter().enumerate() {
+                for (idx, (name, default, slot)) in items.iter().enumerate() {
                     // the row spans the flyout's content width, exactly as the Minimap colour
                     // rows do, so the reset arrow lands at their distance from the right wall
                     let row_w = ui.available_width().max(170.0);
                     let (irow, _) = ui.allocate_exact_size(egui::vec2(row_w, 28.0), Sense::hover());
                     let n_galley = ui.painter().layout_no_wrap((*name).to_string(), Tokens::ui(11.5), app.tokens.text);
-                    let bound = control_binding(app, slot).clone();
-                    let shown = if listening == Some(slot) {
+                    let bound = control_binding(app, *slot).clone();
+                    let shown = if listening == Some(*slot) {
                         tl!("Enter Shortcut").to_string()
                     } else if bound.is_empty() {
-                        (*default).to_string()
+                        default.clone()
                     } else {
                         bound.clone()
                     };
@@ -1172,7 +1242,7 @@ fn hover_flyout(
                         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
                     }
                     if bresp.clicked() {
-                        ui.ctx().data_mut(|d| d.insert_temp(controls_listen_key(), Some(slot)));
+                        ui.ctx().data_mut(|d| d.insert_temp(controls_listen_key(), Some(*slot)));
                     }
                     app.auto.add(&format!("{auto_id}.box{idx}"), ibox, name);
                     ui.painter().rect_filled(ibox, 3.0, egui::Color32::from_gray(16));
@@ -1185,7 +1255,7 @@ fn hover_flyout(
                     app.auto.add(&format!("{auto_id}.reset{idx}"), rr, tl!("Reset"));
                     icons::paint(ui.painter(), rr.shrink(2.0), Icon::Reset, if rresp.hovered() { app.tokens.text } else { app.tokens.text_dim });
                     if rresp.clicked() {
-                        *control_binding(app, slot) = String::new();
+                        *control_binding(app, *slot) = String::new();
                         app.session.project_view_changed();
                     }
                 }
@@ -1603,6 +1673,24 @@ fn tick_slider(ui: &mut egui::Ui, value: &mut usize, labels: &[&str], t: &Tokens
 /// The track slider's thumb length for a track height: the same kind of zoom meter as the zoom
 /// bar's thumb -- the shortest tracks fill the bar, the tallest leave the [`MIN_THUMB_W`]
 /// minimum, log-smooth in between. A bijection, so a drag can never explode or compound.
+fn track_slider_click_count(double_clicked: bool, copy_binding: bool, minimum_binding: bool, shift: bool, command: bool) -> u8 {
+    if copy_binding {
+        1
+    } else if double_clicked || minimum_binding {
+        if minimum_binding {
+            2
+        } else if shift && command {
+            3
+        } else if shift {
+            2
+        } else {
+            1
+        }
+    } else {
+        0
+    }
+}
+
 fn track_thumb(track_h: f32, bar_h: f32) -> f32 {
     if !bar_h.is_finite() || bar_h <= 0.0 {
         return 0.0;
@@ -1833,8 +1921,9 @@ mod zoom_drag_scale_tests {
 #[cfg(test)]
 mod controls_tests {
     use super::{
-        MINIMAP_MAX_COLUMNS, SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, binding_matches_held_key, controls_listen_key, controls_listening, minimap_clips_fit,
-        minimap_column_count, minimap_coverage_excluding, minimap_runs, record_minimap_track_coverage, shift_drag_rate, zoombar_popup_open_key,
+        MINIMAP_MAX_COLUMNS, SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, binding_matches_held_key, controls_listen_key, controls_listening, finish_minimap_cuts,
+        minimap_clips_fit, minimap_column_count, minimap_coverage_excluding, minimap_runs, record_minimap_track_coverage, shift_drag_rate, zoom_scrollbar,
+        zoombar_popup_open_key,
     };
     use crate::FilmcraftApp;
 
@@ -1870,9 +1959,67 @@ mod controls_tests {
     }
 
     #[test]
+    fn zoom_handles_have_stable_automation_ids() {
+        use egui::{Context, RawInput, Rect, pos2, vec2};
+        use serde_json::json;
+
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", json!({})).unwrap();
+        let id = session.state.active_sequence.unwrap();
+        let project = session.project.clone();
+        let seq = project.sequence(id).unwrap();
+        let mut app = FilmcraftApp::new(session);
+        let tokens = app.tokens;
+        let ctx = Context::default();
+        let input = RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..RawInput::default() };
+        let mut output = ctx.run_ui(input, |ui| {
+            zoom_scrollbar(&mut app, ui, Rect::from_min_size(pos2(50.0, 100.0), vec2(500.0, 16.0)), 500.0, seq, 1.0 / 24.0, &tokens);
+        });
+        output.textures_delta.clear();
+        assert!(app.auto.find_current("timeline.zoomBar.handle.left").is_some());
+        assert!(app.auto.find_current("timeline.zoomBar.handle.right").is_some());
+    }
+
+    #[test]
+    fn track_shortcuts_are_reserved_only_over_a_visible_slider() {
+        use egui::{Event, Key, Modifiers, RawInput, Rect, pos2, vec2};
+
+        let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.session.state.timeline_ui.track_control_copy_slider = "K".into();
+        app.session.state.timeline_ui.control_settings = "S".into();
+        app.auto.add("timeline.trackSlider.video.bar", Rect::from_min_size(pos2(10.0, 20.0), vec2(40.0, 80.0)), "video slider");
+        app.auto.add("timeline.zoomBar.track", Rect::from_min_size(pos2(100.0, 20.0), vec2(40.0, 16.0)), "zoom bar");
+        app.auto.begin_frame();
+        let ctx = egui::Context::default();
+        let frame = |pos, key| RawInput {
+            events: vec![Event::PointerMoved(pos), Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers: Modifiers::NONE }],
+            ..RawInput::default()
+        };
+        let mut output = ctx.run_ui(frame(pos2(20.0, 30.0), Key::K), |_| assert!(super::custom_control_shortcut_pending(&app, &ctx)));
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(frame(pos2(200.0, 30.0), Key::K), |_| assert!(!super::custom_control_shortcut_pending(&app, &ctx)));
+        output.textures_delta.clear();
+        app.session.state.timeline_ui.track_slider_hidden = true;
+        let mut output = ctx.run_ui(frame(pos2(20.0, 30.0), Key::K), |_| assert!(!super::custom_control_shortcut_pending(&app, &ctx)));
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(frame(pos2(200.0, 30.0), Key::S), |_| assert!(!super::custom_control_shortcut_pending(&app, &ctx)));
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(frame(pos2(110.0, 25.0), Key::S), |_| assert!(super::custom_control_shortcut_pending(&app, &ctx)));
+        output.textures_delta.clear();
+    }
+
+    #[test]
     fn minimap_keeps_adjacent_same_class_clip_cuts() {
         assert_eq!(minimap_runs(&[2, 2, 2, 2], &[2]), vec![(0, 2, 2), (2, 4, 2)]);
         assert_eq!(minimap_runs(&[2, 2, 0, 2, 2], &[]), vec![(0, 2, 2), (3, 5, 2)]);
+    }
+
+    #[test]
+    fn minimap_suppression_requires_a_clip_to_cross_the_cut() {
+        let cut = filmcraft_time::Tick::from_seconds_f64(5.0);
+        assert!(!super::clip_crosses_cut(cut, filmcraft_time::Tick::from_seconds_f64(10.0), cut));
+        assert!(!super::clip_crosses_cut(filmcraft_time::Tick::ZERO, cut, cut));
+        assert!(super::clip_crosses_cut(filmcraft_time::Tick::from_seconds_f64(4.0), filmcraft_time::Tick::from_seconds_f64(6.0), cut));
     }
 
     #[test]
@@ -1885,6 +2032,16 @@ mod controls_tests {
         assert_eq!(minimap_coverage_excluding(&top, &next, 0, 1), 2, "a same-kind track covers the cut");
         assert_eq!(minimap_coverage_excluding(&top, &next, 0, 2), 2, "either top track can be excluded");
         assert_eq!(minimap_coverage_excluding(&top, &next, 0, 3), 2, "the higher priority overlay remains visible");
+    }
+
+    #[test]
+    fn minimap_cuts_use_coverage_collected_from_later_tracks() {
+        let mut top = vec![(0, 0); 10];
+        let mut next = vec![(0, 0); 10];
+        record_minimap_track_coverage(&mut top, &mut next, 5, 1, 2);
+        let candidates = [(5, 1, 2, 5.0)];
+        record_minimap_track_coverage(&mut top, &mut next, 5, 2, 2);
+        assert!(finish_minimap_cuts(&candidates, &top, &next, 10).is_empty());
     }
 
     #[test]
@@ -1925,7 +2082,7 @@ mod controls_tests {
 
 #[cfg(test)]
 mod track_thumb_tests {
-    use super::{track_height_of, track_thumb};
+    use super::{track_height_of, track_slider_click_count, track_thumb};
 
     #[test]
     fn track_thumb_fits_short_bars_and_inverse_stays_finite() {
@@ -1936,6 +2093,13 @@ mod track_thumb_tests {
             assert!(track_height.is_finite() && (22.0..=220.0).contains(&track_height));
         }
         assert_eq!(track_thumb(80.0, f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn custom_copy_chord_wins_over_shift_minimum_actions() {
+        assert_eq!(track_slider_click_count(false, true, false, true, true), 1);
+        assert_eq!(track_slider_click_count(false, false, true, true, true), 2);
+        assert_eq!(track_slider_click_count(true, false, false, true, true), 3);
     }
 }
 
@@ -2183,6 +2347,8 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
     let hi = thumb.height();
     let circle_l = thumb.min.x + hi / 2.0;
     let circle_r = thumb.max.x - hi / 2.0;
+    app.auto.add("timeline.zoomBar.handle.left", Rect::from_center_size(pos2(circle_l, cy), vec2(CIRCLE * 2.0, CIRCLE * 2.0)), "Zoom bar left handle");
+    app.auto.add("timeline.zoomBar.handle.right", Rect::from_center_size(pos2(circle_r, cy), vec2(CIRCLE * 2.0, CIRCLE * 2.0)), "Zoom bar right handle");
     // while the MIDDLE is grabbed the end circles ignore the pointer entirely (the pinned
     // cursor sits on top of them and used to light their rings up)
     let middle_grab = matches!(app.tl.drag, Some(Drag::ZoomBar { mode: 0, .. }));
@@ -2286,9 +2452,14 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
     };
     // Only key chords can be captured, so they never hijack unrelated pointer gestures. Compare
     // against the stored strings in place: do not clone all four bindings on every UI frame.
-    let right_click = ui.input(|input| {
-        input.pointer.button_clicked(egui::PointerButton::Secondary).then(|| input.pointer.interact_pos()).flatten().filter(|pos| bar.contains(*pos))
-    });
+    let right_click = ui
+        .rect_contains_pointer(bar)
+        .then(|| {
+            ui.input(|input| {
+                input.pointer.button_clicked(egui::PointerButton::Secondary).then(|| input.pointer.interact_pos()).flatten().filter(|pos| bar.contains(*pos))
+            })
+        })
+        .flatten();
     let open_at = right_click.or_else(|| settings_bound.then(|| ui.input(|i| i.pointer.hover_pos().unwrap_or_else(|| bar.center()))));
     let screen = ui.ctx().content_rect();
     let fallback_popup_width = 283.4;
@@ -2505,6 +2676,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
     if let Some(Drag::ZoomBar { mode, .. }) = app.tl.drag
         && resp.dragged()
     {
+        app.timeline_auto_scroll_pending = None;
         let shift = ui.input(|i| i.modifiers.shift) || alternate_drag_bound;
         // While Shift is held in a zoom-bar drag the OS cursor is made invisible with a fully
         // transparent 1x1 cursor bitmap, confined to the app window, and PINNED to the exact
@@ -2730,7 +2902,8 @@ fn hide_dialog(app: &mut FilmcraftApp, ctx: &egui::Context, track: bool) {
                 app.auto.add(id, unhide.rect, "Restore the hidden Timeline slider");
                 restore = unhide.clicked();
                 let ok = ui.button(tl!("OK"));
-                app.auto.add("timeline.zoomBar.hideDialog.ok", ok.rect, "Close the dialog");
+                let ok_id = if track { "timeline.trackSlider.hideDialog.ok" } else { "timeline.zoomBar.hideDialog.ok" };
+                app.auto.add(ok_id, ok.rect, "Close the dialog");
                 if ok.clicked() {
                     dismiss = true;
                 }
@@ -3158,18 +3331,8 @@ pub(super) fn vertical_scrollbar(
     // double-click copies this thumb's length and position to the other slider; Shift+double-
     // click sets the minimum track height; Ctrl+Shift+double-click does so for BOTH sliders. Either way the single
     // click beneath them is not a jump.
-    let mut clicks = 0u8;
-    if resp.double_clicked() || copy_binding || minimum_binding {
-        clicks = if minimum_binding {
-            2
-        } else if ui.input(|i| i.modifiers.shift && i.modifiers.command) {
-            3
-        } else if ui.input(|i| i.modifiers.shift) {
-            2
-        } else {
-            1
-        };
-    }
+    let clicks =
+        track_slider_click_count(resp.double_clicked(), copy_binding, minimum_binding, ui.input(|i| i.modifiers.shift), ui.input(|i| i.modifiers.command));
     // a click beside the thumb jumps the view there, as on the zoom bar
     if clicks == 0
         && resp.clicked()
@@ -3260,10 +3423,10 @@ fn track_slider_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         "timeline.trackSlider.settings.controlsFlyout",
         "Controls",
         &[
-            (tl!("Copy Other Slider:"), "Double Click", 4),
-            (tl!("Minimum Track Height:"), "Shift + Double Click", 5),
-            (tl!("Alternate Drag Speed:"), "Shift + Drag", 6),
-            (tl!("Settings:"), "Right Click", 7),
+            (tl!("Copy Other Slider:"), tl!("Double Click").to_string(), 4),
+            (tl!("Minimum Track Height:"), tl!("Shift + Double Click").to_string(), 5),
+            (tl!("Alternate Drag Speed:"), tl!("Shift + Drag").to_string(), 6),
+            (tl!("Settings:"), tl!("Right Click").to_string(), 7),
         ],
     );
     // Smooth Animations eases the double-click moves (which land on the OTHER slider);

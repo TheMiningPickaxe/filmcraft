@@ -146,12 +146,32 @@ fn replacing_project_discards_animation_even_when_sequence_id_is_reused() {
 fn changing_sequence_discards_pending_track_slider_animation() {
     let mut d = Driver::new();
     let main = d.active();
-    d.new_sequence("Other");
+    let other = d.new_sequence("Other");
     d.app().session.state.timeline_ui.track_slider_smooth = true;
-    d.app().tl.track_anim = Some(filmcraft_ui_egui::panels::timeline::TrackAnimation { sequence: ItemId(main), target: [180.0, 0.0, 120.0, 0.0] });
+    d.app().tl.track_anim = Some(filmcraft_ui_egui::panels::timeline::TrackAnimation { sequence: ItemId(other), target: [180.0, 0.0, 120.0, 0.0] });
     d.show(main);
     assert!(d.app().tl.track_anim.is_none(), "animation from the previous sequence must not carry over");
     assert!(d.app().ui.timeline.video_track_h < 180.0);
+}
+
+#[test]
+fn explicit_fit_is_not_reverted_on_the_next_ui_pass() {
+    let mut d = Driver::new();
+    let active = ItemId(d.active());
+    d.app().session.state.timeline_views.insert(
+        active,
+        filmcraft_engine::project::SequenceView { pps: 20.0, scroll: 3.0, v_scroll: 0.0, a_scroll: 0.0, video_track_h: 24.0, audio_track_h: 24.0 },
+    );
+    d.frames(2);
+    d.ok("ui.menu.invoke", json!({"id": "view.zoomToSequence"}));
+    d.frames(3);
+
+    let fitted = d.app().session.state.timeline_views.get(&active).copied().unwrap();
+    assert_eq!(fitted.scroll, 0.0);
+    assert_ne!(fitted.pps, 20.0);
+    d.frames(1);
+    assert_eq!(d.app().session.state.timeline_views.get(&active).copied(), Some(fitted));
+    assert_eq!(d.app().ui.timeline.target_pps, fitted.pps, "the subsequent UI pass keeps the explicit fit");
 }
 
 #[test]

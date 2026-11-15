@@ -204,7 +204,7 @@ impl FilmcraftApp {
     /// - writes a change made in the panel to the session,
     /// - and takes over a view that was changed in the session (by a command or the control
     ///   channel).
-    pub(super) fn sync_timeline_view(&mut self) {
+    pub(crate) fn sync_timeline_view(&mut self) {
         let playback_scroll_target = self.timeline_auto_scroll_pending.take();
         let Some(active) = self.session.state.active_sequence else {
             self.timeline_view_of = None;

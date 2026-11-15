@@ -682,6 +682,9 @@ fn cleanup_stale_sessions_at(data_dir: &Path, now: std::time::SystemTime) {
 pub fn load_candidate(c: &RecoveryCandidate) -> Result<filmcraft_format::Loaded, String> {
     let b = filmcraft_media::reader::read_regular_file_bounded(&c.dir.join(SNAPSHOT), filmcraft_format::MAX_PROJECT_BYTES)
         .map_err(|e| format!("{}: {e}", c.dir.display()))?;
+    if c.meta.snapshot_fingerprint.is_some_and(|fingerprint| snapshot_fingerprint(&b) != fingerprint) {
+        return Err(format!("{}: recovery snapshot changed after it was listed", c.dir.display()));
+    }
     let mut loaded = filmcraft_format::decode(&b).map_err(|e| e.to_string())?;
     match (c.meta.view_snapshot_epoch, c.meta.view_fingerprint) {
         (Some(epoch), Some(fingerprint)) => {
@@ -701,6 +704,15 @@ pub fn load_candidate(c: &RecoveryCandidate) -> Result<filmcraft_format::Loaded,
         _ => log::warn!("{}: incomplete recovery view metadata; using the snapshot view", c.dir.display()),
     }
     Ok(loaded)
+}
+
+/// A clean recovery snapshot is clean only while the project file still contains its content.
+pub fn candidate_content_matches_project(c: &RecoveryCandidate, recovered: &filmcraft_project::Project) -> bool {
+    let Some(path) = c.meta.project_path.as_deref().filter(|path| !path.is_empty()) else { return false };
+    let Ok(bytes) = filmcraft_media::reader::read_regular_file_bounded(std::path::Path::new(path), filmcraft_format::MAX_PROJECT_BYTES) else {
+        return false;
+    };
+    filmcraft_format::decode(&bytes).is_ok_and(|loaded| loaded.project == *recovered)
 }
 
 pub fn discard_candidate(c: &RecoveryCandidate) -> io::Result<()> {
@@ -1244,20 +1256,23 @@ impl Worker {
         }
     }
 
-    fn clear_journal(&mut self) {
-        if let Some(epoch) = fs::read(self.session_dir.join(META))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<JournalMeta>(&bytes).ok())
-            .and_then(|meta| meta.view_snapshot_epoch)
-        {
-            let _ = fs::remove_file(self.session_dir.join(format!("view-{epoch}.json")));
-        }
-        let _ = fs::remove_file(self.session_dir.join(META));
-        let _ = fs::remove_file(self.session_dir.join(SNAPSHOT));
+    pub(crate) fn clear_journal(&mut self) {
+        Self::clear_journal_files(&self.session_dir);
         self.journaled = 0;
         self.journaled_view = 0;
         self.journaled_content_dirty = false;
         self.journaled_view_dirty = false;
+    }
+
+    fn clear_journal_files(session_dir: &Path) {
+        if let Some(epoch) =
+            fs::read(session_dir.join(META)).ok().and_then(|bytes| serde_json::from_slice::<JournalMeta>(&bytes).ok()).and_then(|meta| meta.view_snapshot_epoch)
+        {
+            let _ = fs::remove_file(session_dir.join(format!("view-{epoch}.json")));
+        }
+        let _ = fs::remove_file(session_dir.join(META));
+        let _ = fs::remove_file(session_dir.join(PENDING_META));
+        let _ = fs::remove_file(session_dir.join(SNAPSHOT));
     }
 
     fn auto_save(&mut self) -> Result<PathBuf, String> {
@@ -1360,6 +1375,12 @@ fn write_recovery_pair(dir: &Path, snapshot: &[u8], meta: &JournalMeta, mut writ
     if current_recoverable && previous_recoverable {
         // Keep old metadata beside the old snapshot. The separate pending record describes the
         // new snapshot and becomes authoritative only after its fingerprint matches on disk.
+        // An interrupted earlier replacement may have left its matching metadata only in the
+        // pending file. Promote it before the next replacement overwrites that file.
+        if let Some(previous) = previous_meta.as_ref() {
+            let previous_bytes = serde_json::to_vec_pretty(previous).map_err(io::Error::other)?;
+            write(&meta_path, &previous_bytes)?;
+        }
         let mut pending = meta.clone();
         pending.view_snapshot_epoch = None;
         pending.view_fingerprint = None;
@@ -1384,12 +1405,14 @@ fn write_recovery_pair(dir: &Path, snapshot: &[u8], meta: &JournalMeta, mut writ
         write(&meta_path, &metadata)?;
         write(&snapshot_path, snapshot)?;
         remove_obsolete_view_sidecar(dir, obsolete_view_epoch);
+        let _ = fs::remove_file(&pending_meta_path);
         Ok(())
     } else {
         let metadata = serde_json::to_vec_pretty(&meta).map_err(io::Error::other)?;
         write(&snapshot_path, snapshot)?;
         write(&meta_path, &metadata)?;
         remove_obsolete_view_sidecar(dir, obsolete_view_epoch);
+        let _ = fs::remove_file(&pending_meta_path);
         Ok(())
     }
 }
@@ -1423,8 +1446,9 @@ fn read_matching_meta(dir: &Path) -> Result<Option<JournalMeta>, ()> {
             mismatch = true;
         } else if name == META {
             // Legacy metadata has no fingerprint. It remains readable when no generation marker
-            // contradicts it, preserving recovery from older project versions.
-            return if mismatch { Err(()) } else { Ok(Some(meta)) };
+            // matches it, preserving recovery from older project versions after an interrupted
+            // replacement. A matching pending generation would already have returned above.
+            return Ok(Some(meta));
         }
     }
     if mismatch { Err(()) } else { Ok(None) }
@@ -1432,12 +1456,21 @@ fn read_matching_meta(dir: &Path) -> Result<Option<JournalMeta>, ()> {
 
 fn read_snapshot_fingerprint(path: &Path) -> io::Result<u64> {
     let mut file = File::open(path)?;
+    let limit = filmcraft_format::MAX_PROJECT_BYTES;
+    if file.metadata()?.len() > limit {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "recovery snapshot exceeds the project size limit"));
+    }
     let mut buffer = [0_u8; 8192];
     let mut hash = 0xcbf29ce484222325;
+    let mut total = 0_u64;
     loop {
         let count = file.read(&mut buffer)?;
         if count == 0 {
             return Ok(hash);
+        }
+        total = total.checked_add(count as u64).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "recovery snapshot size overflow"))?;
+        if total > limit {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "recovery snapshot grew beyond the project size limit"));
         }
         for byte in &buffer[..count] {
             hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
@@ -1447,6 +1480,40 @@ fn read_snapshot_fingerprint(path: &Path) -> io::Result<u64> {
 #[cfg(test)]
 mod durability_tests {
     use super::*;
+
+    #[test]
+    fn oversized_snapshot_fingerprints_are_rejected_before_reading() {
+        let dir = TestDir::new("oversized-fingerprint");
+        let path = dir.join("snapshot");
+        let file = File::create(&path).unwrap();
+        file.set_len(filmcraft_format::MAX_PROJECT_BYTES + 1).unwrap();
+        assert_eq!(read_snapshot_fingerprint(&path).unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn recovery_rejects_a_snapshot_changed_after_candidate_listing() {
+        let dir = TestDir::new("changed-candidate");
+        let bytes = filmcraft_format::encode(&Project::new("Changed"), false);
+        fs::write(dir.join(SNAPSHOT), &bytes).unwrap();
+        let candidate = RecoveryCandidate {
+            id: "changed".into(),
+            dir: dir.to_path_buf(),
+            meta: JournalMeta { snapshot_fingerprint: Some(snapshot_fingerprint(b"listed snapshot")), ..JournalMeta::default() },
+        };
+        assert!(load_candidate(&candidate).is_err());
+    }
+
+    #[test]
+    fn mismatched_pending_generation_does_not_hide_legacy_metadata() {
+        let dir = TestDir::new("legacy-pending-generation");
+        let snapshot = filmcraft_format::encode(&Project::new("Legacy"), false);
+        fs::write(dir.join(SNAPSHOT), &snapshot).unwrap();
+        let legacy = JournalMeta { dirty: true, project_path: Some("legacy.fcproj".into()), ..JournalMeta::default() };
+        fs::write(dir.join(META), serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let pending = JournalMeta { dirty: true, snapshot_fingerprint: Some(snapshot_fingerprint(b"new generation")), ..JournalMeta::default() };
+        fs::write(dir.join(PENDING_META), serde_json::to_vec(&pending).unwrap()).unwrap();
+        assert_eq!(read_matching_meta(&dir).unwrap(), Some(legacy));
+    }
 
     #[test]
     fn journal_freshness_includes_saved_baseline_dirty_flags() {
@@ -1503,6 +1570,38 @@ mod durability_tests {
         assert!(has_recovery_files(&session), "metadata left by a failed cleanup is retried");
         fs::remove_file(session.join(META)).unwrap();
         assert!(!has_recovery_files(&session), "later Clean messages do no file removal work");
+    }
+
+    #[test]
+    fn clean_then_identical_view_snapshot_cannot_reuse_stale_pending_metadata() {
+        let dir = TestDir::new("clean-pending-metadata");
+        let cfg = AutosaveConfig::new(dir.to_path_buf());
+        let persistence = Persistence::start(&cfg, AutoSavePrefs::default()).unwrap();
+        let bytes = filmcraft_format::encode(&Project::new("Project"), false);
+        let stale = JournalMeta {
+            dirty: true,
+            revision: 7,
+            project_path: Some("old.fcproj".into()),
+            snapshot_fingerprint: Some(snapshot_fingerprint(&bytes)),
+            ..JournalMeta::default()
+        };
+        fs::write(persistence.session_dir.join(SNAPSHOT), &bytes).unwrap();
+        fs::write(persistence.session_dir.join(META), serde_json::to_vec(&stale).unwrap()).unwrap();
+        fs::write(persistence.session_dir.join(PENDING_META), serde_json::to_vec(&stale).unwrap()).unwrap();
+
+        persistence.tx.send(Msg::Clean).unwrap();
+        for _ in 0..100 {
+            if !persistence.session_dir.join(PENDING_META).exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!persistence.session_dir.join(PENDING_META).exists());
+        let next = JournalMeta { dirty: false, view_dirty: true, revision: 8, project_path: Some("new.fcproj".into()), ..JournalMeta::default() };
+        write_recovery_pair(&persistence.session_dir, &bytes, &next, filmcraft_format::atomic_write).unwrap();
+        let matched = read_matching_meta(&persistence.session_dir).unwrap().unwrap();
+        assert_eq!(matched.project_path.as_deref(), Some("new.fcproj"));
+        assert!(!matched.dirty && matched.view_dirty);
     }
 
     static NEXT_TEST_DIR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1588,6 +1687,9 @@ mod durability_tests {
         assert!(!empty.exists(), "confirmed stale empty sessions are cleaned at startup");
         assert!(dirty.exists(), "dirty recovery data remains available");
         assert!(active.exists(), "a live worker's directory is never cleaned");
+        drop(active_lock);
+        cleanup_stale_sessions_at(&dir, std::time::SystemTime::now() + Duration::from_secs(302));
+        assert!(!active.exists(), "after its lock is released, the empty stale directory can be cleaned");
     }
 
     #[test]
@@ -1600,9 +1702,13 @@ mod durability_tests {
         write_recovery_pair(&session, &old, &first, filmcraft_format::atomic_write).unwrap();
         let next = filmcraft_format::encode(&Project::new("B"), false);
         let second = JournalMeta { dirty: true, project_path: Some("b.fcproj".into()), ..JournalMeta::default() };
+        let mut meta_writes = 0;
         let result = write_recovery_pair(&session, &next, &second, |path, bytes| {
             if path.ends_with(META) {
-                return Err(io::Error::other("interrupted before final metadata"));
+                meta_writes += 1;
+                if meta_writes == 2 {
+                    return Err(io::Error::other("interrupted before final metadata"));
+                }
             }
             filmcraft_format::atomic_write(path, bytes)
         });
@@ -1611,6 +1717,95 @@ mod durability_tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(load_candidate(&candidates[0]).unwrap().project.name, "B");
         assert_eq!(candidates[0].meta.project_path.as_deref(), Some("b.fcproj"));
+    }
+
+    #[test]
+    fn interrupted_replacement_promotes_legacy_metadata_to_the_new_generation() {
+        let dir = TestDir::new("legacy-pending-destination");
+        let session = recovery_root(&dir).join("1-1");
+        fs::create_dir_all(&session).unwrap();
+        let old = filmcraft_format::encode(&Project::new("A"), false);
+        fs::write(session.join(SNAPSHOT), &old).unwrap();
+        fs::write(
+            session.join(META),
+            serde_json::to_vec(&JournalMeta { dirty: true, revision: 1, project_path: Some("a.fcproj".into()), ..JournalMeta::default() }).unwrap(),
+        )
+        .unwrap();
+        assert!(read_matching_meta(&session).unwrap().unwrap().snapshot_fingerprint.is_none(), "fixture starts with fingerprint-free legacy metadata");
+
+        let next = filmcraft_format::encode(&Project::new("B"), false);
+        let second = JournalMeta { dirty: true, revision: 2, project_path: Some("b.fcproj".into()), ..JournalMeta::default() };
+        let mut meta_writes = 0;
+        let result = write_recovery_pair(&session, &next, &second, |path, bytes| {
+            if path.ends_with(META) {
+                meta_writes += 1;
+                if meta_writes == 2 {
+                    return Err(io::Error::other("interrupted before final metadata"));
+                }
+            }
+            filmcraft_format::atomic_write(path, bytes)
+        });
+
+        assert!(result.is_err());
+        let candidates = scan_candidates(&dir, None);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(load_candidate(&candidates[0]).unwrap().project.name, "B");
+        assert_eq!(candidates[0].meta.revision, 2);
+        assert_eq!(candidates[0].meta.project_path.as_deref(), Some("b.fcproj"));
+    }
+
+    #[test]
+    fn consecutive_interrupted_replacements_keep_the_last_durable_snapshot() {
+        let dir = TestDir::new("two-interrupted-replacements");
+        let session = recovery_root(&dir).join("1-1");
+        fs::create_dir_all(&session).unwrap();
+        let a = filmcraft_format::encode(&Project::new("A"), false);
+        write_recovery_pair(&session, &a, &JournalMeta { dirty: true, ..JournalMeta::default() }, filmcraft_format::atomic_write).unwrap();
+        let b = filmcraft_format::encode(&Project::new("B"), false);
+        let mut snapshot_written = false;
+        assert!(
+            write_recovery_pair(&session, &b, &JournalMeta { dirty: true, revision: 2, ..JournalMeta::default() }, |path, bytes| {
+                if path.ends_with(META) && snapshot_written {
+                    Err(io::Error::other("final metadata write failed"))
+                } else {
+                    filmcraft_format::atomic_write(path, bytes)?;
+                    snapshot_written |= path.ends_with(SNAPSHOT);
+                    Ok(())
+                }
+            })
+            .is_err()
+        );
+        assert_eq!(read_matching_meta(&session).unwrap().unwrap().revision, 2, "B's pending record should match its snapshot");
+        let c = filmcraft_format::encode(&Project::new("C"), false);
+        assert!(
+            write_recovery_pair(&session, &c, &JournalMeta { dirty: true, revision: 3, ..JournalMeta::default() }, |path, bytes| {
+                if path.ends_with(SNAPSHOT) {
+                    Err(io::Error::other("stop before next snapshot replacement"))
+                } else {
+                    filmcraft_format::atomic_write(path, bytes)
+                }
+            })
+            .is_err()
+        );
+        assert_eq!(read_matching_meta(&session).unwrap().unwrap().revision, 2, "C's interruption must leave B's record authoritative");
+        let candidates = scan_candidates(&dir, None);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(load_candidate(&candidates[0]).unwrap().project.name, "B");
+    }
+
+    #[test]
+    fn clean_recovery_is_verified_against_the_current_project_file() {
+        let dir = TestDir::new("recovery-current-content");
+        let path = dir.join("project.fcproj");
+        let current = Project::new("B");
+        fs::write(&path, filmcraft_format::encode(&current, false)).unwrap();
+        let candidate = RecoveryCandidate {
+            id: "candidate".into(),
+            dir: dir.to_path_buf(),
+            meta: JournalMeta { project_path: Some(path.to_string_lossy().into_owned()), ..JournalMeta::default() },
+        };
+        assert!(!candidate_content_matches_project(&candidate, &Project::new("A")));
+        assert!(candidate_content_matches_project(&candidate, &current));
     }
 
     #[test]

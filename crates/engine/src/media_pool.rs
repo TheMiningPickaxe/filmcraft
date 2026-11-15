@@ -183,6 +183,12 @@ impl MediaPool {
         self.offline.write().unwrap_or_else(PoisonError::into_inner).remove(&item);
     }
 
+    /// Drop cached readers without clearing the offline report for an item being deleted.
+    pub fn remove_cached(&self, item: ItemId) {
+        self.sources.write().unwrap_or_else(PoisonError::into_inner).remove(&item);
+        self.proxies.write().unwrap_or_else(PoisonError::into_inner).remove(&item);
+    }
+
     /// Record the media and proxy paths of `p`, loaded from the document at `document` (None: one
     /// without a file), as stored paths: they are opened only as [`crate::doc_path::resolve`]
     /// allows. A path already recorded keeps the document it came from first.
@@ -910,6 +916,9 @@ mod tests {
         let st = pool.offline_status(item).unwrap();
         assert_eq!((st.reason, st.path.as_str(), st.error.as_str()), (OfflineReason::Unreadable, "/media/cam/a.mov", "H.264: field pictures"));
         assert_eq!(src.audio(0, 4, 48_000).unwrap().channels.len(), 3);
+        pool.remove_cached(item);
+        assert!(pool.cached(item).is_none(), "deleted media readers are dropped");
+        assert!(pool.offline_status(item).is_some(), "dropping a reader must not erase an export's offline report");
         // linking the item to another file forgets the reason
         pool.insert_file(item, "/media/cam/b.mov", src.clone());
         assert!(pool.offline_status(item).is_none());

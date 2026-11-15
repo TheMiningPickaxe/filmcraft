@@ -29,7 +29,7 @@ impl FilmcraftApp {
             && !self.session.voiceover.recording()
             && self.session.playhead() >= dur - self.session.sequence_rate().frame_duration()
         {
-            self.session.set_playhead(Tick::ZERO);
+            self.session.set_playhead_during_playback(Tick::ZERO);
         }
         // A loop restart keeps counting into the same meter.
         if !self.playback.playing || self.playback.speed != speed {
@@ -383,6 +383,31 @@ mod voiceover_playback_tests {
         assert!(app.session.voiceover.recording());
         assert!(app.session.playhead() > from, "{:?} <= {from:?}", app.session.playhead());
         app.session.execute("audio.voiceover.stop", json!({"discard": true})).unwrap();
+        app.stop();
+    }
+}
+
+#[cfg(test)]
+mod playback_restart_tests {
+    use super::*;
+
+    #[test]
+    fn restarting_from_end_uses_a_transient_playhead() {
+        let mut session = Session::default();
+        session.execute("file.openDemoProject", json!({})).unwrap();
+        session.prefs.timeline.return_to_beginning = true;
+        let sequence = session.state.active_sequence.unwrap();
+        let end = session.active_sequence().unwrap().duration();
+        session.state.playheads.insert(sequence, end);
+        let view_epoch = session.view_epoch;
+        let mut app = FilmcraftApp::new(session);
+        app.audio = None;
+
+        app.play(1.0);
+
+        assert_eq!(app.session.view_epoch, view_epoch);
+        assert_eq!(app.session.state.playheads.get(&sequence), Some(&end));
+        assert_eq!(app.session.playhead(), Tick::ZERO);
         app.stop();
     }
 }

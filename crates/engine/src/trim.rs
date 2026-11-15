@@ -543,10 +543,10 @@ pub fn tick(s: &mut Session, clock: f64) -> Result<Value> {
             el %= len;
         } else if el >= len {
             s.trim_play.around = None;
-            s.set_playhead(a.end - s.sequence_rate().frame_duration());
+            s.set_playhead_during_playback(a.end - s.sequence_rate().frame_duration());
             return Ok(status(s));
         }
-        s.set_playhead(a.start + Tick::from_seconds_f64(el));
+        s.set_playhead_during_playback(a.start + Tick::from_seconds_f64(el));
     }
     Ok(status(s))
 }
@@ -669,6 +669,6 @@ pub fn play_around(s: &mut Session, p: &Value) -> Result<Value> {
     let end = end.max(start + rate.frame_duration());
     let looping = p.get("loop").and_then(Value::as_bool).unwrap_or(true);
     s.trim_play.around = Some(PlayAround { start, end, looping, clock0: clock_p(p) });
-    s.set_playhead(start);
+    s.set_playhead_during_playback(start);
     Ok(json!({"start": start.0, "end": end.0, "loop": looping}))
 }

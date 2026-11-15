@@ -301,6 +301,10 @@ pub(crate) fn wheel_input(ctx: &egui::Context) -> WheelInput {
     })
 }
 
+fn horizontal_dominant_scroll(delta: egui::Vec2) -> bool {
+    delta.x.abs() > delta.y.abs()
+}
+
 /// Puts the playhead where the pointer is on the ruler: what a press does before any drag (#1090).
 fn scrub_playhead(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, p: Pos2, shift: bool) {
     // A press on the ruler stops playback, but it must not close a scrub stream that is already
@@ -342,11 +346,12 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
         let w = wheel_input(&ctx);
         let inv = app.session.state.timeline_ui.inverted_controls;
         // Trackpads deliver horizontal time scrolling as delta.x only; Shift keeps its fast rate.
+        let horizontal_dominant = horizontal_dominant_scroll(w.delta);
         let horizontal_only = w.delta.y == 0.0 && w.delta.x != 0.0;
         // Alt+horizontal is still a trackpad time gesture, not the vertical-wheel zoom shortcut.
         let wdy = if horizontal_only && w.alt {
             0.0
-        } else if horizontal_only || (w.shift && w.delta.y == 0.0) {
+        } else if horizontal_dominant || (w.shift && w.delta.y == 0.0) {
             w.delta.x
         } else {
             w.delta.y
@@ -376,6 +381,8 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
                 Some(w.delta.x * if w.shift { 10.0 } else { 1.0 })
             } else if w.shift {
                 Some(wdy * 10.0)
+            } else if horizontal_dominant && !w.command {
+                Some(w.delta.x)
             } else if w.command == swap {
                 Some(wdy)
             } else {
@@ -791,6 +798,8 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
                 let dx = p.x - last.x;
                 let dy = p.y - last.y;
                 let v = &mut app.ui.timeline;
+                let old_view = (v.target_scroll, v.v_scroll, v.a_scroll);
+                app.tl.track_anim = None;
                 app.timeline_auto_scroll_pending = None;
                 v.target_scroll = (v.target_scroll - dx as f64 / v.pps).max(0.0);
                 v.scroll = v.target_scroll;
@@ -801,7 +810,7 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
                 } else {
                     v.v_scroll += dy;
                 }
-                if dx.is_finite() && dy.is_finite() && (dx != 0.0 || dy != 0.0) {
+                if dx.is_finite() && dy.is_finite() && old_view != (v.target_scroll, v.v_scroll, v.a_scroll) {
                     app.session.view_changed();
                 }
                 Some(Drag::Pan { last: p, start_scroll, start_v, audio, start_a })
@@ -1790,5 +1799,16 @@ mod marquee_tests {
         assert!(r.min.y > l.split_y, "the box starts below the divider: {r:?}");
         let r = anchor.rect_to(&l, pos2(200.0, 100.0));
         assert!(r.min.y <= 100.0, "the pointer in the video tracks reaches them: {r:?}");
+    }
+}
+
+#[cfg(test)]
+mod wheel_axis_tests {
+    use super::horizontal_dominant_scroll;
+
+    #[test]
+    fn horizontal_trackpad_motion_survives_small_vertical_drift() {
+        assert!(horizontal_dominant_scroll(egui::vec2(-100.0, 1.0)));
+        assert!(!horizontal_dominant_scroll(egui::vec2(1.0, -100.0)));
     }
 }

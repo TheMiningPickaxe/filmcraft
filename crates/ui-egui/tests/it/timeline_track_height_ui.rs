@@ -160,9 +160,9 @@ fn timeline_draws_visible_lines_between_tracks_and_above_the_top_video_track() {
     let mut d = Driver::demo();
     let separator = d.app().tokens.separator;
     let ruler = rect_of(&mut d, "timeline.ruler");
-    let header_bg = d.app().tokens.tl_header_bg;
     let seq = d.app().session.active_sequence().unwrap();
-    let tracks = seq.video_tracks.len() + seq.audio_tracks.len();
+    let video_tracks = seq.video_tracks.len();
+    let tracks = video_tracks + seq.audio_tracks.len();
     // horizontal separator lines across the track area (the headers' own lines start left of the ruler)
     let mut ys: Vec<f32> = flat_shapes(&d)
         .into_iter()
@@ -183,14 +183,7 @@ fn timeline_draws_visible_lines_between_tracks_and_above_the_top_video_track() {
     ys.dedup_by(|a, b| (*a - *b).abs() < 0.1);
     assert!(ys.len() > tracks, "a line under each of the {tracks} tracks and one above the top video track, found {ys:?}");
     let first = ys[0];
-    let header_top = flat_shapes(&d)
-        .into_iter()
-        .filter_map(|s| match s {
-            egui::Shape::Rect(r) if r.fill == header_bg => Some(r.rect.min.y),
-            _ => None,
-        })
-        .find(|y| (*y - first).abs() < 1.5)
-        .expect("the top video track header starts at the first separator line");
+    let header_top = rect_of(&mut d, &format!("timeline.track.V{video_tracks}.color")).min.y;
     assert!((first - header_top).abs() < 1.5, "the first line ({first}) is at the video header's top edge ({header_top})");
 }
 

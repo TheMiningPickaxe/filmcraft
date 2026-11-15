@@ -444,7 +444,7 @@ impl FilmcraftApp {
         // pass and `screenshot` itself forces the paint needed when the window is hidden.
         // Drawing the frame can start a track-slider animation (for example, a double-click
         // fit), so settle the screenshot counter against the post-draw animation state.
-        self.timeline_still = next_timeline_still(self.timeline_still, self.ui.timeline.animating(), self.tl.track_anim.is_some());
+        self.timeline_still = reset_timeline_settlement_after_draw(self.timeline_still, self.ui.timeline.animating(), self.tl.track_anim.is_some());
         capture::issue(self, &ctx);
     }
 }
@@ -628,14 +628,37 @@ fn next_timeline_still(still: u32, timeline_animating: bool, track_sliders_anima
     if timeline_animating || track_sliders_animating { 0 } else { still.saturating_add(1) }
 }
 
+fn reset_timeline_settlement_after_draw(still: u32, timeline_animating: bool, track_sliders_animating: bool) -> u32 {
+    if timeline_animating || track_sliders_animating { 0 } else { still }
+}
+
 #[cfg(test)]
 mod capture_settlement_tests {
-    use super::next_timeline_still;
+    use super::{next_timeline_still, reset_timeline_settlement_after_draw};
 
     #[test]
     fn side_slider_animation_resets_timeline_capture_settlement() {
         assert_eq!(next_timeline_still(8, false, true), 0);
         assert_eq!(next_timeline_still(8, true, false), 0);
         assert_eq!(next_timeline_still(8, false, false), 9);
+    }
+
+    #[test]
+    fn post_draw_check_resets_without_counting_a_second_idle_pass() {
+        let after_pre_draw = next_timeline_still(0, false, false);
+        assert_eq!(reset_timeline_settlement_after_draw(after_pre_draw, false, false), 1);
+    }
+
+    #[test]
+    fn complete_idle_ui_passes_settle_after_two_frames() {
+        let app = crate::FilmcraftApp::new(filmcraft_engine::Session::default());
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |_| app);
+        harness.run_steps(4);
+        harness.state_mut().timeline_still = 0;
+
+        harness.run_steps(1);
+        assert_eq!(harness.state().timeline_still, 1, "both settlement updates in one idle UI pass count once");
+        harness.run_steps(1);
+        assert_eq!(harness.state().timeline_still, 2, "capture eligibility follows two complete idle UI passes");
     }
 }

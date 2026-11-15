@@ -670,7 +670,8 @@ fn new_from_template(s: &mut Session, p: &Value) -> Result<Value> {
         templates_dir(s).map(|d| d.join(format!("{}.fcproj", sanitize(t))).to_string_lossy().to_string()).unwrap_or_else(|| t.to_string())
     };
     let bytes = s.services.read_file_bounded(&path, filmcraft_format::MAX_PROJECT_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    let mut proj = filmcraft_format::decode(&bytes).map_err(|e| EngineError::Other(e.to_string()))?.project;
+    let loaded = filmcraft_format::decode(&bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+    let (mut proj, view) = (loaded.project, loaded.view);
     if s.has_unsaved_changes() && !bool_p(p, "force").unwrap_or(false) {
         return Err(EngineError::Other("the project has unsaved changes: save it first, or pass {\"force\": true} to discard them".into()));
     }
@@ -685,6 +686,12 @@ fn new_from_template(s: &mut Session, p: &Value) -> Result<Value> {
     s.state = Session::default().state;
     s.state.active_sequence = s.project.sequences().next().map(|i| i.id);
     s.state.open_sequences = s.state.active_sequence.into_iter().collect();
+    if let Some(view) = view {
+        s.state.timeline_ui = view.timeline_ui.clone().checked();
+        if s.prefs.timeline.restore_open_sequences {
+            s.restore_project_view(view);
+        }
+    }
     if s.path.take().is_some() {
         s.previews.reset_temp();
     }

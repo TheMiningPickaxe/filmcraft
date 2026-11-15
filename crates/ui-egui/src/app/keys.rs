@@ -34,6 +34,7 @@ impl FilmcraftApp {
             return;
         }
         if panels::timeline::custom_control_shortcut_pending(self, ctx) {
+            ctx.input(|input| self.sync_v_down(&input.events));
             return;
         }
         // A focused text field takes every unmodified key, including the ones our shortest
@@ -55,8 +56,10 @@ impl FilmcraftApp {
 
     fn sync_v_down(&mut self, events: &[egui::Event]) {
         for event in events {
-            if let egui::Event::Key { key: egui::Key::V, pressed, .. } = event {
-                self.v_down = *pressed;
+            match event {
+                egui::Event::Key { key: egui::Key::V, pressed, .. } => self.v_down = *pressed,
+                egui::Event::Paste(_) | egui::Event::PasteImage(_) => self.v_down = true,
+                _ => {}
             }
         }
     }
@@ -66,7 +69,15 @@ impl FilmcraftApp {
     /// arrive, so shortcuts work while a floating window has focus. craft-ui forwards nothing
     /// while that window's text field has focus.
     pub(crate) fn handle_forwarded_keys(&mut self, ctx: &egui::Context, events: Vec<egui::Event>) {
-        if events.is_empty() || self.dialog == Some(Dialog::Shortcuts) || panels::timeline::controls_listening(self, ctx) {
+        if events.is_empty() || self.dialog == Some(Dialog::Shortcuts) {
+            return;
+        }
+        if panels::timeline::controls_listening(self, ctx) {
+            self.sync_v_down(&events);
+            return;
+        }
+        if panels::timeline::custom_control_shortcut_pending_for_events(self, ctx, &events) {
+            self.sync_v_down(&events);
             return;
         }
         let mut input = egui::InputState::default();
@@ -368,6 +379,23 @@ mod forwarded_key_tests {
         app.handle_forwarded_keys(&egui::Context::default(), vec![Event::Text("~".into()), shift_backtick]);
         assert_eq!(app.ui.keys.maximized, Some(crate::dock::PanelKind::Timeline), "Shift+` maximizes the focused frame");
     }
+
+    #[test]
+    fn forwarded_v_during_controls_listen_is_not_replayed_as_paste() {
+        let mut app = super::FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.bindings = super::menus::bindings(&app);
+        app.tl.track_slider_settings_pos = Some(egui::pos2(10.0, 10.0));
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| data.insert_temp(crate::panels::timeline::controls_listen_key(), Some(0usize)));
+        app.handle_forwarded_keys(
+            &ctx,
+            vec![Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: true, repeat: false, modifiers: Modifiers::COMMAND }],
+        );
+        assert!(app.v_down, "the forwarded captured press must update V state");
+        let mut input = egui::InputState::default();
+        input.events = vec![Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND }];
+        assert!(app.match_shortcuts(&mut input, false, false, false).is_empty(), "release must not synthesize a Paste press");
+    }
 }
 
 #[cfg(test)]
@@ -462,6 +490,49 @@ mod key_repeat_tests {
         input.events = vec![Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND }];
         assert!(app.match_shortcuts(&mut input, false, false, false).is_empty(), "the release must not synthesize another paste press");
         assert!(!app.v_down);
+    }
+
+    #[test]
+    fn custom_ctrl_v_binding_keeps_the_pressed_state_through_suppression() {
+        let mut app = super::FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.bindings = super::menus::bindings(&app);
+        app.session.state.timeline_ui.control_center_on_playhead = "Ctrl + V".into();
+        let ctx = egui::Context::default();
+        let mut press = egui::RawInput::default();
+        press.events.push(Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: true, repeat: false, modifiers: Modifiers::COMMAND });
+        let mut output = ctx.run_ui(press, |_| app.handle_shortcuts(&ctx));
+        output.textures_delta.clear();
+        assert!(app.v_down, "the custom-binding suppression path records the paste key press");
+        let mut release = egui::RawInput::default();
+        release.events.push(Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND });
+        let mut output = ctx.run_ui(release, |_| app.handle_shortcuts(&ctx));
+        output.textures_delta.clear();
+        assert!(!app.v_down, "release clears the tracked key without replaying Paste");
+    }
+
+    #[test]
+    fn clipboard_event_while_controls_listen_prevents_paste_replay_on_release() {
+        let mut app = super::FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.bindings = super::menus::bindings(&app);
+        app.tl.track_slider_settings_pos = Some(egui::pos2(20.0, 20.0));
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| data.insert_temp(crate::panels::timeline::controls_listen_key(), Some(0usize)));
+        let mut output =
+            ctx.run_ui(egui::RawInput { events: vec![Event::Paste("clipboard text".into())], ..egui::RawInput::default() }, |_| app.handle_shortcuts(&ctx));
+        output.textures_delta.clear();
+        assert!(app.v_down);
+        ctx.data_mut(|data| data.insert_temp(crate::panels::timeline::controls_listen_key(), None::<usize>));
+        app.tl.track_slider_settings_pos = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND }],
+                ..egui::RawInput::default()
+            },
+            |_| app.handle_shortcuts(&ctx),
+        );
+        output.textures_delta.clear();
+        assert!(!app.v_down);
+        assert!(!app.session.log.entries.iter().any(|entry| entry.source == "edit.paste"), "the captured clipboard event must not replay as Paste on release");
     }
 }
 

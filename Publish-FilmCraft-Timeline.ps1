@@ -108,12 +108,30 @@ if ($branchExit -ne 0 -or $headExit -ne 0 -or $treeExit -ne 0 -or "$currentBranc
     throw 'The branch, HEAD, or staged changes changed after confirmation. Nothing was committed or pushed; review and confirm again.'
 }
 Assert-PushDestinationsUnchanged
-$runner = 'F:\Models\Runner\Runner.ps1'
-if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
-    throw 'The FilmCraft quality gate runner is unavailable. Nothing was committed or pushed.'
+$unstagedChanges = @(& git -C $repo diff --name-only 2>$null)
+$unstagedExit = $LASTEXITCODE
+if ($unstagedExit -ne 0) {
+    throw 'Could not inspect unstaged changes. Nothing was committed or pushed.'
 }
-& $runner 'cargo xtask ci' -W $repo
-if ($LASTEXITCODE -ne 0) {
+$untrackedChanges = @(& git -C $repo ls-files --others --exclude-standard 2>$null)
+$untrackedExit = $LASTEXITCODE
+if ($untrackedExit -ne 0) {
+    throw 'Could not inspect untracked changes. Nothing was committed or pushed.'
+}
+$workingTreeChanges = @($unstagedChanges + $untrackedChanges | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+if ($workingTreeChanges.Count -gt 0) {
+    throw "Unstaged or untracked changes exist. Stage or discard these paths before publishing; the quality gate runs on the working tree. Nothing was committed or pushed:`n$($workingTreeChanges -join "`n")"
+}
+$gateExitCode = 1
+Push-Location -LiteralPath $repo
+try {
+    & cargo xtask ci
+    $gateExitCode = $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}
+if ($gateExitCode -ne 0) {
     throw 'The FilmCraft quality gate failed. Nothing was committed or pushed.'
 }
 $currentBranch = & git -C $repo branch --show-current 2>$null
@@ -132,19 +150,24 @@ if ([string]::IsNullOrWhiteSpace($CommitBody)) {
     & git -C $repo commit -m $CommitTitle -m $CommitBody
 }
 if ($LASTEXITCODE -ne 0) { throw 'Commit failed; nothing was pushed.' }
-$committedTree = (& git -C $repo rev-parse 'HEAD^{tree}').Trim()
-$committedParent = (& git -C $repo rev-parse 'HEAD^').Trim()
-if ($LASTEXITCODE -ne 0 -or $committedTree -cne $stagedTreeBeforeConfirmation -or $committedParent -cne $headBeforeConfirmation) {
-    throw 'A commit hook changed the committed tree or parent. The commit is local; nothing was pushed.'
-}
 $verifiedCommit = (& git -C $repo rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($verifiedCommit)) {
-    throw 'Could not verify the committed revision. The commit is local; nothing was pushed.'
+$commitExit = $LASTEXITCODE
+if ($commitExit -ne 0 -or [string]::IsNullOrWhiteSpace($verifiedCommit)) {
+    throw 'Could not identify the committed revision. The commit is local; nothing was pushed.'
+}
+$committedTree = (& git -C $repo rev-parse "${verifiedCommit}^{tree}").Trim()
+$treeExit = $LASTEXITCODE
+$committedParent = (& git -C $repo rev-parse "${verifiedCommit}^").Trim()
+$parentExit = $LASTEXITCODE
+if ($treeExit -ne 0 -or $parentExit -ne 0 -or $committedTree -cne $stagedTreeBeforeConfirmation -or $committedParent -cne $headBeforeConfirmation) {
+    throw 'A commit hook changed the committed tree or parent. The commit is local; nothing was pushed.'
 }
 
 Assert-PushDestinationsUnchanged
-& git -C $repo push --no-follow-tags origin "${verifiedCommit}:refs/heads/${branch}"
-if ($LASTEXITCODE -ne 0) { throw 'Commit succeeded, but pushing failed. The commit is still local.' }
+foreach ($pushUrl in $pushUrls) {
+    & git -C $repo push --no-follow-tags $pushUrl "${verifiedCommit}:refs/heads/${branch}"
+    if ($LASTEXITCODE -ne 0) { throw 'Commit succeeded, but pushing failed. The commit is still local or only partially published.' }
+}
 
 Write-Host ''
 Write-Host "Published branch '$branch' to the configured FilmCraft fork."

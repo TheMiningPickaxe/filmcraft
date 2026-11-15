@@ -537,6 +537,8 @@ pub struct Session {
     /// The difference to `view_epoch` is unsaved view state, exactly like `saved_revision` is
     /// unsaved content.
     pub saved_view_epoch: u64,
+    /// Live transport position is shown by the UI but excluded from saved ProjectView snapshots.
+    pub(crate) transient_playhead: Option<(ItemId, Tick)>,
     /// Most recent view snapshot sent to autosave. Drags update every frame; spacing these sends
     /// bounds project-view cloning and queued channel work without delaying the final close flush.
     last_view_snapshot_sent: Option<web_time::Instant>,
@@ -668,6 +670,7 @@ impl Session {
             saved_revision: 1,
             view_epoch: 0,
             saved_view_epoch: 0,
+            transient_playhead: None,
             last_view_snapshot_sent: None,
             persistence_view_cache: None,
             path: None,
@@ -1085,6 +1088,7 @@ impl Session {
     /// view without any open sequence leaves the project on its first sequence: a project saved
     /// by a session that never showed one (a script, the CLI) should not open on an empty Timeline.
     pub fn restore_project_view(&mut self, view: filmcraft_project::ProjectView) {
+        self.transient_playhead = None;
         self.state.timeline_ui = view.timeline_ui.checked();
         let mut open: Vec<ItemId> = Vec::new();
         for id in view.open_sequences {
@@ -1193,6 +1197,7 @@ impl Session {
             s.history.merge_key = None;
             s.project = project.clone();
             s.state = state.clone();
+            s.persistence_view_cache = None;
             s.bump();
         };
         match (r, first) {
@@ -1385,26 +1390,41 @@ impl Session {
     }
 
     pub fn playhead(&self) -> Tick {
-        self.state.active_sequence.and_then(|s| self.state.playheads.get(&s).copied()).unwrap_or_default()
+        self.state.active_sequence.and_then(|sequence| self.playhead_for_sequence(sequence)).unwrap_or_default()
+    }
+
+    pub fn playhead_for_sequence(&self, sequence: ItemId) -> Option<Tick> {
+        self.transient_playhead.filter(|(id, _)| *id == sequence).map(|(_, tick)| tick).or_else(|| self.state.playheads.get(&sequence).copied())
+    }
+
+    pub(crate) fn clear_transient_playhead(&mut self) {
+        self.transient_playhead = None;
     }
 
     pub fn set_playhead(&mut self, t: Tick) {
-        self.set_playhead_inner(t, true);
+        self.transient_playhead = None;
+        self.set_playhead_inner(t);
     }
 
     /// Update the playhead while transport is running without recording the moving frame as an
     /// unsaved project-view edit. Stopping playback leaves the saved playhead position intact.
     pub fn set_playhead_during_playback(&mut self, t: Tick) {
-        self.set_playhead_inner(t, false);
+        let Some(sequence) = self.state.active_sequence else { return };
+        let rate = self.active_sequence().map(|sequence| sequence.settings.frame_rate).unwrap_or_default();
+        self.transient_playhead = Some((sequence, rate.snap(t.max(Tick::ZERO))));
+        self.persistence_view_cache = None;
+        if self.state.selection_follows_playhead {
+            sequence_tools::select_under_playhead(self);
+        }
     }
 
-    fn set_playhead_inner(&mut self, t: Tick, mark_view_dirty: bool) {
+    fn set_playhead_inner(&mut self, t: Tick) {
         if let Some(s) = self.state.active_sequence {
             let rate = self.active_sequence().map(|s| s.settings.frame_rate).unwrap_or_default();
             let playhead = rate.snap(t.max(Tick::ZERO));
             let changed = self.state.playheads.get(&s).copied().unwrap_or_default() != playhead;
             self.state.playheads.insert(s, playhead);
-            if changed && mark_view_dirty {
+            if changed {
                 self.view_changed();
             }
             if self.state.selection_follows_playhead {

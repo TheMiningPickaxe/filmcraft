@@ -54,7 +54,12 @@ pub use layout::{Layout, Row, max_pps, max_scroll, min_pps, scroll_to_reveal, ti
 pub(crate) use menus::{CLIP_MENU, EDIT_POINT_TYPES};
 use ruler::draw_top;
 pub use ruler::ruler_steps;
-pub use scrollbars::{controls_listening, custom_control_shortcut_pending, set_track_slider_hidden, set_zoombar_hidden, zoombar_cursor_watchdog};
+#[cfg(test)]
+pub(crate) use scrollbars::controls_listen_key;
+pub use scrollbars::{
+    controls_listening, custom_control_shortcut_pending, custom_control_shortcut_pending_for_events, set_track_slider_hidden, set_zoombar_hidden,
+    zoombar_cursor_watchdog,
+};
 use scrollbars::{vertical_scrollbar, zoom_scrollbar};
 pub use snap::{hit_json, locate};
 pub(super) use snap::{snap, snap_caption};
@@ -916,14 +921,21 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
             app.timeline_auto_scroll_pending = Some((pending_sequence, pending_document, v.target_scroll));
         }
         if fit_completed {
-            app.timeline_view_last = Some(filmcraft_engine::project::SequenceView {
+            let fitted = filmcraft_engine::project::SequenceView {
                 pps: v.target_pps,
                 scroll: v.target_scroll,
                 v_scroll: v.v_scroll,
                 a_scroll: v.a_scroll,
                 video_track_h: v.video_track_h,
                 audio_track_h: v.audio_track_h,
-            });
+            };
+            // The first fit is a display default. Later fits are explicit view changes and
+            // must be exchanged with the project before marking the local snapshot current.
+            if app.timeline_view_last.is_some() {
+                app.session.state.timeline_views.insert(seq_id, fitted);
+                app.session.view_changed();
+            }
+            app.timeline_view_last = Some(fitted);
         }
     }
 }
@@ -1754,6 +1766,56 @@ mod zoom_ceiling_animation_tests {
         let v = &app.ui.timeline;
         assert!(v.pps < 2500.0);
         assert!((v.scroll + width * 0.5 / v.pps - before).abs() < 1e-9);
+    }
+
+    #[test]
+    fn explicit_fit_replaces_the_stored_view_before_synchronizing() {
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", json!({})).unwrap();
+        let id = session.state.active_sequence.unwrap();
+        let project = session.project.clone();
+        let seq = project.sequence(id).unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.session.state.timeline_views.insert(
+            id,
+            filmcraft_engine::project::SequenceView { pps: 20.0, scroll: 3.0, v_scroll: 0.0, a_scroll: 0.0, video_track_h: 24.0, audio_track_h: 24.0 },
+        );
+        app.timeline_view_last =
+            Some(filmcraft_engine::project::SequenceView { pps: 20.0, scroll: 3.0, v_scroll: 0.0, a_scroll: 0.0, video_track_h: 24.0, audio_track_h: 24.0 });
+        app.ui.timeline.fit_pending = true;
+        app.session.prefs.appearance.animations = false;
+        animate_view(&mut app, &egui::Context::default(), Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 400.0)), id, seq);
+        let stored = app.session.state.timeline_views.get(&id).copied().unwrap();
+        assert_eq!(app.timeline_view_last, Some(stored));
+        assert_eq!(stored.scroll, 0.0);
+        assert_ne!(stored.pps, 20.0);
+
+        // The next synchronization pass must load the fitted view instead of reviving the
+        // stale pre-fit view that was present before the explicit fit.
+        app.timeline_view_of = None;
+        app.ui.timeline.pps = 20.0;
+        app.ui.timeline.target_pps = 20.0;
+        app.ui.timeline.scroll = 3.0;
+        app.ui.timeline.target_scroll = 3.0;
+        app.sync_timeline_view();
+        assert_eq!(app.ui.timeline.target_pps, stored.pps);
+        assert_eq!(app.ui.timeline.target_scroll, stored.scroll);
+        assert_eq!(app.session.state.timeline_views.get(&id).copied(), Some(stored));
+    }
+
+    #[test]
+    fn first_layout_fit_remains_a_display_default() {
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", json!({})).unwrap();
+        let id = session.state.active_sequence.unwrap();
+        let project = session.project.clone();
+        let seq = project.sequence(id).unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.ui.timeline.fit_pending = true;
+        app.timeline_view_last = None;
+        app.session.prefs.appearance.animations = false;
+        animate_view(&mut app, &egui::Context::default(), Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 400.0)), id, seq);
+        assert!(!app.session.state.timeline_views.contains_key(&id));
     }
 }
 

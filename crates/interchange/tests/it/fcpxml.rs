@@ -141,6 +141,42 @@ fn media_cut_off_by_xml_depth_is_complete_when_reached_higher_up() {
 }
 
 #[test]
+fn truncated_children_restore_audio_only_and_negative_lane_references() {
+    let mut media = String::new();
+    for i in 0..64 {
+        media.push_str(&format!(
+            r#"<media id="m{i}" name="M{i}"><sequence format="r1"><spine><ref-clip ref="m{}" offset="0s" start="0s" duration="1s"/></spine></sequence></media>"#,
+            i + 1
+        ));
+    }
+    media.push_str(
+        r#"<media id="m64" name="M64"><sequence format="r1"><spine><asset-clip ref="a0" name="Nested audio" offset="0s" start="0s" duration="1s" srcEnable="audio"/></spine></sequence></media>
+        <asset id="a0" name="Tone" start="0s" duration="10s" hasAudio="1" src="tone.wav"/>
+        <asset id="v0" name="Picture" start="0s" duration="10s" hasVideo="1" src="picture.mov"/>"#,
+    );
+    let xml = format!(
+        r#"<fcpxml version="1.10"><resources><format id="r1" frameDuration="1/24s" width="1920" height="1080"/>{media}</resources>
+        <library><event>
+          <project name="A"><sequence format="r1"><spine>
+            <asset-clip ref="v0" name="Picture holder" offset="0s" start="0s" duration="1s">
+              <spine lane="-2"><ref-clip ref="m0" name="Negative lane" offset="0s" start="0s" duration="1s"/></spine>
+            </asset-clip>
+            <ref-clip ref="m0" name="Audio enabled" offset="1s" start="0s" duration="1s" srcEnable="audio"/>
+          </spine></sequence></project>
+          <project name="B"><sequence format="r1"><spine><ref-clip ref="m63" offset="0s" start="0s" duration="1s"/></spine></sequence></project>
+        </event></library></fcpxml>"#
+    );
+    let (imported, report) = import(xml.as_bytes(), Format::Fcpxml, None).unwrap();
+    assert!(report.mentions("deeper clips were skipped"), "{report}");
+    let sequence = imported.project.sequences().find(|item| item.name == "A").and_then(|item| imported.project.sequence(item.id)).unwrap();
+    let audio: Vec<_> = sequence.audio_tracks.iter().flat_map(|track| &track.items).collect();
+    assert_eq!(audio.len(), 2, "both deferred audio-only references must be restored");
+    assert!(audio.iter().any(|clip| clip.name == "Audio enabled" && clip.link.is_some()));
+    assert!(audio.iter().any(|clip| clip.name == "Negative lane" && clip.link.is_some()));
+    assert!(sequence.audio_tracks.get(1).is_some_and(|track| track.items.iter().any(|clip| clip.name == "Negative lane")));
+}
+
+#[test]
 fn golden_connected_clips() {
     let d = doc();
     assert_eq!(detect(d.as_bytes(), Some("fcpxml")), Some(Format::Fcpxml));

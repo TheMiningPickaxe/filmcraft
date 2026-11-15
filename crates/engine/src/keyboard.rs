@@ -595,7 +595,7 @@ pub fn frame_export_target(s: &Session, p: &Value) -> Result<FrameExportTarget> 
         (v.rate, s.state.source_playhead, Some((v.start, v.end)))
     } else {
         let q = s.project.sequence(item).ok_or(EngineError::NoSequence)?;
-        (q.settings.frame_rate, s.state.playheads.get(&item).copied().unwrap_or_default(), None)
+        (q.settings.frame_rate, s.playhead_for_sequence(item).unwrap_or_default(), None)
     };
     let requested = match p.get("time") {
         None => current,
