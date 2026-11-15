@@ -110,8 +110,10 @@ fn hot_number_editor(
     let edit_id = id.with("edit");
     let select_all_id = id.with("select-all");
     arrows_start_from_the_end(ui, edit_id, buf);
-    // Up/Down step the typed value and commit it, leaving it selected (before the `TextEdit` sees the key)
-    let stepped = step_typed_value(ui, edit_id, buf, value, range, suffix);
+    // A numeric-only field must not let stepping turn a rejected draft into a valid committed
+    // number. Leave Up/Down for the TextEdit when the current draft fails its own validation.
+    let draft_is_valid = !numeric_only || normalize_numeric_input(buf, range.0 < 0.0).is_some();
+    let stepped = if draft_is_valid { step_typed_value(ui, edit_id, buf, value, range, suffix) } else { None };
     let previous_buf = buf.clone();
     let previous_cursor = egui::text_edit::TextEditState::load(ui.ctx(), edit_id).and_then(|state| state.cursor.char_range());
     let r = accessible_name(ui.add(egui::TextEdit::singleline(buf).id(edit_id).desired_width(56.0).font(Tokens::ui(12.0))), label);
@@ -741,6 +743,21 @@ mod tests {
         assert_eq!(normalize_numeric_input("1.2.3", false), None);
         assert_eq!(normalize_numeric_input("1,2.3", false), None);
         assert_eq!(normalize_numeric_input(&"1".repeat(33), false), None);
+    }
+
+    #[test]
+    fn numeric_hot_number_does_not_step_an_invalid_expression_draft() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique("numeric-hot-number");
+        let t = Tokens::for_kind(ThemeKind::Dark);
+        let mut stepped = None;
+        let events = vec![egui::Event::Key { key: egui::Key::ArrowUp, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }];
+        let mut out = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+            ui.data_mut(|data| data.insert_temp(id.with("editing"), "1+2".to_string()));
+            stepped = hot_number_numeric(ui, "Value", id, 1.0, HotNumberOptions::new(1.0, (0.1, 10.0), 1, "", &t)).1;
+        });
+        out.textures_delta.clear();
+        assert_eq!(stepped, None, "Up must not commit a result calculated from a draft the field rejects");
     }
 
     /// The vertical centres of the text shapes `search_field` draws, for a field 22 points tall

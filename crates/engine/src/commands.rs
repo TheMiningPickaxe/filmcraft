@@ -2674,7 +2674,9 @@ fn build() -> Vec<CommandSpec> {
             }
             s.state.selection.clear();
             s.events.push(crate::Event::OpenSequence(id));
-            if changed { s.view_changed(); }
+            if changed {
+                s.view_changed();
+            }
             Ok(Value::Null)
         }),
         cmd!("sequence.close", "Close Sequence", [], None, r#"{"item":id?}"#, has_seq, |s, p| {
@@ -2684,7 +2686,9 @@ fn build() -> Vec<CommandSpec> {
             if s.state.active_sequence == Some(id) {
                 s.state.active_sequence = s.state.open_sequences.last().copied();
             }
-            if changed { s.view_changed(); }
+            if changed {
+                s.view_changed();
+            }
             Ok(Value::Null)
         }),
         cmd!("sequence.closeOthers", "Close Other Timeline Panels", [], None, r#"{"item":id?}"#, has_seq, |s, p| {
@@ -2700,7 +2704,9 @@ fn build() -> Vec<CommandSpec> {
                 s.state.selection.clear();
                 s.events.push(crate::Event::OpenSequence(id));
             }
-            if changed { s.view_changed(); }
+            if changed {
+                s.view_changed();
+            }
             Ok(json!({"closed": closed}))
         }),
         cmd!("sequence.moveTab", "Move Sequence Tab", [], None, r#"{"item":id?,"index":int}"#, has_seq, |s, p| {
@@ -5444,13 +5450,19 @@ fn recover(s: &mut Session, id: Option<&str>) -> Result<Value> {
     let c = per.candidates.get(idx).cloned().ok_or_else(|| bad("file.recover", "no recovery session"))?;
     let saved_at = per.local_time(c.meta.saved_unix);
     let loaded = crate::autosave::load_candidate(&c).map_err(EngineError::Other)?;
-    install_project(s, loaded.project, c.meta.project_path.clone(), false);
+    install_project(s, loaded.project, c.meta.project_path.clone(), !c.meta.dirty);
     if let Some(view) = loaded.view {
         if s.prefs.timeline.restore_open_sequences {
             s.restore_project_view(view);
         } else {
             s.state.timeline_ui = view.timeline_ui.checked();
         }
+    }
+    // The recovered snapshot itself is now the baseline. Preserve whether its view was unsaved
+    // without treating a clean project's view-only change as unsaved project content.
+    s.saved_view_epoch = s.view_epoch;
+    if c.meta.view_dirty {
+        s.view_epoch = s.view_epoch.wrapping_add(1);
     }
     if let Some(seq) = s.state.active_sequence {
         s.events.push(crate::Event::OpenSequence(seq));

@@ -28,6 +28,52 @@ writing them is `crates/format` (`filmcraft-format`); the engine's `file.*` comm
   is on. It is outside the schema version: older builds ignore it, ids that are not sequences and
   numbers out of range are dropped or clamped (a playhead also snaps to a frame of its sequence), and a `view` that cannot be read is ignored (the
   project opens on its first sequence, as it does without one or with no open sequence in it).
+
+### Timeline settings
+
+Project-scoped Timeline settings live in `view.timeline_ui`. Missing fields use the defaults below;
+malformed fields use their own default without discarding the sequence tabs or other settings.
+Numeric values are finite and clamped when a project is opened: playhead range is 0.1–3600 s,
+zoom-bar and track-slider drag speed is 0.1–50× and 0.1–10× respectively, and Maximum Zoom Level
+is 0.05–3 s. Invalid minimap colours return to their listed defaults.
+
+| Field | Default | Meaning |
+|---|---:|---|
+| `smooth_animations` | `false` | Animate zoom-bar changes when application animations are enabled. |
+| `inverted_controls` | `false` | Reverse Timeline wheel and zoom-bar middle-drag directions. |
+| `playhead_side_seconds` | `10.0` | Seconds kept before the playhead when centering it. |
+| `playhead_side_custom` | `false` | Whether the playhead range uses its Custom choice. |
+| `shift_drag_speed` | `1.0` | Zoom-bar Shift-drag speed multiplier. |
+| `shift_drag_custom` | `false` | Whether zoom-bar drag speed uses its Custom choice. |
+| `playhead_centering` | `true` | Keep the playhead centred while zooming with the bar edges. |
+| `zoom_bar_hidden` | `false` | Hide the Timeline zoom bar. View > Unhide Timeline Slider is `Alt+Shift+Z`. |
+| `alternate_slider_position` | `false` | Put the zoom bar above the ruler. |
+| `slider_minimap` | `true` | Show clip indicators in the zoom bar minimap. |
+| `show_whole_timeline` | `true` | Let the minimap cover the full Timeline extent. |
+| `fill_clips` | `false` | Fill minimap clip shapes instead of drawing outlines. |
+| `position_indicator_color` | `"#5895ec"` | Minimap playhead indicator colour. |
+| `prioritise_audio` | `false` | Draw audio above video when their minimap clips overlap. |
+| `video_indicator_color` | `"#64b5f6"` | Minimap video clip colour. |
+| `audio_indicator_color` | `"#2e7d32"` | Minimap audio clip colour. |
+| `offline_indicator_color` | `"#d32f2f"` | Minimap offline-media colour. |
+| `max_zoom_seconds` | `0.4` | Minimum seconds visible in the Timeline. |
+| `max_zoom_custom` | `false` | Whether Maximum Zoom Level uses its Custom choice. |
+| `playhead_side_last_custom` | `15.0` | Last Custom playhead range. |
+| `shift_drag_last_custom` | `1.0` | Last Custom zoom-bar drag speed. |
+| `max_zoom_last_custom` | `0.4` | Last Custom Maximum Zoom Level. |
+| `track_slider_hidden` | `false` | Hide the side track sliders. View > Unhide Track Slider is `Alt+Shift+T`. |
+| `track_slider_smooth` | `false` | Animate track-slider movement. |
+| `track_slider_alternate_position` | `false` | Put track sliders on the opposite side of their tracks. |
+| `track_slider_snap` | `true` | Snap a released track-slider edge to the nearest track boundary. |
+| `track_slider_decouple` | `true` | Move one track-slider edge without mirroring the other. |
+| `show_position_indicator` | `true` | Show the playhead line in the minimap. |
+| `track_slider_shift_drag_speed` | `1.0` | Track-slider Shift-drag speed multiplier. |
+| `track_slider_shift_drag_custom` | `false` | Whether track-slider speed uses its Custom choice. |
+| `track_slider_shift_drag_last_custom` | `1.0` | Last Custom track-slider drag speed. |
+| `control_center_on_playhead` | `""` | Custom Controls binding for centering the playhead; empty keeps the built-in gesture. |
+| `control_explode_slider` | `""` | Custom Controls binding for expanding the zoom slider. |
+| `control_alternate_drag_speed` | `""` | Custom Controls binding for alternate drag speed. |
+| `control_settings` | `""` | Custom Controls binding for opening slider settings. |
 - A coordinate of an effect's point parameter may be `null`. Point parameters use NaN for "auto"
   (the frame centre, or the source centre for `anchor`), and JSON writes NaN as `null`; it reads back
   as "auto". Placing a clip resolves these points at once. An interchange import resolves them
@@ -157,10 +203,12 @@ Preferences are stored in `<data dir>/preferences.json`. The `prefs.*` commands 
 
 Premiere's auto-save can lose up to one interval of work. FilmCraft also keeps a **recovery journal**:
 
-- Whenever the project has unsaved changes, a snapshot is written to
+- Whenever project content or its stored Timeline view has unsaved changes, a snapshot is written to
   `<data dir>/Recovery/<started>-<pid>[-<n>]/snapshot.fcproj`, plus `session.json` (time, revision, project
   name and path). It is written about 1 s after the last edit, or after at most
-  `recoveryIntervalSeconds` while edits keep coming. Saving the project deletes the snapshot.
+  `recoveryIntervalSeconds` while edits keep coming. A view-only change at an already journaled
+  revision writes a small `view-<epoch>.json` sidecar and updates the fingerprint in `session.json`,
+  instead of serializing the project again. Saving the project deletes the recovery files.
 - Each running FilmCraft holds an OS file lock on `<session>/lock`. When the process dies (crash,
   `kill -9`, power loss) the OS releases the lock.
 - At startup, every other session directory whose lock can be taken and that has a snapshot is a
@@ -174,12 +222,16 @@ Premiere's auto-save can lose up to one interval of work. FilmCraft also keeps a
   panel and an error notification; `file.autoSaveStatus` reports `running: false`. Edits remain in
   the open project. Use **File ▸ Save** or **Save As** to save them; the worker is not restarted
   automatically. Ordinary write errors are reported without treating a live worker as stopped.
-- Recovering loads the snapshot as an **unsaved** project with its original path, so Save writes
-  over the original file. The recovered state goes into the new session's own journal before the old
+- Recovering loads the snapshot with its original path, so Save writes over the original file.
+  Recovered content remains unsaved; a view-only recovery keeps content clean and marks only the
+  restored view unsaved. The recovered state goes into the new session's own journal before the old
   journal is deleted. Both the replacement snapshot and its metadata must be successfully written
   for that recovered revision. If journaling is disabled, writing fails, or the worker cannot
   confirm the write, recovery reports an error and retains the original candidate. The recovered
   project remains open and unsaved; use Save or Save As to keep it.
+- Older recovery metadata has no view-overlay fields and remains readable; those candidates use the
+  view embedded in `snapshot.fcproj`. Project-file schema versions are unchanged because the compact
+  recovery sidecar is private to the recovery directory, not part of `.fcproj` files.
 - If removing the old recovery folder fails after the replacement is confirmed, the recovered project
   stays open and the candidate stays listed. The old folder may have been partly removed. Save or use
   Save As before retrying: if the old snapshot remains intact, another recovery can overwrite unsaved edits.

@@ -2,7 +2,6 @@
 //! changes: once the project to open is chosen, the Save Project prompt asks Cancel / Don't Save /
 //! Save before it opens.
 
-use std::path::PathBuf;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 
@@ -119,12 +118,10 @@ impl Driver {
 
 /// A folder for one test holding the demo project saved as `current.fcproj` and `other.fcproj`.
 /// The session is left on `current.fcproj` with nothing unsaved.
-fn projects(d: &mut Driver, test: &str) -> (PathBuf, String, String) {
-    let dir = std::env::temp_dir().join(format!("fc-open-project-prompt-{}-{test}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let current = dir.join("current.fcproj").to_string_lossy().into_owned();
-    let other = dir.join("other.fcproj").to_string_lossy().into_owned();
+fn projects(d: &mut Driver, test: &str) -> (tempfile::TempDir, String, String) {
+    let dir = tempfile::Builder::new().prefix(&format!("fc-open-project-prompt-{test}-")).tempdir().unwrap();
+    let current = dir.path().join("current.fcproj").to_string_lossy().into_owned();
+    let other = dir.path().join("other.fcproj").to_string_lossy().into_owned();
     d.exec("file.saveAs", json!({"path": other}));
     d.exec("file.saveAs", json!({"path": current}));
     assert!(!d.app().session.is_dirty());
@@ -134,7 +131,7 @@ fn projects(d: &mut Driver, test: &str) -> (PathBuf, String, String) {
 #[test]
 fn open_project_save_saves_the_changes_then_opens_the_chosen_project() {
     let mut d = Driver::new();
-    let (dir, current, other) = projects(&mut d, "save");
+    let (_dir, current, other) = projects(&mut d, "save");
     let clip = d.edit();
     d.open_project(&other);
     d.click("openProject.save");
@@ -144,13 +141,12 @@ fn open_project_save_saves_the_changes_then_opens_the_chosen_project() {
     // the change was written to the project it was made in
     d.exec("file.open", json!({"path": current}));
     assert_eq!(d.label(clip), Label::Yellow);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn opening_a_project_prompts_for_unsaved_timeline_view_changes() {
     let mut d = Driver::new();
-    let (dir, current, other) = projects(&mut d, "viewOnly");
+    let (_dir, current, other) = projects(&mut d, "viewOnly");
     d.app().session.state.timeline_ui.zoom_bar_hidden = true;
     d.app().session.project_view_changed();
     assert!(!d.app().session.is_dirty());
@@ -161,14 +157,13 @@ fn opening_a_project_prompts_for_unsaved_timeline_view_changes() {
     d.click("openProject.cancel");
     assert_eq!(d.path(), Some(current));
     assert!(d.app().session.is_view_dirty(), "Cancel preserves the unsaved Timeline settings");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn open_project_failed_save_keeps_the_prompt_and_chosen_project() {
     let mut d = Driver::new();
     let (dir, _, other) = projects(&mut d, "failedSave");
-    let folder = dir.join("current-folder");
+    let folder = dir.path().join("current-folder");
     std::fs::create_dir(&folder).unwrap();
     let current = folder.join("current.fcproj").to_string_lossy().into_owned();
     d.exec("file.saveAs", json!({"path": current}));
@@ -184,7 +179,6 @@ fn open_project_failed_save_keeps_the_prompt_and_chosen_project() {
     assert!(d.app().session.is_dirty());
     assert_eq!(d.label(clip), Label::Yellow);
     assert!(d.app().ui.status.contains(&current), "the status shows the save error: {}", d.app().ui.status);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -192,7 +186,7 @@ fn close_project_and_quit_failed_save_keep_the_prompt() {
     for (command, prompt) in [("file.closeProject", "closeProject"), ("app.quit", "quit")] {
         let mut d = Driver::new();
         let (dir, _, _) = projects(&mut d, prompt);
-        let folder = dir.join("current-folder");
+        let folder = dir.path().join("current-folder");
         std::fs::create_dir(&folder).unwrap();
         let current = folder.join("current.fcproj").to_string_lossy().into_owned();
         d.exec("file.saveAs", json!({"path": current}));
@@ -215,14 +209,13 @@ fn close_project_and_quit_failed_save_keep_the_prompt() {
         assert_eq!(d.label(clip), Label::Yellow, "{command} keeps the change");
         assert!(d.app().ui.status.contains(&current), "{command} shows the save error: {}", d.app().ui.status);
         assert!(!d.app().quit_confirmed, "{command} does not confirm a quit");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
 #[test]
 fn home_recent_with_unsaved_changes_asks_first() {
     let mut d = Driver::new();
-    let (dir, current, other) = projects(&mut d, "homeRecent");
+    let (_dir, current, other) = projects(&mut d, "homeRecent");
     let first = d.app().session.active_sequence().unwrap().video_tracks[0].items[0].clone();
     let clip = d.edit();
     d.click("header.home");
@@ -245,7 +238,6 @@ fn home_recent_with_unsaved_changes_asks_first() {
     // the project the change was made in is as it was saved
     d.exec("file.open", json!({"path": current}));
     assert_eq!(d.label(clip), first.label);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -254,7 +246,7 @@ fn home_recent_save_on_a_never_saved_project_switches_to_edit_once_it_opens() {
     let (dir, _, other) = projects(&mut d, "homeNeverSaved");
     d.app().session.path = None;
     d.edit();
-    let saved = dir.join("saved.fcproj").to_string_lossy().into_owned();
+    let saved = dir.path().join("saved.fcproj").to_string_lossy().into_owned();
     d.app().hooks.pick_save = Some(Box::new(move |_| Some(saved.clone())));
     d.click("header.home");
     let i = d.recent(&other);
@@ -264,13 +256,12 @@ fn home_recent_save_on_a_never_saved_project_switches_to_edit_once_it_opens() {
     assert!(d.app().ui.clip_dialog.is_none());
     assert_eq!(d.path(), Some(other));
     assert_eq!(d.app().ui.mode, Mode::Edit);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn open_project_asks_when_the_open_dialog_answers_in_a_later_frame() {
     let mut d = Driver::new();
-    let (dir, current, other) = projects(&mut d, "runner");
+    let (_dir, current, other) = projects(&mut d, "runner");
     d.edit();
     // a host that shows file dialogs without blocking (the desktop app on Linux)
     let answer: Arc<Mutex<Option<Sender<Vec<String>>>>> = Arc::default();
@@ -287,7 +278,6 @@ fn open_project_asks_when_the_open_dialog_answers_in_a_later_frame() {
     assert_eq!(d.path(), Some(current));
     d.click("openProject.dontSave");
     assert_eq!(d.path(), Some(other));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -296,7 +286,7 @@ fn open_project_save_waits_for_a_save_dialog_answered_later() {
     let (dir, _, other) = projects(&mut d, "saveLater");
     d.app().session.path = None;
     let clip = d.edit();
-    let saved = dir.join("saved.fcproj").to_string_lossy().into_owned();
+    let saved = dir.path().join("saved.fcproj").to_string_lossy().into_owned();
     // a host that shows file dialogs without blocking (the desktop app on Linux), answered by hand
     let asked: Arc<Mutex<Vec<(FileDialog, Sender<Vec<String>>)>>> = Arc::default();
     let a = asked.clone();
@@ -319,7 +309,7 @@ fn open_project_save_waits_for_a_save_dialog_answered_later() {
     assert!(d.has("openProject.save"));
     assert_eq!(d.path(), None);
     // the save fails: the prompt stays, with the reason in the status line
-    let blocker = dir.join("not-a-folder");
+    let blocker = dir.path().join("not-a-folder");
     std::fs::write(&blocker, b"").unwrap();
     d.click("openProject.save");
     answer(&mut d, vec![blocker.join("saved.fcproj").to_string_lossy().into_owned()]);
@@ -338,7 +328,7 @@ fn open_project_save_waits_for_a_save_dialog_answered_later() {
     d.exec("file.open", json!({"path": saved}));
     assert_eq!(d.label(clip), Label::Yellow, "the change was saved");
     // a new project changed while the Save dialog is open: the late answer saves and opens nothing
-    let late = dir.join("late.fcproj").to_string_lossy().into_owned();
+    let late = dir.path().join("late.fcproj").to_string_lossy().into_owned();
     d.app().session.path = None;
     d.exec("file.newBin", json!({"name": "Late"}));
     assert!(d.app().session.is_dirty());
@@ -352,13 +342,12 @@ fn open_project_save_waits_for_a_save_dialog_answered_later() {
     assert_eq!(d.path(), None);
     assert!(d.app().session.is_dirty());
     assert!(d.app().ui.clip_dialog.is_none());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn a_save_prompt_closes_when_a_script_replaces_its_project() {
     let mut d = Driver::new();
-    let (dir, _, other) = projects(&mut d, "replaced");
+    let (_dir, _, other) = projects(&mut d, "replaced");
     // Open Project
     d.edit();
     d.open_project(&other);
@@ -385,5 +374,4 @@ fn a_save_prompt_closes_when_a_script_replaces_its_project() {
     assert!(d.app().ui.clip_dialog.is_none());
     assert!(!d.app().quit_confirmed);
     assert!(d.app().session.is_dirty());
-    let _ = std::fs::remove_dir_all(&dir);
 }

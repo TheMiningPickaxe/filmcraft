@@ -105,6 +105,7 @@ impl FilmcraftApp {
             last_timeline_width: 1000.0,
             timeline_view_of: None,
             timeline_view_document: ime_document_epoch,
+            timeline_auto_scroll_pending: false,
             pending_timeline_drop: None,
             clip_mismatch: None,
             file_drag_hover: None,
@@ -372,7 +373,7 @@ impl FilmcraftApp {
         // observed as this pass's editor.
         self.ime_drawn_editor = None;
         // Only an actual pass counts toward screenshot settlement; hidden logic ticks do not draw.
-        self.timeline_still = if self.ui.timeline.animating() { 0 } else { self.timeline_still.saturating_add(1) };
+        self.timeline_still = next_timeline_still(self.timeline_still, self.ui.timeline.animating(), self.tl.track_anim.is_some());
         // This is a real UI pass: the one synthetic step offered to raw_input_hook has been fed to
         // egui now. A hidden logic tick never reaches this point and keeps it pending.
         self.synthetic_pending_step = None;
@@ -613,5 +614,21 @@ mod lifecycle_synthetic_tests {
         eframe::App::raw_input_hook(&mut app, &ctx, &mut preserved);
         assert_eq!(texts(&preserved.events), 1, "the preserved raw input must keep exactly one copy");
         assert_eq!(app.synthetic_pending_step.as_ref().map(Vec::len), Some(2), "the queue did not advance");
+    }
+}
+
+fn next_timeline_still(still: u32, timeline_animating: bool, track_sliders_animating: bool) -> u32 {
+    if timeline_animating || track_sliders_animating { 0 } else { still.saturating_add(1) }
+}
+
+#[cfg(test)]
+mod capture_settlement_tests {
+    use super::next_timeline_still;
+
+    #[test]
+    fn side_slider_animation_resets_timeline_capture_settlement() {
+        assert_eq!(next_timeline_still(8, false, true), 0);
+        assert_eq!(next_timeline_still(8, true, false), 0);
+        assert_eq!(next_timeline_still(8, false, false), 9);
     }
 }

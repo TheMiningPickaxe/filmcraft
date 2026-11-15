@@ -83,8 +83,8 @@ pub struct TimelineUiSettings {
     /// once a zoom out has brought it into view (gravity), and never lets it slip off while the
     /// user keeps nudging the edges. Escaped only by dragging the slider's middle manually.
     pub playhead_centering: bool,
-    /// Hide Slider: the zoom scroll bar is gone and the tracks fill its space. The hide dialog's
-    /// Unhide button and the Timeline context menu can bring it back.
+    /// Hide Slider: the zoom scroll bar is gone and the tracks fill its space. View > Unhide
+    /// Timeline Slider (Alt+Shift+Z), the hide dialog, and the Timeline context menu restore it.
     pub zoom_bar_hidden: bool,
     /// Alternate Slider Position: the zoom bar sits at the top edge, just above the ruler,
     /// instead of at the bottom edge.
@@ -123,7 +123,8 @@ pub struct TimelineUiSettings {
     #[serde(default = "default_max_zoom_custom")]
     pub max_zoom_last_custom: f64,
     /// Hide Slider (track sliders): the side track sliders are gone and the tracks fill their
-    /// column. The hide dialog's Unhide button and the Timeline context menu can bring them back.
+    /// column. View > Unhide Track Slider (Alt+Shift+T), the hide dialog, and the Timeline context
+    /// menu restore them.
     pub track_slider_hidden: bool,
     /// Smooth animation while moving a track slider.
     pub track_slider_smooth: bool,
@@ -281,8 +282,8 @@ fn lenient_timeline_ui<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Timelin
         match values.get(name) {
             Some(value) => match serde_json::from_value::<T>(value.clone()) {
                 Ok(value) => value,
-                Err(error) => {
-                    log::warn!("invalid timeline UI setting `{name}`; using its default: {error}");
+                Err(_) => {
+                    log::warn!("invalid timeline UI setting `{name}`; could not decode value, using its default");
                     default.clone()
                 }
             },

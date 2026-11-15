@@ -61,20 +61,77 @@ fn start(s: &mut Session, data: &std::path::Path) {
 }
 
 #[test]
-fn view_only_changes_do_not_write_recovery_snapshots() {
+fn clean_project_view_changes_are_recovered_without_dirtying_content() {
     let d = temp_dir("view-only-recovery");
-    let mut s = Session::default();
+    let mut crashed = Session::default();
+    start(&mut crashed, &d);
+    crashed.state.timeline_ui.inverted_controls = true;
+    crashed.project_view_changed();
+    assert!(!crashed.is_dirty());
+    assert!(crashed.is_view_dirty());
+    let persistence = crashed.persistence.as_ref().unwrap();
+    assert_eq!(persistence.flush().unwrap(), Some(crashed.revision));
+    let meta: autosave::JournalMeta = serde_json::from_slice(&std::fs::read(persistence.session_dir.join("session.json")).unwrap()).unwrap();
+    assert!(!meta.dirty, "content remains clean");
+    assert!(meta.view_dirty, "the unsaved view makes this snapshot recoverable");
+    crashed.persistence.take().unwrap().simulate_crash();
+
+    let mut recovered = Session::default();
+    start(&mut recovered, &d);
+    assert_eq!(recovered.recovery_candidates().len(), 1);
+    recovered.execute("file.recover", json!({})).unwrap();
+    assert!(recovered.state.timeline_ui.inverted_controls);
+    assert!(!recovered.is_dirty(), "view-only recovery does not dirty project content");
+    assert!(recovered.is_view_dirty(), "the recovered view still needs saving to the project file");
+    recovered.shutdown();
+}
+
+#[test]
+fn recovery_snapshot_reuses_the_project_view_after_content_only_edits() {
+    let d = temp_dir("view-cache");
+    let mut s = demo();
     start(&mut s, &d);
+    s.state.timeline_ui.inverted_controls = true;
+    s.project_view_changed();
+    let cached = s.persistence_view_cache.clone();
+    let view_epoch = s.view_epoch;
 
-    s.view_changed();
-    s.sync_persistence();
+    s.execute("sequence.addEdit", json!({"seconds": 1.5})).unwrap();
 
-    let persistence = s.persistence.as_ref().unwrap();
-    assert_eq!(persistence.flush().unwrap(), None);
-    assert!(!persistence.session_dir.join("snapshot.fcproj").exists());
-
+    assert_eq!(s.view_epoch, view_epoch, "content edits do not invalidate the project view");
+    assert_eq!(s.persistence_view_cache, cached, "the last view snapshot is reused while only content changes");
     s.shutdown();
-    std::fs::remove_dir_all(d).unwrap();
+}
+
+#[test]
+fn dirty_content_view_changes_write_a_compact_recovery_overlay() {
+    let d = temp_dir("view-overlay");
+    let mut crashed = demo();
+    start(&mut crashed, &d);
+    crashed.execute("sequence.addEdit", json!({"seconds": 1.5})).unwrap();
+    let revision = crashed.revision;
+    wait_for("content journal", || journaled(&mut crashed) == revision);
+    let persistence = crashed.persistence.as_ref().unwrap();
+    let session_dir = persistence.session_dir.clone();
+    let base = std::fs::read(session_dir.join("snapshot.fcproj")).unwrap();
+
+    crashed.state.timeline_ui.inverted_controls = true;
+    crashed.last_view_snapshot_sent = Some(web_time::Instant::now() - std::time::Duration::from_secs(1));
+    crashed.project_view_changed();
+    assert_eq!(crashed.persistence.as_ref().unwrap().flush().unwrap(), Some(revision));
+    assert_eq!(std::fs::read(session_dir.join("snapshot.fcproj")).unwrap(), base, "view-only updates leave the encoded project snapshot untouched");
+    let meta: autosave::JournalMeta = serde_json::from_slice(&std::fs::read(session_dir.join("session.json")).unwrap()).unwrap();
+    assert_eq!(meta.view_snapshot_epoch, Some(crashed.view_epoch));
+    assert!(meta.view_fingerprint.is_some());
+    crashed.persistence.take().unwrap().simulate_crash();
+
+    let mut recovered = Session::default();
+    start(&mut recovered, &d);
+    assert_eq!(recovered.recovery_candidates().len(), 1);
+    recovered.execute("file.recover", json!({})).unwrap();
+    assert!(recovered.state.timeline_ui.inverted_controls, "recovery applies the compact view overlay");
+    assert!(recovered.is_dirty(), "the unsaved content remains dirty");
+    recovered.shutdown();
 }
 
 #[test]
@@ -277,6 +334,32 @@ fn crash_recovery_end_to_end() {
 }
 
 #[test]
+fn recovery_restores_timeline_settings_when_sequence_tab_restore_is_disabled() {
+    let d = temp_dir("recover-no-open-tabs");
+    let mut a = demo();
+    start(&mut a, &d);
+    let first = a.state.active_sequence.unwrap();
+    a.execute("file.newSequence", json!({"name": "Recovery tab"})).unwrap();
+    a.state.timeline_ui.inverted_controls = true;
+    a.project_view_changed();
+    a.execute("sequence.addEdit", json!({"seconds": 1.5})).unwrap();
+    let revision = a.revision;
+    wait_for("journal", || journaled(&mut a) == revision);
+    a.persistence.take().unwrap().simulate_crash();
+
+    let mut recovered = Session::default();
+    start(&mut recovered, &d);
+    recovered.prefs.timeline.restore_open_sequences = false;
+    recovered.execute("file.recover", json!({})).unwrap();
+
+    assert!(recovered.state.timeline_ui.inverted_controls, "recovery still restores Timeline settings");
+    assert_eq!(recovered.state.open_sequences, [first], "the preference keeps only the first sequence tab");
+    assert_eq!(recovered.state.active_sequence, Some(first));
+    assert!(recovered.state.timeline_views.is_empty(), "sequence tab views are not restored when disabled");
+    recovered.shutdown();
+}
+
+#[test]
 fn quitting_with_unsaved_changes_keeps_them_for_next_launch() {
     let d = temp_dir("quitdirty");
     let mut a = demo();
@@ -441,6 +524,24 @@ fn auto_save_ring_rotates_and_can_save_the_project() {
     assert_eq!(*t.project, *s.project);
     s.shutdown();
     let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn auto_save_now_skips_clean_project_view_only_changes() {
+    let d = temp_dir("clean-view-auto-save");
+    let mut s = demo();
+    start(&mut s, &d);
+    s.execute("file.saveAs", json!({"path": d.join("saved.fcproj").to_string_lossy()})).unwrap();
+    s.state.timeline_ui.inverted_controls = true;
+    s.project_view_changed();
+    assert!(!s.is_dirty());
+    assert!(s.is_view_dirty());
+
+    let result = s.execute("file.autoSaveNow", json!({})).unwrap();
+
+    assert!(result["path"].is_null(), "a view-only change is not an auto-save of project content");
+    assert!(!d.join("Auto-Save").exists(), "no auto-save file is created for clean content");
+    s.shutdown();
 }
 
 #[test]

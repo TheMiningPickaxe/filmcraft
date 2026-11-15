@@ -874,6 +874,13 @@ fn snap_in_program_monitor_follows_the_modifier_with_the_pointer_still() {
 }
 
 #[test]
+fn first_automatic_timeline_fit_does_not_dirty_the_project_view() {
+    let mut d = Driver::demo();
+    d.frames(120);
+    assert!(!d.harness.state_mut().session.is_view_dirty(), "the display-only first fit is not an unsaved project view change");
+}
+
+#[test]
 fn elements_wait_for_the_timeline_zoom_to_settle() {
     let mut d = Driver::demo();
     let project = d.exec("project.inspect", json!({}));

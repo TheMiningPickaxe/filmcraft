@@ -48,6 +48,91 @@ fn ui_set_controls_track_slider_settings_and_rejects_hostile_speed_values() {
     assert_eq!(d.app().session.view_epoch, view_epoch, "ignored settings do not change the project view");
 }
 
+#[test]
+fn ui_set_preset_numeric_values_persists_custom_mode_changes() {
+    let mut d = Driver::demo();
+    {
+        let settings = &mut d.app().session.state.timeline_ui;
+        settings.playhead_side_custom = true;
+        settings.shift_drag_custom = true;
+        settings.max_zoom_custom = true;
+        settings.track_slider_shift_drag_custom = true;
+    }
+    let view_epoch = d.app().session.view_epoch;
+    d.ok(
+        "ui.set",
+        json!({"timeline": {
+            "playheadSideSeconds": 10.0,
+            "shiftDragSpeed": 1.0,
+            "maxZoomLevel": 0.4,
+            "trackSliderShiftDragSpeed": 1.0
+        }}),
+    );
+    let settings = &d.app().session.state.timeline_ui;
+    assert!(!settings.playhead_side_custom);
+    assert!(!settings.shift_drag_custom);
+    assert!(!settings.max_zoom_custom);
+    assert!(!settings.track_slider_shift_drag_custom);
+    assert_eq!(d.app().session.view_epoch, view_epoch.wrapping_add(1), "mode-only changes to numeric settings must persist");
+
+    {
+        let settings = &mut d.app().session.state.timeline_ui;
+        settings.playhead_side_seconds = 17.5;
+        settings.playhead_side_custom = true;
+        settings.playhead_side_last_custom = 12.0;
+        settings.shift_drag_speed = 2.5;
+        settings.shift_drag_custom = true;
+        settings.shift_drag_last_custom = 1.0;
+        settings.max_zoom_seconds = 0.25;
+        settings.max_zoom_custom = true;
+        settings.max_zoom_last_custom = 0.1;
+        settings.track_slider_shift_drag_speed = 2.5;
+        settings.track_slider_shift_drag_custom = true;
+        settings.track_slider_shift_drag_last_custom = 1.0;
+    }
+    let view_epoch = d.app().session.view_epoch;
+    d.ok(
+        "ui.set",
+        json!({"timeline": {
+            "playheadSideSeconds": 17.5,
+            "shiftDragSpeed": 2.5,
+            "maxZoomLevel": 0.25,
+            "trackSliderShiftDragSpeed": 2.5
+        }}),
+    );
+    let settings = &d.app().session.state.timeline_ui;
+    assert_eq!(settings.playhead_side_last_custom, 17.5);
+    assert_eq!(settings.shift_drag_last_custom, 2.5);
+    assert_eq!(settings.max_zoom_last_custom, 0.25);
+    assert_eq!(settings.track_slider_shift_drag_last_custom, 2.5);
+    assert_eq!(
+        d.app().session.view_epoch,
+        view_epoch.wrapping_add(1),
+        "remembered Custom-value changes must persist even when the displayed values are unchanged"
+    );
+}
+
+#[test]
+fn playback_auto_scroll_does_not_mark_the_project_view_changed() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"timeline": {"pps": 400.0, "scroll": 0.0}}));
+    d.frames(3);
+    d.exec("playhead.set", json!({"seconds": 8.0}));
+    d.frames(3);
+    d.ok("ui.set", json!({"timeline": {"scroll": 0.0}}));
+    let _ = d.view();
+    let view_epoch = d.app().session.view_epoch;
+    d.app().ui.timeline.follow = true;
+    d.app().play(0.0);
+    for _ in 0..3 {
+        d.frames(1);
+        assert_eq!(d.app().session.view_epoch, view_epoch, "playback-driven scrolling alone is not a saved view edit");
+    }
+    d.app().playback.playing = false;
+    assert!(d.app().ui.timeline.target_scroll > 0.0, "playback following should scroll the Timeline");
+    assert_eq!(d.app().session.view_epoch, view_epoch, "playback-driven scrolling alone is not a saved view edit");
+}
+
 struct Driver {
     harness: Harness<'static, FilmcraftApp>,
     tx: Sender<ControlRequest>,
@@ -248,14 +333,17 @@ fn the_wheel_moves_the_timeline_sideways_and_option_wheel_zooms() {
     assert_eq!((v, a), (0.0, 0.0));
     d.wheel(0.2, 0.0, -20.0, json!({"alt": true}));
     assert!((d.view().1 - 48.0).abs() < 1e-6, "and out again");
-    // a sideways gesture (trackpad swipe, tilt wheel) is sideways whatever is held; Shift is the
-    // wheel a lot faster
+    // an unmodified horizontal-only gesture is not remapped to the Timeline's time axis
     d.ok("ui.set", json!({"timeline": {"pps": 50.0, "scroll": 4.0}}));
     d.frames(3);
-    d.wheel(0.2, -50.0, 5.0, none());
-    assert_eq!(d.view(), (5.0, 50.0, 0.0, 0.0));
+    d.wheel(0.2, -50.0, 0.0, none());
+    assert_eq!(d.view(), (4.0, 50.0, 0.0, 0.0));
+    d.wheel(0.2, -50.0, 0.0, json!({"shift": true}));
+    assert_eq!(d.view(), (14.0, 50.0, 0.0, 0.0), "Shift remaps horizontal-only input and keeps its 10x speed");
+    d.ok("ui.set", json!({"timeline": {"scroll": 4.0}}));
+    d.frames(3);
     d.wheel(0.2, 0.0, -50.0, json!({"shift": true}));
-    assert_eq!(d.view(), (15.0, 50.0, 0.0, 0.0), "Shift + wheel is ten times faster");
+    assert_eq!(d.view(), (14.0, 50.0, 0.0, 0.0), "Shift + wheel is ten times faster");
 }
 
 /// Settings ▸ Timeline ▸ Timeline Mouse Scrolling "Horizontal": the wheel moves the Timeline
@@ -845,6 +933,32 @@ fn timeline_slider_settings_is_the_menus_row_while_the_bar_is_hidden() {
     d.ok("ui.click", json!({"id": "timeline.zoomBar.settings.unhideSlider"}));
     d.frames(2);
     assert!(!d.app().session.state.timeline_ui.zoom_bar_hidden, "Unhide Slider brings the bar back");
+}
+
+#[test]
+fn lowering_the_popup_zoom_ceiling_keeps_the_visible_center_in_place() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(2);
+
+    let width = f64::from(d.app().last_timeline_width.max(1.0));
+    let (old_pps, scroll) = (4_000.0, 25.0);
+    let center = scroll + width * 0.5 / old_pps;
+    d.app().ui.timeline.pps = old_pps;
+    d.app().ui.timeline.target_pps = old_pps;
+    d.app().ui.timeline.scroll = scroll;
+    d.app().ui.timeline.target_scroll = scroll;
+    d.app().session.state.timeline_ui.max_zoom_seconds = 1.5;
+
+    d.frames(3);
+
+    let view = &d.app().ui.timeline;
+    assert!(view.pps < old_pps && view.target_pps < old_pps, "both zoom values obey the lower ceiling");
+    let current_center = view.scroll + width * 0.5 / view.pps;
+    let target_center = view.target_scroll + width * 0.5 / view.target_pps;
+    assert!((current_center - center).abs() < 1e-6, "current center moved: {center} -> {current_center}");
+    assert!((target_center - center).abs() < 1e-6, "target center moved: {center} -> {target_center}");
 }
 
 /// Both slider menus keep their Controls flyout in its original place, alongside their own options.

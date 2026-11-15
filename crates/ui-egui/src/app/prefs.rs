@@ -1,5 +1,14 @@
 use super::{FilmcraftApp, ThemeKind, Tokens, dock, i18n, state, theme};
 
+fn playback_scroll_only(last: filmcraft_engine::project::SequenceView, shown: filmcraft_engine::project::SequenceView) -> bool {
+    last.scroll != shown.scroll
+        && last.pps == shown.pps
+        && last.v_scroll == shown.v_scroll
+        && last.a_scroll == shown.a_scroll
+        && last.video_track_h == shown.video_track_h
+        && last.audio_track_h == shown.audio_track_h
+}
+
 impl FilmcraftApp {
     /// Show theme `k` with the Settings ▸ Appearance highlight colour and contrast.
     pub fn set_theme(&mut self, ctx: &egui::Context, k: ThemeKind) {
@@ -185,6 +194,7 @@ impl FilmcraftApp {
     /// - and takes over a view that was changed in the session (by a command or the control
     ///   channel).
     pub(super) fn sync_timeline_view(&mut self) {
+        let playback_scroll_pending = std::mem::replace(&mut self.timeline_auto_scroll_pending, false);
         let Some(active) = self.session.state.active_sequence else {
             self.timeline_view_of = None;
             self.tl.track_anim = None;
@@ -230,13 +240,31 @@ impl FilmcraftApp {
             self.session.state.timeline_views.insert(active, shown);
             self.timeline_view_last = Some(shown);
         } else if self.timeline_view_last != Some(shown) {
+            let playback_scroll_only = playback_scroll_pending && self.timeline_view_last.is_some_and(|last| playback_scroll_only(last, shown));
             self.session.state.timeline_views.insert(active, shown);
             self.timeline_view_last = Some(shown);
-            self.session.view_changed();
+            if !playback_scroll_only {
+                self.session.view_changed();
+            }
         } else if let Some(s) = stored.filter(|s| *s != shown).and_then(|s| s.checked()) {
             show(v, s);
             self.timeline_view_last = Some(s);
             self.session.state.timeline_views.insert(active, s);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::playback_scroll_only;
+    use filmcraft_engine::project::SequenceView;
+
+    #[test]
+    fn playback_scroll_detection_requires_scroll_to_be_the_only_change() {
+        let last = SequenceView { pps: 1.0, scroll: 0.0, v_scroll: 0.0, a_scroll: 0.0, video_track_h: 24.0, audio_track_h: 24.0 };
+        let scrolled = SequenceView { scroll: last.scroll + 1.0, ..last };
+        assert!(playback_scroll_only(last, scrolled));
+        assert!(!playback_scroll_only(last, SequenceView { pps: last.pps + 1.0, scroll: last.scroll + 1.0, ..last }));
+        assert!(!playback_scroll_only(last, last));
     }
 }

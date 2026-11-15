@@ -255,9 +255,14 @@ fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outc
 #[allow(clippy::cognitive_complexity)]
 fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Result<(), String> {
     let Some(tl) = p.get("timeline") else { return Ok(()) };
-    for (key, min, max) in
-        [("playheadSideSeconds", 0.1, 3600.0), ("shiftDragSpeed", 0.1, 50.0), ("maxZoomLevel", 0.05, 3.0), ("trackSliderShiftDragSpeed", 0.1, 10.0), ("videoTrackHeight", 8.0, 600.0), ("audioTrackHeight", 8.0, 600.0)]
-    {
+    for (key, min, max) in [
+        ("playheadSideSeconds", 0.1, 3600.0),
+        ("shiftDragSpeed", 0.1, 50.0),
+        ("maxZoomLevel", 0.05, 3.0),
+        ("trackSliderShiftDragSpeed", 0.1, 10.0),
+        ("videoTrackHeight", 8.0, 600.0),
+        ("audioTrackHeight", 8.0, 600.0),
+    ] {
         if let Some(value) = tl.get(key) {
             let valid = value.as_f64().is_some_and(|v| v.is_finite() && (min..=max).contains(&v));
             if !valid {
@@ -274,6 +279,7 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         }
     }
     let mut view_settings_changed = false;
+    let timeline_settings_before = app.session.state.timeline_ui.clone();
     // hostile control parameters: NaN or infinite zoom/scroll would poison every rect in the
     // Timeline, so only finite, positive values are accepted. The zoom ceiling is applied by
     // `animate_view` every frame (with the measured Timeline width -- this early in a session
@@ -296,7 +302,8 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         view_settings_changed |= app.session.state.timeline_ui.playhead_side_seconds != v;
         app.session.state.timeline_ui.playhead_side_seconds = v;
         let custom = ![3.0, 5.0, 10.0, 30.0].contains(&v);
-        view_settings_changed |= app.session.state.timeline_ui.playhead_side_custom != custom || (custom && app.session.state.timeline_ui.playhead_side_last_custom != v);
+        view_settings_changed |=
+            app.session.state.timeline_ui.playhead_side_custom != custom || (custom && app.session.state.timeline_ui.playhead_side_last_custom != v);
         if custom {
             app.session.state.timeline_ui.playhead_side_last_custom = v;
         }
@@ -306,7 +313,8 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         view_settings_changed |= app.session.state.timeline_ui.shift_drag_speed != v;
         app.session.state.timeline_ui.shift_drag_speed = v;
         let custom = ![0.25, 0.5, 1.0, 2.0].contains(&v);
-        view_settings_changed |= app.session.state.timeline_ui.shift_drag_custom != custom || (custom && app.session.state.timeline_ui.shift_drag_last_custom != v);
+        view_settings_changed |=
+            app.session.state.timeline_ui.shift_drag_custom != custom || (custom && app.session.state.timeline_ui.shift_drag_last_custom != v);
         if custom {
             app.session.state.timeline_ui.shift_drag_last_custom = v;
         }
@@ -420,6 +428,7 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
     if let Some(v) = tl.get("showAudioNames").and_then(Value::as_bool) {
         app.ui.timeline.show_audio_names = v;
     }
+    view_settings_changed |= timeline_settings_before != app.session.state.timeline_ui;
     if view_settings_changed {
         app.session.project_view_changed();
     }

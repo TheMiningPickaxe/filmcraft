@@ -60,8 +60,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     uic!("view.zoomIn", "Zoom In", ["View"], Some("=")),
     uic!("view.zoomOut", "Zoom Out", ["View"], Some("-")),
     uic!("view.zoomToSequence", "Zoom to Sequence", ["View"], Some("\\")),
-    uic!("view.unhideTimelineSlider", "Unhide Timeline Slider", ["View"], None),
-    uic!("view.unhideTrackSlider", "Unhide Track Slider", ["View"], None),
+    uic!("view.unhideTimelineSlider", "Unhide Timeline Slider", ["View"], Some("Alt+Shift+Z")),
+    uic!("view.unhideTrackSlider", "Unhide Track Slider", ["View"], Some("Alt+Shift+T")),
     uic!("view.resetInterfaceZoom", "Reset Interface Zoom", ["View"], None),
     uic!("view.playbackRes.full", "Full", ["View", "Playback Resolution"], None),
     uic!("view.playbackRes.half", "1/2", ["View", "Playback Resolution"], None),
@@ -1594,13 +1594,14 @@ mod tests {
     #[test]
     fn hidden_timeline_sliders_can_be_restored_from_the_view_menu() {
         let mut session = filmcraft_engine::Session::default();
+        session.shortcuts.register_external(external_commands());
         assert!(!menu_items_for(&session).iter().any(|it| it.id.starts_with("view.unhide")));
 
         session.state.timeline_ui.zoom_bar_hidden = true;
         session.state.timeline_ui.track_slider_hidden = true;
         let items = menu_items_for(&session);
-        assert!(items.iter().any(|it| it.id == "view.unhideTimelineSlider" && it.path == ["View"]));
-        assert!(items.iter().any(|it| it.id == "view.unhideTrackSlider" && it.path == ["View"]));
+        assert!(items.iter().any(|it| it.id == "view.unhideTimelineSlider" && it.path == ["View"] && it.shortcut.as_deref() == Some("Alt+Shift+Z")));
+        assert!(items.iter().any(|it| it.id == "view.unhideTrackSlider" && it.path == ["View"] && it.shortcut.as_deref() == Some("Alt+Shift+T")));
     }
 
     /// #1500: like a native menu bar, while one menu is open hovering another title opens it.

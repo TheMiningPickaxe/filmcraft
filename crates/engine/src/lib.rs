@@ -531,7 +531,7 @@ pub struct Session {
     /// Bumped when only the stored Timeline view (zoom, scroll, track heights) changes. It is
     /// NOT `revision`: per-frame view changes must not invalidate revision-keyed caches, and a
     /// clean project must stay clean. `sync_persistence` tracks it for project saves and journals
-    /// the view only while project content is dirty.
+    /// unsaved project views alongside unsaved content.
     pub view_epoch: u64,
     /// The view counter as of the last successful save: what the project file on disk holds.
     /// The difference to `view_epoch` is unsaved view state, exactly like `saved_revision` is
@@ -540,6 +540,9 @@ pub struct Session {
     /// Most recent view snapshot sent to autosave. Drags update every frame; spacing these sends
     /// bounds project-view cloning and queued channel work without delaying the final close flush.
     last_view_snapshot_sent: Option<web_time::Instant>,
+    /// A project view is unchanged while only project content revisions advance. Reuse it for
+    /// those recovery snapshots; document and view epochs invalidate it when the view can differ.
+    persistence_view_cache: Option<(u64, u64, filmcraft_project::ProjectView)>,
     pub path: Option<String>,
     pub state: EditorState,
     pub media: Arc<MediaPool>,
@@ -666,6 +669,7 @@ impl Session {
             view_epoch: 0,
             saved_view_epoch: 0,
             last_view_snapshot_sent: None,
+            persistence_view_cache: None,
             path: None,
             state: EditorState {
                 snapping: true,
@@ -785,6 +789,7 @@ impl Session {
             return;
         }
         let dirty = self.is_dirty();
+        let view_dirty = self.is_view_dirty();
         let cur = autosave::Sent {
             revision: self.revision,
             saved_revision: self.saved_revision,
@@ -802,13 +807,20 @@ impl Session {
         if view_only_change && !force_view_snapshot && self.last_view_snapshot_sent.is_some_and(|sent| sent.elapsed() < std::time::Duration::from_millis(250)) {
             return;
         }
-        // the recovery journal is for unsaved project content. View-only edits remain tracked by
-        // `view_epoch` for save/close prompts, but do not serialize a snapshot that recovery will
-        // discard because the project content itself is clean.
-        let view = dirty.then(|| self.project_view());
+        // Journal either unsaved content or an unsaved project view. The worker keeps those kinds
+        // of changes distinct so a view-only recovery does not mark project content dirty.
+        let view = if dirty || view_dirty { Some(self.persistence_project_view()) } else { None };
         let Some(p) = self.persistence.as_mut() else { return };
         if let Some(view) = view {
-            p.send_dirty(self.project.clone(), view, self.revision, self.view_epoch, dirty, self.path.clone());
+            p.send_dirty(autosave::Snapshot {
+                project: self.project.clone(),
+                view,
+                revision: self.revision,
+                view_epoch: self.view_epoch,
+                content_dirty: dirty,
+                view_dirty,
+                path: self.path.clone(),
+            });
             self.last_view_snapshot_sent = Some(web_time::Instant::now());
         } else {
             p.send_clean();
@@ -1050,6 +1062,18 @@ impl Session {
             playheads: self.state.playheads.iter().filter(|(id, _)| is_seq(id)).map(|(id, t)| (*id, *t)).collect(),
             timeline_ui: self.state.timeline_ui.clone(),
         }
+    }
+
+    fn persistence_project_view(&mut self) -> filmcraft_project::ProjectView {
+        if let Some((document_epoch, view_epoch, view)) = &self.persistence_view_cache
+            && *document_epoch == self.document_epoch
+            && *view_epoch == self.view_epoch
+        {
+            return view.clone();
+        }
+        let view = self.project_view();
+        self.persistence_view_cache = Some((self.document_epoch, self.view_epoch, view.clone()));
+        view
     }
 
     /// Open what was open when the project was saved. Nothing in `view` is trusted: ids that are

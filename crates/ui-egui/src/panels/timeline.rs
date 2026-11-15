@@ -71,6 +71,10 @@ const TRACK_SLIDER_W: f32 = 12.0;
 /// window's right edge on the right, so neither cap can clip into either.
 const TRACK_SLIDER_GAP: f32 = 2.5;
 const DIVIDER_H: f32 = 5.0;
+
+fn content_right(rect: Rect, header_w: f32, side_off: f32, side_left: bool) -> f32 {
+    (rect.max.x - if side_left { 0.0 } else { side_off }).max(rect.min.x + header_w)
+}
 const MASTER_H: f32 = 34.0;
 /// The selected gap between two clips (#648, #668).
 const GAP_FILL: Color32 = Color32::from_gray(224);
@@ -118,11 +122,10 @@ pub struct TlState {
     zoom_anchor: Option<(f64, f32)>,
     /// The zoom (points a second) the video thumbnails are laid out at while the view is zooming (#1094).
     thumb_pps: Option<f64>,
-    /// While a zoom-bar Shift drag has the OS cursor pinned: the exact position where Shift went
-    /// down. Every frame the cursor is warped back there (invisible, confined to the window), so
-    /// it can never hit any edge and reappears on release at the very same pixel. `None` also when
-    /// no drag has it.
-    pub zoombar_cursor_lock: Option<Pos2>,
+    /// The viewport and exact position that own a Shift-drag cursor pin. Every frame the cursor is
+    /// warped back there (invisible, confined to that viewport), so it cannot hit an edge and
+    /// reappears on release at the same pixel. `None` when no drag owns the pin.
+    pub zoombar_cursor_lock: Option<(egui::ViewportId, Pos2)>,
     /// One frame after a zoom-bar Shift drag releases the pinned cursor: the unlock warp settles
     /// as egui pointer motion in that frame, so movement is skipped once to keep it from showing
     /// up as a bogus reverse nudge on the slider.
@@ -381,7 +384,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let rect = if side_left { Rect::from_min_max(pos2(rect.min.x + side_off, rect.min.y), rect.max) } else { rect };
     let content = Rect::from_min_max(
         pos2(rect.min.x + header_w, rect.min.y + top_off + TOP_H),
-        pos2(rect.max.x - if side_left { 0.0 } else { side_off }, rect.max.y - bottom_off),
+        pos2(content_right(rect, header_w, side_off, side_left), rect.max.y - bottom_off),
     );
     let ruler = Rect::from_min_max(pos2(content.min.x, content.min.y - RULER_H), pos2(content.max.x, content.min.y));
     app.last_timeline_width = content.width();
@@ -418,6 +421,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // track), the same reveal the video side keeps above its topmost row
     let max_as = ((na as f32 + 1.0 / 3.0) * ah - audio_area.height()).max(0.0);
     app.ui.timeline.a_scroll = app.ui.timeline.a_scroll.clamp(0.0, max_as);
+    if let Some(mut target) = app.tl.track_anim {
+        target[1] = clamp_track_scroll_target(target[1], max_vs);
+        target[3] = clamp_track_scroll_target(target[3], max_as);
+        app.tl.track_anim = Some(target);
+    }
     for (i, tr) in seq.audio_tracks.iter().enumerate() {
         let top = audio_area.min.y + i as f32 * ah - app.ui.timeline.a_scroll;
         let rect = Rect::from_min_max(pos2(content.min.x, top), pos2(content.max.x, top + ah));
@@ -703,6 +711,10 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
 /// Smooth Animations for the track sliders: ease the heights and scrolls toward the targets a
 /// double-click move set (that move lands on the OTHER slider, so it must animate too). With the
 /// setting off the targets are taken in one step. A drag cancels them (it writes through).
+fn clamp_track_scroll_target(value: f32, maximum: f32) -> f32 {
+    if !maximum.is_finite() || maximum < 0.0 || !value.is_finite() { 0.0 } else { value.clamp(0.0, maximum) }
+}
+
 fn animate_track_sliders(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let Some(tg) = app.tl.track_anim else {
         return;
@@ -752,8 +764,7 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
         if v.fit_pending && content.width() > 50.0 {
             // the fit floor is the sequence-dependent one (the whole Timeline in view): a fixed
             // 0.05 floor stopped a long sequence from ever fitting
-            let ceiling = max_pps(content.width(), min_zoom_view);
-            let fit_floor = min_pps(seq.duration().seconds(), content.width()).min(ceiling);
+            let (fit_floor, ceiling) = layout::zoom_pps_limits(seq.duration().seconds(), content.width(), min_zoom_view);
             v.target_pps = (content.width() as f64 * 0.94 / dur_s).clamp(fit_floor, ceiling);
             v.target_scroll = 0.0;
             v.fit_pending = false;
@@ -761,8 +772,7 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
         }
         // however the zoom was set (wheel, keys, the bar, a script), zooming out stops at the
         // extent and zooming in stops at the Maximum Zoom Level setting
-        let floor = min_pps(seq.duration().seconds(), content.width());
-        let ceiling = max_pps(content.width(), min_zoom_view);
+        let (floor, ceiling) = layout::zoom_pps_limits(seq.duration().seconds(), content.width(), min_zoom_view);
         let requested_target_pps = v.target_pps;
         let clamped_target_pps = requested_target_pps.clamp(floor.min(ceiling), ceiling);
         if requested_target_pps.is_finite()
@@ -773,15 +783,19 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
             && app.tl.zoom_anchor.is_none()
         {
             // Enforcing a newly lowered zoom ceiling should not make the visible Timeline jump.
-            let center_time = v.target_scroll + content.width() as f64 * 0.5 / requested_target_pps;
-            v.target_scroll = (center_time - content.width() as f64 * 0.5 / clamped_target_pps).max(0.0);
+            v.target_scroll = layout::center_scroll_for_zoom(
+                v.target_scroll,
+                requested_target_pps,
+                clamped_target_pps,
+                content.width(),
+                timeline_extent(seq.duration().seconds()),
+            );
         }
         v.target_pps = clamped_target_pps;
         let old_pps = v.pps;
         let clamped_pps = old_pps.clamp(floor.min(ceiling), ceiling);
         if old_pps.is_finite() && old_pps > 0.0 && clamped_pps < old_pps && app.tl.zoom_anchor.is_none() {
-            let center = v.scroll + f64::from(content.width()) * 0.5 / old_pps;
-            v.scroll = (center - f64::from(content.width()) * 0.5 / clamped_pps).max(0.0);
+            v.scroll = layout::center_scroll_for_zoom(v.scroll, old_pps, clamped_pps, content.width(), timeline_extent(seq.duration().seconds()));
         }
         v.pps = clamped_pps;
         // eased, or in one step with Settings ▸ Appearance ▸ animations off (#2325)
@@ -815,6 +829,7 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
     let auto_scroll = app.session.prefs.timeline.auto_scroll.clone();
     if app.playback.playing && app.ui.timeline.follow && auto_scroll != "noScroll" {
         let v = &mut app.ui.timeline;
+        let previous_target_scroll = v.target_scroll;
         let ph = app.session.playhead().seconds();
         let w = content.width() as f64;
         let px = (ph - v.scroll) * v.pps;
@@ -827,6 +842,9 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
         } else if px > w * 0.95 || px < 0.0 {
             v.target_scroll = (ph - w * 0.05 / v.pps).max(0.0);
             v.scroll = v.target_scroll;
+        }
+        if v.target_scroll != previous_target_scroll {
+            app.timeline_auto_scroll_pending = true;
         }
     }
     // A jump while stopped (Home, End, edit points, markers) brings the playhead into view.
@@ -1480,8 +1498,7 @@ mod new_track_tests {
         let at = |y| new_track_at(&seq, &layout, y, 50.0, 50.0);
         assert_eq!(at(40.0), Some((TrackKind::Video, Rect::from_min_max(pos2(0.0, 100.0), pos2(800.0, 150.0)))));
         assert_eq!(at(300.0), Some((TrackKind::Audio, Rect::from_min_max(pos2(0.0, 255.0), pos2(800.0, 305.0)))));
-        let (_, preview) = new_track_at(&seq, &layout, 40.0, -50.0, 50.0).expect("overflowed height keeps a visible target");
-        assert_eq!(preview.height(), 1.0, "an invalid band has a visible one point preview");
+        assert!(new_track_at(&seq, &layout, 40.0, -50.0, 50.0).is_none(), "an inverted band has no destination");
         // the Mix row counts as "below the last audio track" now, with the same band
         assert_eq!(at(480.0), Some((TrackKind::Audio, Rect::from_min_max(pos2(0.0, 255.0), pos2(800.0, 305.0)))));
         // anywhere above the video rows -- over the ruler, or past the Timeline's own rect --
@@ -1492,6 +1509,15 @@ mod new_track_tests {
         for y in [160.0, 202.0, 230.0] {
             assert_eq!(at(y), None, "y = {y}");
         }
+
+        let mut rows_above_pane = layout.clone();
+        rows_above_pane.content = Rect::from_min_max(pos2(0.0, 100.0), pos2(800.0, 500.0));
+        rows_above_pane.rows[0].rect = Rect::from_min_max(pos2(0.0, 40.0), pos2(800.0, 90.0));
+        assert!(new_track_at(&seq, &rows_above_pane, 30.0, 50.0, 50.0).is_none(), "a new-track band cannot start above the visible video pane");
+
+        let mut rows_below_pane = layout.clone();
+        rows_below_pane.rows[1].rect = Rect::from_min_max(pos2(0.0, 480.0), pos2(800.0, 530.0));
+        assert!(new_track_at(&seq, &rows_below_pane, 490.0, 50.0, 50.0).is_none(), "a new-track band cannot extend into the Mix row");
     }
 
     #[test]
@@ -1577,6 +1603,15 @@ mod new_track_tests {
         let mut v_scroll = 0.0;
         assert_eq!(video_row_tops(area, 3, 50.0, &mut v_scroll).0, vec![100.0, 50.0, 0.0]);
     }
+
+    #[test]
+    fn shrinking_pane_limits_rebase_track_animation_scroll_targets() {
+        let mut target = [100.0, 200.0, 80.0, 300.0];
+        target[1] = clamp_track_scroll_target(target[1], 60.0);
+        target[3] = clamp_track_scroll_target(target[3], 90.0);
+        assert_eq!(target, [100.0, 60.0, 80.0, 90.0]);
+        assert_eq!(clamp_track_scroll_target(5.0, f32::NAN), 0.0);
+    }
 }
 
 #[cfg(test)]
@@ -1648,19 +1683,35 @@ mod zoom_ceiling_animation_tests {
         let id = session.state.active_sequence.unwrap();
         let project = session.project.clone();
         let seq = project.sequence(id).unwrap();
+        session.state.timeline_ui.max_zoom_seconds = 3.0;
         let mut app = FilmcraftApp::new(session);
         app.session.prefs.appearance.animations = true;
         let v = &mut app.ui.timeline;
         v.fit_pending = false;
-        v.pps = 5000.0;
-        v.target_pps = 5000.0;
-        v.scroll = 1.0;
-        v.target_scroll = 1.0;
+        v.pps = 2500.0;
+        v.target_pps = 2500.0;
+        v.scroll = 10.0;
+        v.target_scroll = 10.0;
         let width = 1000.0;
         let before = v.scroll + width * 0.5 / v.pps;
         animate_view(&mut app, &egui::Context::default(), Rect::from_min_size(pos2(0.0, 0.0), vec2(width as f32, 400.0)), id, seq);
         let v = &app.ui.timeline;
-        assert!(v.pps < 5000.0);
+        assert!(v.pps < 2500.0);
         assert!((v.scroll + width * 0.5 / v.pps - before).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod content_width_tests {
+    use super::content_right;
+    use egui::{Rect, pos2};
+
+    #[test]
+    fn narrow_timeline_content_has_zero_width_instead_of_inverted_geometry() {
+        let panel = Rect::from_min_max(pos2(10.0, 0.0), pos2(30.0, 100.0));
+        let left = panel.min.x + 36.0;
+        let right = content_right(panel, 36.0, 17.0, false);
+        assert_eq!(right, left);
+        assert!(right >= left, "the content rect cannot be horizontally inverted");
     }
 }

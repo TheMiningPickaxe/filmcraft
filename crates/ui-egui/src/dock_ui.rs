@@ -526,7 +526,13 @@ impl DockContent<PanelKind> for FilmContent<'_> {
                 ui.painter().rect_stroke(frame, 0.0, Stroke::new(1.0, t.focus), StrokeKind::Inside);
             }
         }
-        if self.app.ui.focused == *panel && native_track_slider_outline(*panel, viewport, self.app.session.state.timeline_ui.track_slider_alternate_position)
+        if self.app.ui.focused == *panel
+            && native_track_slider_outline(
+                *panel,
+                viewport,
+                self.app.session.state.timeline_ui.track_slider_alternate_position,
+                self.app.session.state.timeline_ui.track_slider_hidden,
+            )
             && let Some(window) = ui.ctx().input(|i| i.viewport().inner_rect)
         {
             ui.ctx().layer_painter(ui.layer_id()).rect_stroke(window, 0.0, Stroke::new(2.0, egui::Color32::from_rgb(0x74, 0xb0, 0xff)), StrokeKind::Inside);
@@ -625,8 +631,8 @@ impl DockContent<PanelKind> for FilmContent<'_> {
     }
 }
 
-fn native_track_slider_outline(panel: PanelKind, viewport: egui::ViewportId, alternate_position: bool) -> bool {
-    panel == PanelKind::Timeline && viewport != egui::ViewportId::ROOT && alternate_position
+fn native_track_slider_outline(panel: PanelKind, viewport: egui::ViewportId, alternate_position: bool, track_slider_hidden: bool) -> bool {
+    panel == PanelKind::Timeline && viewport != egui::ViewportId::ROOT && alternate_position && !track_slider_hidden
 }
 
 /// The panels of the docked tab group holding `panel`, if that group shows one tab at a time and
@@ -681,9 +687,10 @@ mod tests {
     #[test]
     fn alternate_track_slider_outline_is_only_for_a_floating_timeline() {
         let floating = egui::ViewportId::from_hash_of("floating timeline");
-        assert!(native_track_slider_outline(PanelKind::Timeline, floating, true));
-        assert!(!native_track_slider_outline(PanelKind::Timeline, egui::ViewportId::ROOT, true));
-        assert!(!native_track_slider_outline(PanelKind::Timeline, floating, false));
-        assert!(!native_track_slider_outline(PanelKind::Program, floating, true));
+        assert!(native_track_slider_outline(PanelKind::Timeline, floating, true, false));
+        assert!(!native_track_slider_outline(PanelKind::Timeline, egui::ViewportId::ROOT, true, false));
+        assert!(!native_track_slider_outline(PanelKind::Timeline, floating, false, false));
+        assert!(!native_track_slider_outline(PanelKind::Timeline, floating, true, true));
+        assert!(!native_track_slider_outline(PanelKind::Program, floating, true, false));
     }
 }

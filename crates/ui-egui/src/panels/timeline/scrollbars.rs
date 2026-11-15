@@ -1,4 +1,4 @@
-use super::layout::{max_pps, timeline_extent};
+use super::layout::{center_scroll_for_zoom, timeline_extent, zoom_pps_limits};
 use super::{Align2, Color32, CursorIcon, Drag, FilmcraftApp, Pos2, Rect, Sense, Stroke, StrokeKind, Tokens, pos2, vec2};
 use crate::icons::{self, Icon};
 use crate::widgets::{HotNumberOptions, hot_number_numeric};
@@ -107,23 +107,22 @@ fn zoom_thumb(bar: Rect, view_w: f32, seq_seconds: f64, scroll: f64, pps: f64, m
 /// the scroll so the footage at the view's middle stays put. Both ends of the zoom-bar thumb move
 /// together like a mirror -- this is how the edge handles and the wheel zoom, and it never lets the
 /// scroll escape the timeline. `new_pps` is clamped into (0.05, [`max_pps`] of `view_w`) first.
-fn zoom_about_center(v: &mut crate::state::TimelineView, view_w: f32, total: f64, new_pps: f64, min_view: f64) {
+fn zoom_about_center(v: &mut crate::state::TimelineView, view_w: f32, sequence_seconds: f64, total: f64, new_pps: f64, min_view: f64) {
     if !(new_pps.is_finite() && new_pps > 0.0) {
         return;
     }
     // the widest zoom is the sequence-dependent floor (the whole Timeline in view), never a
     // fixed constant: a long sequence must be able to zoom out to its full extent
-    let floor = (f64::from(view_w.max(0.0)) / total.max(1e-9)).clamp(1e-6, 24_000.0);
-    let ceiling = max_pps(view_w, min_view);
-    let new_pps = new_pps.clamp(floor.min(ceiling), ceiling);
-    let old_vis = view_w.max(1.0) as f64 / v.pps.max(1e-9);
-    let center = v.scroll + old_vis / 2.0;
-    let new_vis = view_w.max(1.0) as f64 / new_pps;
-    let new_range = (total - new_vis).max(0.0);
+    let (floor, ceiling) = zoom_pps_limits(sequence_seconds, view_w, min_view);
+    let new_pps = new_pps.clamp(floor, ceiling);
+    let old_pps = v.pps;
+    let old_target_pps = v.target_pps;
+    let old_scroll = v.scroll;
+    let old_target_scroll = v.target_scroll;
     v.pps = new_pps;
     v.target_pps = new_pps;
-    v.scroll = (center - new_vis / 2.0).clamp(0.0, new_range);
-    v.target_scroll = v.scroll;
+    v.scroll = center_scroll_for_zoom(old_scroll, old_pps, new_pps, view_w, total);
+    v.target_scroll = center_scroll_for_zoom(old_target_scroll, old_target_pps, new_pps, view_w, total);
 }
 
 /// The zoom scroll bar's settings popup content. Opened by right-clicking the bar, and by the
@@ -219,6 +218,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
             (tl!("Settings:"), "Right Click", 3),
         ],
     );
+    let sequence_seconds = app.session.active_sequence().map(|seq| seq.duration().seconds()).unwrap_or(0.0);
     let settings = &mut app.session.state.timeline_ui;
 
     // Smooth Animations: a centered pill switch (left) + label group instead of a checkbox
@@ -336,9 +336,27 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     // a zoom established under the old ceiling must obey the new one at once: the same cap the
     // control channel applies when `maxZoomLevel` changes
     {
-        let cap = max_pps(app.last_timeline_width, settings.max_zoom_secs());
-        app.ui.timeline.target_pps = app.ui.timeline.target_pps.min(cap);
-        app.ui.timeline.pps = app.ui.timeline.pps.min(cap);
+        let width = app.last_timeline_width;
+        let extent = timeline_extent(sequence_seconds);
+        let (floor, cap) = zoom_pps_limits(sequence_seconds, width, settings.max_zoom_secs());
+        let view = &mut app.ui.timeline;
+        let old_target_pps = view.target_pps;
+        let target_pps = if old_target_pps.is_finite() && old_target_pps > 0.0 { old_target_pps.clamp(floor, cap) } else { cap };
+        let old_pps = view.pps;
+        let pps = if old_pps.is_finite() && old_pps > 0.0 { old_pps.clamp(floor, cap) } else { cap };
+        let target_clamped = target_pps < old_target_pps;
+        let pps_clamped = pps < old_pps;
+        if target_clamped {
+            view.target_scroll = center_scroll_for_zoom(view.target_scroll, old_target_pps, target_pps, width, extent);
+        }
+        if pps_clamped {
+            view.scroll = center_scroll_for_zoom(view.scroll, old_pps, pps, width, extent);
+        }
+        view.target_pps = target_pps;
+        view.pps = pps;
+        if target_clamped || pps_clamped {
+            app.tl.zoom_anchor = None;
+        }
     }
     ui.separator();
     // Alternate Drag Speed first
@@ -2142,7 +2160,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         let v = &mut app.ui.timeline;
         // fitting the whole Timeline: the floor is the sequence-dependent one (the same value
         // the fit computes), never a fixed 0.05, or a long sequence can never fit
-        let fit_pps = (view_w.max(1.0) as f64 / timeline_extent(seq_seconds).max(1e-9)).min(max_pps(view_w, min_view)).max(1e-6);
+        let (fit_pps, _) = zoom_pps_limits(seq_seconds, view_w, min_view);
         v.target_pps = fit_pps;
         v.target_scroll = 0.0;
         if !app.session.state.timeline_ui.smooth_animations {
@@ -2160,7 +2178,8 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         let span = side * 2.0;
         // fitting the centring range: no fixed 0.05 floor (it stopped a long range from ever
         // fitting), just the Maximum Zoom Level ceiling
-        let fit_pps = (view_w.max(1.0) as f64 / span.max(1e-9)).min(max_pps(view_w, min_view)).max(1e-6);
+        let (floor, ceiling) = zoom_pps_limits(seq_seconds, view_w, min_view);
+        let fit_pps = (view_w.max(1.0) as f64 / span.max(1e-9)).clamp(floor, ceiling);
         let playhead = app.session.playhead().seconds();
         let target_scroll = (playhead - side).clamp(0.0, (timeline_extent(seq_seconds) - span).max(0.0));
         let v = &mut app.ui.timeline;
@@ -2284,17 +2303,18 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         let mut shift_dx = 0.0f64;
         if shift && let Some(origin) = ui.input(|i| i.pointer.hover_pos().or(i.pointer.latest_pos())) {
             if app.tl.zoombar_cursor_lock.is_none() {
-                app.tl.zoombar_cursor_lock = Some(origin);
+                let viewport = ui.ctx().viewport_id();
+                app.tl.zoombar_cursor_lock = Some((viewport, origin));
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::viewport::CursorGrab::Confined));
             }
-            let pinned = app.tl.zoombar_cursor_lock.unwrap_or(origin);
+            let pinned = app.tl.zoombar_cursor_lock.map(|(_, position)| position).unwrap_or(origin);
             let now = ui.input(|i| i.pointer.latest_pos().unwrap_or(pinned));
             shift_dx = f64::from(now.x - pinned.x);
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::CursorPosition(pinned));
             ui.ctx().set_cursor_image(Some(transparent_cursor()));
-        } else if let Some(_origin) = app.tl.zoombar_cursor_lock.take() {
+        } else if let Some((viewport, _origin)) = app.tl.zoombar_cursor_lock.take() {
             app.tl.zoombar_unlock_catchup = true;
-            release_zoombar_cursor(ui.ctx());
+            release_zoombar_cursor(ui.ctx(), viewport);
         }
         // While pinned the hand-measured delta is exact; otherwise plain egui pointer motion,
         // exactly since the last frame. Never retroactive: pressing and letting go of Shift mid-drag
@@ -2362,7 +2382,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
                 // the playhead off screen the zoom is plain zooming and nothing ever snaps to it.
                 let ph = app.session.playhead().seconds();
                 let was_in_view = ph >= v.scroll && ph <= v.scroll + vis;
-                zoom_about_center(v, view_w, total, view_w.max(1.0) as f64 / new_vis, min_view);
+                zoom_about_center(v, view_w, seq_seconds, total, view_w.max(1.0) as f64 / new_vis, min_view);
                 app.tl.zoom_anchor = None;
                 // Playhead Centering: while a zoom drags the playhead into the visible range the
                 // view is caught ("gravity"). ONE smooth action afterwards: where the playhead sits
@@ -2429,7 +2449,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
             }
             if wheel.is_finite() && factor != 0.0 {
                 let v = &mut app.ui.timeline;
-                zoom_about_center(v, view_w, total, v.pps * (1.0 + factor), min_view);
+                zoom_about_center(v, view_w, seq_seconds, total, v.pps * (1.0 + factor), min_view);
                 app.tl.zoom_anchor = None;
             }
         }
@@ -2449,9 +2469,9 @@ fn transparent_cursor() -> egui::CustomCursorImage {
 
 /// Release the invisible, confined zoom-bar drag cursor: restore the standard cursor and let the
 /// window edges go. Nothing warps -- the cursor is simply wherever the user's hand left it.
-fn release_zoombar_cursor(ctx: &egui::Context) {
+fn release_zoombar_cursor(ctx: &egui::Context, viewport: egui::ViewportId) {
     ctx.set_cursor_image(None);
-    ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::viewport::CursorGrab::None));
+    ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::CursorGrab(egui::viewport::CursorGrab::None));
 }
 
 /// Close the zoom bar's own settings popup (the one opened by right-clicking the bar). The two
@@ -2530,10 +2550,10 @@ pub fn set_zoombar_hidden(app: &mut FilmcraftApp, ctx: &egui::Context, hidden: b
             app.tl.drag = None;
         }
         app.tl.zoom_anchor = None;
-        app.tl.zoombar_cursor_lock = None;
+        let cursor_viewport = app.tl.zoombar_cursor_lock.take().map(|(viewport, _)| viewport).unwrap_or_else(|| ctx.viewport_id());
         app.tl.zoombar_unlock_catchup = false;
         app.tl.zoombar_point_cursor = false;
-        release_zoombar_cursor(ctx);
+        release_zoombar_cursor(ctx, cursor_viewport);
     } else {
         // a stale "how to bring it back" window means nothing once the bar is back
         app.tl.zoombar_hide_dialog_open = false;
@@ -2549,11 +2569,42 @@ pub fn zoombar_cursor_watchdog(tl: &mut super::TlState, ctx: &egui::Context) {
     // the pin is legitimate during a zoom-bar Shift drag or a track slider's (which pins the
     // same cursor to its own press pixel)
     let live_drag = matches!(tl.drag, Some(Drag::ZoomBar { .. })) || tl.track_slider_dragging;
-    let still =
-        tl.zoombar_cursor_lock.is_some() && live_drag && ctx.input(|i| i.focused && i.pointer.button_down(egui::PointerButton::Primary) && i.modifiers.shift);
-    if !still && let Some(_origin) = tl.zoombar_cursor_lock.take() {
+    let still = tl.zoombar_cursor_lock.is_some_and(|(viewport, _)| {
+        live_drag && ctx.input_for(viewport, |i| i.focused && i.pointer.button_down(egui::PointerButton::Primary) && i.modifiers.shift)
+    });
+    if !still && let Some((viewport, _origin)) = tl.zoombar_cursor_lock.take() {
         tl.zoombar_unlock_catchup = true;
-        release_zoombar_cursor(ctx);
+        release_zoombar_cursor(ctx, viewport);
+    }
+}
+
+#[cfg(test)]
+mod cursor_viewport_watchdog_tests {
+    use super::zoombar_cursor_watchdog;
+    use crate::panels::timeline::TlState;
+    use egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, ViewportId};
+
+    #[test]
+    fn watchdog_checks_and_releases_the_viewport_that_owns_the_cursor_lock() {
+        let ctx = Context::default();
+        let pos = Pos2::new(20.0, 30.0);
+        let modifiers = Modifiers { shift: true, ..Modifiers::NONE };
+        let input = RawInput {
+            focused: true,
+            events: vec![Event::ModifiersChanged(modifiers), Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers }],
+            ..RawInput::default()
+        };
+        let mut output = ctx.run_ui(input, |_| {});
+        output.textures_delta.clear();
+
+        let mut tl = TlState { zoombar_cursor_lock: Some((ViewportId::ROOT, pos)), track_slider_dragging: true, ..TlState::default() };
+        zoombar_cursor_watchdog(&mut tl, &ctx);
+        assert!(tl.zoombar_cursor_lock.is_some(), "the focused owner still holds Shift and the primary button");
+
+        let floating = ViewportId::from_hash_of("floating timeline");
+        tl.zoombar_cursor_lock = Some((floating, pos));
+        zoombar_cursor_watchdog(&mut tl, &ctx);
+        assert!(tl.zoombar_cursor_lock.is_none(), "root-window input cannot keep a floating viewport's cursor captured");
     }
 }
 
@@ -2704,18 +2755,20 @@ pub(super) fn vertical_scrollbar(
         let mut pinned_dy = 0.0f64;
         if shift && let Some(origin) = ui.input(|i| i.pointer.hover_pos().or(i.pointer.latest_pos())) {
             if tl.zoombar_cursor_lock.is_none() {
-                tl.zoombar_cursor_lock = Some(origin);
+                let viewport = ui.ctx().viewport_id();
+                tl.zoombar_cursor_lock = Some((viewport, origin));
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::CursorGrab(egui::viewport::CursorGrab::Confined));
             }
-            let pinned = tl.zoombar_cursor_lock.unwrap_or(origin);
+            let pinned = tl.zoombar_cursor_lock.map(|(_, position)| position).unwrap_or(origin);
             let now = ui.input(|i| i.pointer.latest_pos().unwrap_or(pinned));
             pinned_dy = f64::from(now.y - pinned.y);
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::CursorPosition(pinned));
             ui.ctx().set_cursor_image(Some(transparent_cursor()));
         } else if tl.zoombar_cursor_lock.is_some() && !matches!(tl.drag, Some(Drag::ZoomBar { .. })) {
             tl.zoombar_unlock_catchup = true;
-            release_zoombar_cursor(ui.ctx());
-            tl.zoombar_cursor_lock = None;
+            if let Some((viewport, _)) = tl.zoombar_cursor_lock.take() {
+                release_zoombar_cursor(ui.ctx(), viewport);
+            }
         }
         let plain_dy = resp.drag_delta().y;
         let moved = if tl.zoombar_cursor_lock.is_some() {

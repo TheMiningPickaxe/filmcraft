@@ -69,32 +69,33 @@ pub(super) fn new_track_at(seq: &Sequence, layout: &Layout, y: f32, vh: f32, ah:
     }
     let cap_n = seq.caption_tracks.len();
     let tracks_top = layout.content.min.y + if cap_n > 0 { cap_n as f32 * crate::panels::timeline_captions::ROW_H + DIVIDER_H } else { 0.0 };
-    let band = |y0: f32, y1: f32| {
-        if y0.is_finite() && y1.is_finite() && y1 > y0 {
-            Rect::from_min_max(pos2(layout.content.min.x, y0), pos2(layout.content.max.x, y1))
-        } else {
-            // A corrupt or overflowed track height must still give the user a visible target, and
-            // must never hand drawing or hit-testing an empty / inverted rectangle.
-            let edge = if y1.is_finite() {
-                y1
-            } else if y0.is_finite() {
-                y0
-            } else {
-                layout.content.min.y
-            };
-            Rect::from_min_max(pos2(layout.content.min.x, edge - 0.5), pos2(layout.content.max.x, edge + 0.5))
+    let band = |y0: f32, y1: f32, pane_top: f32, pane_bottom: f32| {
+        if !(y0.is_finite() && y1.is_finite() && pane_top.is_finite() && pane_bottom.is_finite() && pane_bottom > pane_top && y1 > y0) {
+            return None;
         }
+        let top = y0.max(pane_top).min(pane_bottom);
+        let bottom = y1.max(pane_top).min(pane_bottom);
+        (bottom > top).then(|| Rect::from_min_max(pos2(layout.content.min.x, top), pos2(layout.content.max.x, bottom)))
     };
     if y < layout.split_y {
-        let top = layout.rows.iter().filter(|r| r.kind == TrackKind::Video).map(|r| r.rect.min.y).fold(layout.split_y, f32::min);
+        let pane_top = tracks_top;
+        let pane_bottom = layout.split_y;
+        if pane_bottom <= pane_top {
+            return None;
+        }
+        let top = layout.rows.iter().filter(|r| r.kind == TrackKind::Video).map(|r| r.rect.min.y).fold(pane_bottom, f32::min).max(pane_top);
         // ANYWHERE above the top video row counts -- over the ruler, or outside the Timeline's
         // own rect entirely (a clip dragged above the window wants a new track too)
-        (y < top).then(|| (TrackKind::Video, band((top - vh).max(tracks_top), top)))
+        (y < top).then(|| band((top - vh).max(pane_top), top, pane_top, pane_bottom).map(|band| (TrackKind::Video, band))).flatten()
     } else {
-        let bottom = layout.rows.iter().filter(|r| r.kind == TrackKind::Audio).map(|r| r.rect.max.y).fold(layout.split_y + DIVIDER_H, f32::max);
-        let mix = layout.content.max.y - MASTER_H;
+        let pane_top = layout.split_y + DIVIDER_H;
+        let pane_bottom = layout.content.max.y - MASTER_H;
+        if pane_bottom <= pane_top {
+            return None;
+        }
+        let bottom = layout.rows.iter().filter(|r| r.kind == TrackKind::Audio).map(|r| r.rect.max.y).fold(pane_top, f32::max).min(pane_bottom);
         // anywhere below the last audio row counts, Mix row and past the window's edge included
-        (y >= bottom).then(|| (TrackKind::Audio, band(bottom, (bottom + ah).min(mix))))
+        (y >= bottom).then(|| band(bottom, (bottom + ah).min(pane_bottom), pane_top, pane_bottom).map(|band| (TrackKind::Audio, band))).flatten()
     }
 }
 
@@ -126,12 +127,30 @@ pub fn min_pps(sequence_seconds: f64, width: f32) -> f64 {
     (f64::from(width.max(0.0)) / timeline_extent(sequence_seconds)).clamp(1e-6, 24_000.0)
 }
 
+/// The legal zoom range for a sequence view: show its full extent at the wide end and obey the
+/// Maximum Zoom Level setting at the close end. The floor cannot cross the ceiling.
+pub(super) fn zoom_pps_limits(sequence_seconds: f64, width: f32, min_view_secs: f64) -> (f64, f64) {
+    let ceiling = max_pps(width, min_view_secs);
+    (min_pps(sequence_seconds, width).min(ceiling), ceiling)
+}
+
 /// The latest time the left edge of a view `width` points wide can show at `pps` points a second.
 pub fn max_scroll(sequence_seconds: f64, width: f32, pps: f64) -> f64 {
     if pps <= 0.0 || !pps.is_finite() {
         return 0.0;
     }
     (timeline_extent(sequence_seconds) - width as f64 / pps).max(0.0)
+}
+
+/// Adjust the left edge so a zoom change keeps the visible Timeline center at the same time,
+/// clamped to the Timeline's scrollable extent. `extent` includes the sequence's trailing tail.
+pub(super) fn center_scroll_for_zoom(scroll: f64, old_pps: f64, new_pps: f64, width: f32, extent: f64) -> f64 {
+    if !(scroll.is_finite() && old_pps.is_finite() && old_pps > 0.0 && new_pps.is_finite() && new_pps > 0.0 && extent.is_finite()) {
+        return 0.0;
+    }
+    let width = f64::from(width.max(1.0));
+    let center = scroll + width * 0.5 / old_pps;
+    (center - width * 0.5 / new_pps).clamp(0.0, (extent - width / new_pps).max(0.0))
 }
 
 /// Where the left edge goes so the playhead at `ph` seconds shows in a view `width` points wide
@@ -191,11 +210,36 @@ mod finite_zoom_tests {
     }
 
     #[test]
+    fn sequence_zoom_limits_are_ordered_and_share_the_sequence_floor() {
+        let (floor, ceiling) = zoom_pps_limits(20.0, 800.0, 0.4);
+        assert_eq!(floor, min_pps(20.0, 800.0));
+        assert_eq!(ceiling, max_pps(800.0, 0.4));
+        assert!(floor <= ceiling);
+        let (floor, ceiling) = zoom_pps_limits(f64::NAN, f32::NAN, 0.05);
+        assert!(floor.is_finite() && ceiling.is_finite() && floor <= ceiling);
+    }
+
+    #[test]
     fn invalid_zoom_inputs_leave_the_view_unchanged() {
         let mut view = TimelineView::default();
         let before = (view.target_pps, view.target_scroll);
         zoom_about(&mut view, f64::INFINITY, 1.0, 800.0, 0.4);
         zoom_about(&mut view, 2.0, f64::NAN, 800.0, 0.4);
         assert_eq!((view.target_pps, view.target_scroll), before);
+    }
+
+    #[test]
+    fn clamping_zoom_preserves_center_inside_the_timeline_extent() {
+        let width = 800.0;
+        let extent = timeline_extent(30.0);
+        let old_pps = 400.0;
+        let new_pps = 800.0;
+        let scroll = center_scroll_for_zoom(5.0, old_pps, new_pps, width, extent);
+        let old_center = 5.0 + f64::from(width) * 0.5 / old_pps;
+        let new_center = scroll + f64::from(width) * 0.5 / new_pps;
+        assert!((new_center - old_center).abs() < 1e-9);
+
+        let end_scroll = center_scroll_for_zoom(extent, old_pps, new_pps, width, extent);
+        assert!((0.0..=max_scroll(30.0, width, new_pps)).contains(&end_scroll));
     }
 }

@@ -135,7 +135,7 @@ fn media_cut_off_by_the_depth_limit_is_complete_when_reached_higher_up() {
         </event></library></fcpxml>"#
     );
     let (imp, rep) = import(xml.as_bytes(), Format::Fcpxml, None).unwrap();
-    assert!(rep.mentions("nested too deeply"), "{rep:?}");
+    assert!(rep.mentions("deeper clips were skipped"), "{rep:?}");
     let m63 = imp.project.sequences().find(|i| i.name == "M63").and_then(|i| imp.project.sequence(i.id)).unwrap();
     assert_eq!(m63.video_tracks[0].items.len(), 1, "M63 keeps its nested M64");
 }

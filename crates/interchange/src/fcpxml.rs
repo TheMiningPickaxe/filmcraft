@@ -145,8 +145,8 @@ struct Imp<'a, 'i, 'r> {
     media_nodes: HashMap<String, Node<'a, 'i>>,
     media_items: HashMap<String, ItemId>,
     media_active: HashSet<String>,
-    /// Compound clips left out because the chain was too deep.
-    depth_hits: usize,
+    /// Nested media, storylines or elements cut off by the depth limits.
+    truncation_hits: usize,
     /// Media imported incomplete (a nested one below it was left out), by id: the nesting depth
     /// it was imported at. Reached again at a shallower depth it is imported again.
     media_truncated_at: HashMap<String, usize>,
@@ -203,7 +203,7 @@ pub(crate) fn import(text: &str, opts: &ImportOptions, report: &mut Report) -> R
         media_nodes: HashMap::new(),
         media_items: HashMap::new(),
         media_active: HashSet::new(),
-        depth_hits: 0,
+        truncation_hits: 0,
         media_truncated_at: HashMap::new(),
         reimports_left: MAX_REIMPORTS,
         effects: HashMap::new(),
@@ -343,7 +343,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         // The active set is the current nesting chain: a long acyclic chain of compound clips
         // would otherwise recurse once per resource.
         if depth >= crate::MAX_NESTING_DEPTH {
-            self.depth_hits += 1;
+            self.truncation_hits = self.truncation_hits.saturating_add(1);
             self.report.warn(format!("FCPXML media resource {id:?} is nested too deeply; imported as a gap"));
             return None;
         }
@@ -354,11 +354,11 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         // Mark the resource before descending: a compound clip can reference itself through a
         // ref-clip before a completed sequence is available to cache.
         let name = n.attribute("name").unwrap_or("Compound Clip").to_string();
-        let hits_before = self.depth_hits;
+        let hits_before = self.truncation_hits;
         let item = self.sequence(s, &name, None, again);
         self.media_active.remove(id);
         self.media_items.insert(id.into(), item);
-        if self.depth_hits > hits_before {
+        if self.truncation_hits > hits_before {
             self.media_truncated_at.insert(id.into(), depth);
         } else {
             self.media_truncated_at.remove(id);
@@ -392,6 +392,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
     /// Lay out a storyline, refusing nesting past [`MAX_XML_DEPTH`].
     fn storyline(&mut self, seq: &mut Sequence, ctx: &Ctx, spine: Node<'a, 'i>, origin: Tick, lane: i32, primary: bool) {
         if self.depth >= MAX_XML_DEPTH {
+            self.truncation_hits = self.truncation_hits.saturating_add(1);
             self.report.warn(format!("XML storylines are nested more than {MAX_XML_DEPTH} deep; deeper clips were skipped"));
             return;
         }
@@ -462,6 +463,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
     /// Lay out one element, refusing nesting past [`MAX_XML_DEPTH`].
     fn element(&mut self, seq: &mut Sequence, ctx: &Ctx, el: Node<'a, 'i>, t0: Tick, lane: i32, primary: bool) -> (Tick, Option<filmcraft_project::ClipId>) {
         if self.depth >= MAX_XML_DEPTH {
+            self.truncation_hits = self.truncation_hits.saturating_add(1);
             self.report.warn(format!("XML elements are nested more than {MAX_XML_DEPTH} deep; deeper clips were skipped"));
             return (t0, None);
         }

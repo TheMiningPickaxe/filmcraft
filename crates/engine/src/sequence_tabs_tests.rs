@@ -23,11 +23,8 @@ fn view(pps: f64, scroll: f64) -> SequenceView {
     SequenceView { pps, scroll, v_scroll: 12.0, a_scroll: 7.0, video_track_h: 90.0, audio_track_h: 40.0 }
 }
 
-fn temp_dir(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("filmcraft-tabs-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn temp_dir(name: &str) -> tempfile::TempDir {
+    tempfile::Builder::new().prefix(&format!("filmcraft-tabs-{name}-")).tempdir().unwrap()
 }
 
 #[test]
@@ -87,8 +84,8 @@ fn a_tab_moves_to_another_place_among_the_tabs() {
     // past the end is the end; the active tab is the default
     assert_eq!(s.execute("sequence.moveTab", json!({"index": u64::MAX})).unwrap()["index"], json!(2));
     assert_eq!(s.state.open_sequences, [main, b, c]);
-    // not an undo step and not an edit: the revision may move (it is a view change, and that is
-    // what carries the new tab order into the autosave journal) but a clean project stays clean
+    // not an undo step or content edit: tab order is a persisted view change and is journaled for
+    // recovery while unsaved, while a clean project stays content-clean
     assert_ne!(s.view_epoch, view_epoch, "moving a tab is a persisted view change");
     assert_eq!(s.history.undo.len(), steps);
     assert_eq!(s.is_dirty(), dirty, "a tab move is not an edit");
@@ -119,7 +116,7 @@ fn a_saved_project_reopens_with_its_tabs_and_their_views() {
     s.state.timeline_views.insert(main, view(12.5, 3.0));
     s.state.timeline_views.insert(b, view(400.0, 0.25));
     let dir = temp_dir("reopen");
-    let path = dir.join("tabs.fcproj").to_string_lossy().to_string();
+    let path = dir.path().join("tabs.fcproj").to_string_lossy().to_string();
     s.execute("file.saveAs", json!({"path": path})).unwrap();
 
     let mut t = Session::default();
@@ -149,7 +146,6 @@ fn a_saved_project_reopens_with_its_tabs_and_their_views() {
     w.execute("file.open", json!({"path": path})).unwrap();
     assert_eq!((w.state.open_sequences.clone(), w.state.active_sequence), (vec![main], Some(main)));
     assert_eq!(w.state.timeline_views.get(&b), Some(&view(400.0, 0.25)));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Each sequence reopens with its playhead where it was left: the project file keeps one playhead
@@ -166,7 +162,7 @@ fn each_sequence_reopens_with_its_playhead_where_it_was_left() {
     assert_eq!(s.playhead(), b_at);
     assert_eq!(s.project_view().playheads.get(&c), None, "a playhead that never moved is not written");
     let dir = temp_dir("playheads");
-    let path = dir.join("tabs.fcproj").to_string_lossy().to_string();
+    let path = dir.path().join("tabs.fcproj").to_string_lossy().to_string();
     s.execute("file.saveAs", json!({"path": path})).unwrap();
 
     let mut t = Session::default();
@@ -195,7 +191,6 @@ fn each_sequence_reopens_with_its_playhead_where_it_was_left() {
     assert_eq!(w.state.active_sequence, Some(b));
     assert_eq!(w.playhead(), Tick::ZERO);
     assert!(w.state.playheads.is_empty());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The view in a project file is not trusted: ids of things that are not sequences, repeats and
@@ -206,7 +201,7 @@ fn a_damaged_view_in_a_project_file_is_cleaned_up_or_ignored() {
     let (mut s, [main, b, c]) = three_tabs();
     let footage = s.project.sequence(main).unwrap().video_tracks[0].items[0].item;
     let dir = temp_dir("damaged");
-    let path = dir.join("tabs.fcproj").to_string_lossy().to_string();
+    let path = dir.path().join("tabs.fcproj").to_string_lossy().to_string();
     s.execute("file.saveAs", json!({"path": path})).unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let with_view = |view: serde_json::Value| {
@@ -256,7 +251,6 @@ fn a_damaged_view_in_a_project_file_is_cleaned_up_or_ignored() {
         let t = with_view(junk.clone());
         assert_eq!((t.state.open_sequences.clone(), t.state.active_sequence), (vec![main], Some(main)), "{junk}");
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
