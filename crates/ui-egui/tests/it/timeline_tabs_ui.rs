@@ -135,7 +135,7 @@ fn replacing_project_discards_animation_even_when_sequence_id_is_reused() {
     let mut d = Driver::new();
     let old = d.active();
     d.app().session.state.timeline_ui.track_slider_smooth = true;
-    d.app().tl.track_anim = Some([180.0, 0.0, 120.0, 0.0]);
+    d.app().tl.track_anim = Some(filmcraft_ui_egui::panels::timeline::TrackAnimation { sequence: ItemId(old), target: [180.0, 0.0, 120.0, 0.0] });
     d.exec("file.openDemoProject", json!({}));
     d.frames(3);
     assert_eq!(d.active(), old, "the replacement deliberately reuses the sequence id");
@@ -148,7 +148,7 @@ fn changing_sequence_discards_pending_track_slider_animation() {
     let main = d.active();
     d.new_sequence("Other");
     d.app().session.state.timeline_ui.track_slider_smooth = true;
-    d.app().tl.track_anim = Some([180.0, 0.0, 120.0, 0.0]);
+    d.app().tl.track_anim = Some(filmcraft_ui_egui::panels::timeline::TrackAnimation { sequence: ItemId(main), target: [180.0, 0.0, 120.0, 0.0] });
     d.show(main);
     assert!(d.app().tl.track_anim.is_none(), "animation from the previous sequence must not carry over");
     assert!(d.app().ui.timeline.video_track_h < 180.0);
@@ -158,7 +158,8 @@ fn changing_sequence_discards_pending_track_slider_animation() {
 fn direct_height_edit_cancels_pending_slider_animation() {
     let mut d = Driver::new();
     d.app().session.state.timeline_ui.track_slider_smooth = true;
-    d.app().tl.track_anim = Some([180.0, 0.0, 120.0, 0.0]);
+    let active = d.active();
+    d.app().tl.track_anim = Some(filmcraft_ui_egui::panels::timeline::TrackAnimation { sequence: ItemId(active), target: [180.0, 0.0, 120.0, 0.0] });
     d.ok("ui.set", json!({"timeline": {"videoTrackHeight": 90.0}}));
     assert!(d.app().tl.track_anim.is_none());
     assert_eq!(d.app().ui.timeline.video_track_h, 90.0);

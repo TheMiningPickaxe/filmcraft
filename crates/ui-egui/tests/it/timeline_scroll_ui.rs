@@ -359,13 +359,13 @@ fn the_wheel_moves_the_timeline_sideways_and_option_wheel_zooms() {
     assert_eq!((v, a), (0.0, 0.0));
     d.wheel(0.2, 0.0, -20.0, json!({"alt": true}));
     assert!((d.view().1 - 48.0).abs() < 1e-6, "and out again");
-    // an unmodified horizontal-only gesture is not remapped to the Timeline's time axis
+    // an unmodified horizontal-only trackpad gesture scrolls time at the ordinary rate
     d.ok("ui.set", json!({"timeline": {"pps": 50.0, "scroll": 4.0}}));
     d.frames(3);
     d.wheel(0.2, -50.0, 0.0, none());
-    assert_eq!(d.view(), (4.0, 50.0, 0.0, 0.0));
+    assert_eq!(d.view(), (5.0, 50.0, 0.0, 0.0));
     d.wheel(0.2, -50.0, 0.0, json!({"shift": true}));
-    assert_eq!(d.view(), (14.0, 50.0, 0.0, 0.0), "Shift remaps horizontal-only input and keeps its 10x speed");
+    assert_eq!(d.view(), (15.0, 50.0, 0.0, 0.0), "Shift keeps the 10x horizontal-scroll speed");
     d.ok("ui.set", json!({"timeline": {"scroll": 4.0}}));
     d.frames(3);
     d.wheel(0.2, 0.0, -50.0, json!({"shift": true}));
@@ -1117,6 +1117,8 @@ fn clicking_a_controls_box_takes_the_next_key_and_that_key_does_the_action() {
     d.frames(2);
     assert_eq!(d.app().session.state.timeline_ui.control_center_on_playhead, "K", "the key became the binding");
     // the binding replaces the double click: pressing K fits the Playhead Centering Range
+    d.app().ui.timeline.pps = 50.0;
+    d.app().ui.timeline.target_pps = 50.0;
     let before = d.app().ui.timeline.target_pps;
     d.ok("ui.key", json!({"key": "K"}));
     d.frames(3);

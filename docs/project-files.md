@@ -33,6 +33,10 @@ writing them is `crates/format` (`filmcraft-format`); the engine's `file.*` comm
 
 Project-scoped Timeline settings live in `view.timeline_ui`. Missing fields use the defaults below;
 malformed fields use their own default without discarding the sequence tabs or other settings.
+This table is the settings reference, including each field's default. Recovery journals without a
+snapshot fingerprint remain readable for compatibility; newer journals pair pending metadata with
+the exact snapshot generation so an interrupted replacement cannot attach an old view overlay to
+new project content.
 Numeric values are finite and clamped when a project is opened: playhead range is 0.1–3600 s,
 zoom-bar and track-slider drag speed is 0.1–50× and 0.1–10× respectively, and Maximum Zoom Level
 is 0.05–3 s. Invalid minimap colours return to their listed defaults.
@@ -64,7 +68,7 @@ is 0.05–3 s. Invalid minimap colours return to their listed defaults.
 | `track_slider_hidden` | `false` | Hide the side track sliders. View > Unhide Track Slider is `Alt+Shift+T`. |
 | `track_slider_smooth` | `false` | Animate track-slider movement. |
 | `track_slider_alternate_position` | `false` | Put track sliders on the opposite side of their tracks. |
-| `track_slider_snap` | `true` | Snap a released track-slider edge to the nearest track boundary. |
+| `track_slider_snap` | `true` | Stored preference for future track-boundary snapping. The Timeline shows this setting as unavailable and does not apply it yet. |
 | `track_slider_decouple` | `true` | Move one track-slider edge without mirroring the other. |
 | `show_position_indicator` | `true` | Show the playhead line in the minimap. |
 | `track_slider_shift_drag_speed` | `1.0` | Track-slider Shift-drag speed multiplier. |
@@ -74,6 +78,10 @@ is 0.05–3 s. Invalid minimap colours return to their listed defaults.
 | `control_explode_slider` | `""` | Custom Controls binding for expanding the zoom slider. |
 | `control_alternate_drag_speed` | `""` | Custom Controls binding for alternate drag speed. |
 | `control_settings` | `""` | Custom Controls binding for opening slider settings. |
+| `track_control_copy_slider` | `""` | Track-slider Controls binding for copying the other slider's height and scroll. |
+| `track_control_minimum_height` | `""` | Track-slider Controls binding for minimum track height. |
+| `track_control_alternate_drag_speed` | `""` | Track-slider Controls binding for alternate drag speed. |
+| `track_control_settings` | `""` | Track-slider Controls binding for opening slider settings. |
 - A coordinate of an effect's point parameter may be `null`. Point parameters use NaN for "auto"
   (the frame centre, or the source centre for `anchor`), and JSON writes NaN as `null`; it reads back
   as "auto". Placing a clip resolves these points at once. An interchange import resolves them

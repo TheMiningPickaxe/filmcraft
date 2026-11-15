@@ -100,6 +100,7 @@ fn slider_drag_marks_view_unsaved_before_release() {
     let from = egui::pos2(x, y);
     let to = egui::pos2(x, y + 15.0);
     d.harness.state_mut().session.saved_view_epoch = d.harness.state().session.view_epoch;
+    assert!(!d.app().session.is_view_dirty(), "the view starts clean before the drag");
     d.harness.input_mut().events.push(egui::Event::PointerMoved(from));
     d.harness.input_mut().events.push(egui::Event::PointerButton {
         pos: from,
@@ -110,7 +111,7 @@ fn slider_drag_marks_view_unsaved_before_release() {
     d.frames(1);
     d.harness.input_mut().events.push(egui::Event::PointerMoved(to));
     d.frames(3);
-    assert!(d.app().session.has_unsaved_changes(), "the view is dirty while the button remains down");
+    assert!(d.app().session.is_view_dirty(), "the view is dirty while the button remains down");
     d.harness.input_mut().events.push(egui::Event::PointerButton {
         pos: to,
         button: egui::PointerButton::Primary,

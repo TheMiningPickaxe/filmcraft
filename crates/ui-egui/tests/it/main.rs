@@ -54,7 +54,6 @@ mod nested_ui;
 mod open_project_prompt_ui;
 mod panels_ui;
 mod par_ui;
-mod perf_ui;
 mod playback_clock_ui;
 mod project_panel_ui;
 mod properties_scroll_ui;
