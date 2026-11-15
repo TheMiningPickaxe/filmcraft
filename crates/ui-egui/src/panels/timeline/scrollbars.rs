@@ -145,6 +145,59 @@ pub(super) fn zoombar_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     });
 }
 
+fn zoombar_popup_content_height_key() -> egui::Id {
+    egui::Id::unique("timeline-zoombar-popup-content-height")
+}
+
+/// Draw the right-click popup at its natural height. Hide the scrollbar when the full content fits
+/// the window; only cap the content and allow scrolling when it cannot fit the window at all.
+fn zoombar_popup_content(app: &mut FilmcraftApp, ui: &mut egui::Ui, screen_height: f32, measuring: bool) {
+    ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
+    let original_inactive = ui.visuals().widgets.inactive.bg_fill;
+    ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_gray(100);
+    let content_height = ui.ctx().data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
+    let needs_scroll = !measuring && content_height + 16.0 > screen_height;
+    let fresh_key = egui::Id::unique("timeline-zoombar-popup-fresh");
+    if measuring {
+        ui.ctx().data_mut(|data| data.insert_temp(fresh_key, true));
+    }
+    if !needs_scroll {
+        ui.visuals_mut().widgets.inactive.bg_fill = original_inactive;
+        let rows = ui.scope(|ui| zoombar_settings_rows(app, ui));
+        if measuring {
+            ui.ctx().data_mut(|data| data.insert_temp(zoombar_popup_content_height_key(), rows.response.rect.height()));
+        }
+        return;
+    }
+    let fresh = ui.ctx().data(|data| data.get_temp::<bool>(fresh_key)).unwrap_or(false);
+    if measuring {
+        ui.ctx().data_mut(|data| data.insert_temp(fresh_key, true));
+    } else if fresh {
+        ui.ctx().data_mut(|data| data.insert_temp(fresh_key, false));
+    }
+    let scroll = egui::ScrollArea::vertical().id_salt("timeline-zoombar-context-popup").scroll_bar_visibility(if needs_scroll {
+        egui::containers::scroll_area::ScrollBarVisibility::VisibleWhenNeeded
+    } else {
+        egui::containers::scroll_area::ScrollBarVisibility::AlwaysHidden
+    });
+    let scroll = if needs_scroll {
+        let scroll = scroll.max_height((screen_height - 32.0).max(1.0));
+        if fresh { scroll.vertical_scroll_offset(content_height) } else { scroll }
+    } else {
+        scroll
+    };
+    let output = scroll.show(ui, |ui| {
+        ui.visuals_mut().widgets.inactive.bg_fill = original_inactive;
+        zoombar_settings_rows(app, ui);
+    });
+    let _ = output;
+}
+
+fn zoombar_popup_open_key() -> egui::Id {
+    egui::Id::unique("timeline-zoombar-settings-open")
+}
+
+
 /// The rows of the zoom bar's settings popup (see [`zoombar_settings`]).
 // one section per setting keeps the popup's rows in visual order; splitting the function would
 // scatter the popup's layout over the file
@@ -2092,47 +2145,87 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
     });
     let open_at = right_click.or_else(|| settings_bound.then(|| ui.input(|i| i.pointer.hover_pos().unwrap_or_else(|| bar.center()))));
     let screen = ui.ctx().content_rect();
-    let popup_width = 274.0;
+    let fallback_popup_width = 283.4;
+    let ctx = ui.ctx().clone();
     if let Some(pos) = open_at {
         let space_above = pos.y - screen.top();
         let space_below = screen.bottom() - pos.y;
         let above = space_above > space_below;
         ui.data_mut(|data| data.insert_temp(anchor_id, (pos, above)));
+        ui.data_mut(|data| data.insert_temp(zoombar_popup_open_key(), true));
         // the menu opens in its default state, never with a flyout or colour picker left over
         zoombar_state_reset(ui.ctx());
+        // work on the Timeline's sliders: the keys bound here must fire afterwards
+        app.ui.focused = crate::dock::PanelKind::Timeline;
         // the two settings menus are mutually exclusive: this one takes the sliders' with it
         app.tl.track_slider_settings_pos = None;
+    } else if resp.clicked() || resp.drag_started() {
+        ui.data_mut(|data| data.insert_temp(zoombar_popup_open_key(), false));
     }
     let (requested_pos, above) =
         ui.data(|data| data.get_temp::<(Pos2, bool)>(anchor_id)).unwrap_or_else(|| (resp.interact_pointer_pos().unwrap_or(bar.min), false));
+    let area_size = egui::containers::AreaState::load(&ctx, popup_id).and_then(|state| state.size);
+    let popup_width = area_size.map_or(fallback_popup_width, |size| size.x);
     let popup_pos = pos2(
         (if requested_pos.x + popup_width <= screen.right() { requested_pos.x } else { requested_pos.x - popup_width })
             .clamp(screen.left(), (screen.right() - popup_width).max(screen.left())),
         requested_pos.y.clamp(screen.top(), screen.bottom()),
     );
-    let popup_open = if open_at.is_some() {
-        Some(egui::SetOpenCommand::Bool(true))
-    } else if resp.clicked() || resp.drag_started() {
-        // a drag anywhere on the bar (the middle or either edge) takes the settings menu with it
-        Some(egui::SetOpenCommand::Bool(false))
-    } else {
-        None
+    if open_at.is_some() {
+        let auto_count = app.auto.elements.len();
+        let measurement = egui::Area::new(popup_id)
+            .order(egui::Order::Foreground)
+            .default_size(egui::vec2(popup_width, screen.height()))
+            .fixed_pos(screen.min)
+            .fade_in(false)
+            .interactable(false)
+            .sizing_pass(true)
+            .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true)).response.rect.height());
+        let _ = measurement;
+        // Egui's sizing pass can produce different widget heights from a normal layout. Run a
+        // hidden normal layout too, so the visible area's bottom pivot has its real size immediately.
+        let measured = egui::Area::new(popup_id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .fade_in(false)
+            .interactable(false)
+            .show(&ctx, |ui| {
+                ui.set_invisible();
+                egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true));
+            });
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("timeline-zoombar-popup-frame-height"), measured.response.rect.height()));
+        app.auto.elements.truncate(auto_count);
+    }
+    let popup_response = {
+        let is_open = ctx.data(|data| data.get_temp::<bool>(zoombar_popup_open_key())).unwrap_or(false);
+        if is_open {
+            let content_height = ctx.data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
+            let measured_height = ctx.data(|data| data.get_temp::<f32>(egui::Id::unique("timeline-zoombar-popup-frame-height"))).unwrap_or(content_height + 16.0);
+            let popup_height = measured_height.min((screen.height() - 12.0).max(1.0)).max(1.0);
+            let x = popup_pos.x;
+            let y = if above { popup_pos.y.max(screen.top() + popup_height) } else { popup_pos.y.min(screen.bottom() - popup_height) };
+            let panel = egui::Area::new(popup_id)
+                .order(egui::Order::Foreground)
+                .pivot(if above { egui::Align2::LEFT_BOTTOM } else { egui::Align2::LEFT_TOP })
+                .default_size(egui::vec2(popup_width, popup_height))
+                .fixed_pos(pos2(x, y))
+                .constrain_to(screen)
+                .fade_in(false)
+                .interactable(true)
+                .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), false)).inner);
+            ctx.data_mut(|data| data.insert_temp(egui::Id::unique("timeline-zoombar-popup-rect"), panel.response.rect));
+            Some(panel)
+        } else {
+            None
+        }
     };
-    let ctx = ui.ctx().clone();
-    let popup_response = egui::Popup::menu(&resp)
-        .open_memory(popup_open)
-        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
-        .at_position(popup_pos)
-        .align(if above { egui::RectAlign::TOP_START } else { egui::RectAlign::BOTTOM_START })
-        .align_alternatives(&[if above { egui::RectAlign::TOP_START } else { egui::RectAlign::BOTTOM_START }])
-        .show(|ui| zoombar_settings(app, ui));
     if let Some(click_pos) = ui.input(|input| input.pointer.button_clicked(egui::PointerButton::Primary).then(|| input.pointer.interact_pos()).flatten())
         && popup_response.as_ref().is_some_and(|popup| !popup.response.rect.contains(click_pos))
         // a click on one of the settings' own popups (the Minimap flyout, a colour picker) is not
         // an outside click either -- their pills must not close the menu they belong to
         && !family_contains(ui, click_pos)
     {
-        egui::Popup::close_id(&ctx, popup_id);
+        ctx.data_mut(|data| data.insert_temp(zoombar_popup_open_key(), false));
     }
     let range = (total - vis).max(0.0);
     let triple = resp.triple_clicked() || explode_bound;
@@ -2457,7 +2550,7 @@ fn release_zoombar_cursor(ctx: &egui::Context) {
 /// Close the zoom bar's own settings popup (the one opened by right-clicking the bar). The two
 /// sliders' settings menus are mutually exclusive: opening one takes the other with it.
 pub(super) fn close_zoombar_popup(ctx: &egui::Context) {
-    egui::Popup::close_id(ctx, egui::Id::unique("tl-zoombar").with("popup"));
+    ctx.data_mut(|data| data.insert_temp(zoombar_popup_open_key(), false));
 }
 
 /// The window that comes up when a slider is hidden: it only tells the user how to bring it
