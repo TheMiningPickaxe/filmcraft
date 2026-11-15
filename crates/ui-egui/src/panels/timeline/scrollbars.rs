@@ -1,5 +1,5 @@
 use super::layout::{center_scroll_for_zoom, timeline_extent, zoom_pps_limits};
-use super::{Align2, Color32, CursorIcon, Drag, FilmcraftApp, Pos2, Rect, Sense, Stroke, StrokeKind, Tokens, pos2, vec2};
+use super::{Align2, Color32, CursorIcon, Drag, FilmcraftApp, MinimapCache, Pos2, Rect, Sense, Stroke, StrokeKind, Tokens, pos2, vec2};
 use crate::icons::{self, Icon};
 use crate::widgets::{HotNumberOptions, hot_number_numeric};
 use filmcraft_project::{Sequence, TrackItem};
@@ -34,6 +34,80 @@ fn minimap_cue(class: u8, prioritise_audio: bool) -> MinimapCue {
 
 fn minimap_column_count(width: f32) -> usize {
     if width.is_finite() { width.ceil().clamp(1.0, MINIMAP_MAX_COLUMNS as f32) as usize } else { 1 }
+}
+
+fn record_minimap_track_coverage(top: &mut [(u64, u8)], next: &mut [(u64, u8)], cell: usize, track: u64, class: u8) {
+    let (Some(best), Some(second)) = (top.get_mut(cell), next.get_mut(cell)) else { return };
+    if best.0 == track {
+        best.1 = best.1.max(class);
+    } else if second.0 == track {
+        second.1 = second.1.max(class);
+        if second.1 > best.1 {
+            std::mem::swap(best, second);
+        }
+    } else if class > best.1 {
+        *second = *best;
+        *best = (track, class);
+    } else if class > second.1 {
+        *second = (track, class);
+    }
+}
+
+fn minimap_coverage_excluding(top: &[(u64, u8)], next: &[(u64, u8)], cell: usize, track: u64) -> u8 {
+    let Some(best) = top.get(cell) else { return 0 };
+    if best.0 == track { next.get(cell).map_or(0, |coverage| coverage.1) } else { best.1 }
+}
+
+fn minimap_coverage(seq: &Sequence, project: &filmcraft_project::Project, span: f64, width: f32, cols: usize, prioritise_audio: bool) -> (Vec<u8>, Vec<usize>) {
+    let mut class = vec![0u8; cols];
+    let mut top_track = vec![(0u64, 0u8); cols];
+    let mut next_track = vec![(0u64, 0u8); cols];
+    let x_of = |time: f64| {
+        let time = if time.is_finite() { time.clamp(0.0, span) } else { 0.0 };
+        (time / span * f64::from(width)) as f32
+    };
+    let media_class = |item: &TrackItem, is_audio: bool| {
+        let offline = project.item(item.item).and_then(|item| item.as_media()).is_some_and(|media| media.offline);
+        if offline {
+            3u8
+        } else if is_audio == prioritise_audio {
+            2
+        } else {
+            1
+        }
+    };
+    let mut adjacent_cuts = Vec::new();
+    for (tracks, is_audio) in [(&seq.video_tracks, false), (&seq.audio_tracks, true)] {
+        for track in tracks {
+            for item in &track.items {
+                let item_class = media_class(item, is_audio);
+                let start = x_of(item.start.seconds());
+                let end = x_of(item.end().seconds());
+                let first = ((start.floor() as isize).max(0) as usize).min(cols);
+                let last = ((end.ceil() as isize).clamp(0, cols as isize) as usize).min(cols);
+                for cell in first..last {
+                    if let Some(value) = class.get_mut(cell) {
+                        *value = (*value).max(item_class);
+                    }
+                    record_minimap_track_coverage(&mut top_track, &mut next_track, cell, track.id.0, item_class);
+                }
+            }
+            for pair in track.items.windows(2) {
+                let Some((left, right)) = pair.first().zip(pair.get(1)) else { continue };
+                if left.end() != right.start || media_class(left, is_audio) != media_class(right, is_audio) {
+                    continue;
+                }
+                let x = x_of(left.end().seconds());
+                let cell = ((x.floor() as isize).clamp(0, cols.saturating_sub(1) as isize)) as usize;
+                if minimap_coverage_excluding(&top_track, &next_track, cell, track.id.0) < media_class(left, is_audio) && cols > 1 {
+                    adjacent_cuts.push(((x.floor() as isize).clamp(1, (cols - 1) as isize)) as usize);
+                }
+            }
+        }
+    }
+    adjacent_cuts.sort_unstable();
+    adjacent_cuts.dedup();
+    (class, adjacent_cuts)
 }
 
 fn minimap_runs(class: &[u8], cuts: &[usize]) -> Vec<(usize, usize, u8)> {
@@ -624,7 +698,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let was_open = ui.data(|d| d.get_temp::<bool>(flyout_id.with("open"))).unwrap_or(false);
     let stamp = ui.data(|d| d.get_temp::<f64>(stamp_key)).unwrap_or(-1e9);
     let open = settings.slider_minimap && (trigger || (was_open && (keep_alive || now - stamp < 0.3)));
-    if open {
+    if trigger || keep_alive {
         ui.data_mut(|d| d.insert_temp(stamp_key, now));
     }
     ui.data_mut(|d| d.insert_temp(flyout_id.with("open"), open));
@@ -687,6 +761,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                 changed |= color_setting(
                     ui,
                     t,
+                    &mut ColorAutomation { registry: &mut app.auto, prefix: "timeline.zoomBar.settings.positionIndicatorColor" },
                     egui::Id::unique("timeline-zoombar-minimap-color"),
                     tl!("Position Indicator Color:"),
                     &mut settings.position_indicator_color,
@@ -695,6 +770,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                 changed |= color_setting(
                     ui,
                     t,
+                    &mut ColorAutomation { registry: &mut app.auto, prefix: "timeline.zoomBar.settings.videoIndicatorColor" },
                     egui::Id::unique("timeline-zoombar-minimap-video-color"),
                     tl!("Video Indicator Color:"),
                     &mut settings.video_indicator_color,
@@ -703,6 +779,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                 changed |= color_setting(
                     ui,
                     t,
+                    &mut ColorAutomation { registry: &mut app.auto, prefix: "timeline.zoomBar.settings.audioIndicatorColor" },
                     egui::Id::unique("timeline-zoombar-minimap-audio-color"),
                     tl!("Audio Indicator Color:"),
                     &mut settings.audio_indicator_color,
@@ -711,6 +788,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                 changed |= color_setting(
                     ui,
                     t,
+                    &mut ColorAutomation { registry: &mut app.auto, prefix: "timeline.zoomBar.settings.offlineIndicatorColor" },
                     egui::Id::unique("timeline-zoombar-minimap-offline-color"),
                     tl!("Offline Indicator Color:"),
                     &mut settings.offline_indicator_color,
@@ -791,13 +869,15 @@ fn settings_pill_row(ui: &mut egui::Ui, t: &Tokens, row_w: f32, label: &str, id:
 
 /// The next key this frame, as the text a Controls box shows (for example "Ctrl + Shift + K").
 /// Mouse buttons are not accepted as bindings because they would collide with Timeline gestures.
-fn input_text(ui: &egui::Ui) -> Option<String> {
+fn input_text(ui: &egui::Ui, pressed_only: bool) -> Option<String> {
     ui.input(|i| {
         let mut out = None;
         for e in &i.events {
             // The press OR the release: the shortcut matcher consumes presses out of the
             // frame's events (bound keys), but the release always survives.
-            if let egui::Event::Key { key, modifiers, .. } = e {
+            if let egui::Event::Key { key, modifiers, pressed, .. } = e
+                && (!pressed_only || *pressed)
+            {
                 let mut s = String::new();
                 if modifiers.ctrl || modifiers.mac_cmd {
                     s.push_str("Ctrl + ");
@@ -816,6 +896,48 @@ fn input_text(ui: &egui::Ui) -> Option<String> {
     })
 }
 
+/// Let custom slider bindings reach their owning widget before a menu shortcut consumes them.
+pub fn custom_control_shortcut_pending(app: &FilmcraftApp, ctx: &egui::Context) -> bool {
+    if controls_listening(app, ctx) {
+        return false;
+    }
+    let chord = ctx.input(|input| {
+        input.events.iter().find_map(|event| {
+            let egui::Event::Key { key, modifiers, pressed: true, .. } = event else { return None };
+            let mut text = String::new();
+            if modifiers.ctrl || modifiers.mac_cmd {
+                text.push_str("Ctrl + ");
+            }
+            if modifiers.shift {
+                text.push_str("Shift + ");
+            }
+            if modifiers.alt {
+                text.push_str("Alt + ");
+            }
+            text.push_str(&format!("{key:?}"));
+            Some(text)
+        })
+    });
+    let Some(chord) = chord else { return false };
+    let chord_allowed = chord.contains("Ctrl") || chord.contains("Alt") || !ctx.text_edit_focused();
+    if !chord_allowed {
+        return false;
+    }
+    let settings = &app.session.state.timeline_ui;
+    [
+        settings.control_center_on_playhead.as_str(),
+        settings.control_explode_slider.as_str(),
+        settings.control_alternate_drag_speed.as_str(),
+        settings.control_settings.as_str(),
+        settings.track_control_copy_slider.as_str(),
+        settings.track_control_minimum_height.as_str(),
+        settings.track_control_alternate_drag_speed.as_str(),
+        settings.track_control_settings.as_str(),
+    ]
+    .into_iter()
+    .any(|binding| !binding.is_empty() && !binding.ends_with("Click") && binding == chord)
+}
+
 /// One Controls binding (0 = Center on Playhead, 1 = Explode Slider, 2 = Alternate Drag Speed,
 /// 3 = Settings): empty means "the built-in gesture".
 fn control_binding(app: &mut FilmcraftApp, slot: usize) -> &mut String {
@@ -824,7 +946,11 @@ fn control_binding(app: &mut FilmcraftApp, slot: usize) -> &mut String {
         0 => &mut s.control_center_on_playhead,
         1 => &mut s.control_explode_slider,
         2 => &mut s.control_alternate_drag_speed,
-        _ => &mut s.control_settings,
+        3 => &mut s.control_settings,
+        4 => &mut s.track_control_copy_slider,
+        5 => &mut s.track_control_minimum_height,
+        6 => &mut s.track_control_alternate_drag_speed,
+        _ => &mut s.track_control_settings,
     }
 }
 
@@ -893,13 +1019,18 @@ fn controls_listen_key() -> egui::Id {
     egui::Id::unique("tl-controls-listening")
 }
 
+fn controls_listening_for_bar(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<Option<usize>>(controls_listen_key())).flatten().is_some()
+}
+
 /// Whether a Controls box is listening for a new shortcut. While it is, the rest of the
 /// application must not hear the key: the shortcut matcher consumes presses from the frame's
 /// events (which is also why the capture used to miss them), and a bound key would fire its
 /// action in the background while the user is naming a new binding.
 pub fn controls_listening(app: &FilmcraftApp, ctx: &egui::Context) -> bool {
     let zoom_bar_menu_open = egui::Popup::is_id_open(ctx, egui::Id::unique("tl-zoombar").with("popup"));
-    let session_open = app.tl.zoombar_settings_pos.is_some() || app.tl.track_slider_settings_pos.is_some() || zoom_bar_menu_open;
+    let custom_zoom_popup_open = ctx.data(|data| data.get_temp::<bool>(zoombar_popup_open_key())).unwrap_or(false);
+    let session_open = app.tl.zoombar_settings_pos.is_some() || app.tl.track_slider_settings_pos.is_some() || zoom_bar_menu_open || custom_zoom_popup_open;
     ctx.data_mut(|d| {
         let listening = d.get_temp::<Option<usize>>(controls_listen_key()).flatten().is_some();
         if listening && !session_open {
@@ -923,7 +1054,7 @@ fn capture_controls(app: &mut FilmcraftApp, ui: &egui::Ui) {
         ui.ctx().data_mut(|d| d.insert_temp(key, None::<usize>));
         return;
     }
-    if let Some(text) = input_text(ui) {
+    if let Some(text) = input_text(ui, false) {
         *control_binding(app, slot) = text;
         app.session.project_view_changed();
         ui.ctx().data_mut(|d| d.insert_temp(key, None::<usize>));
@@ -1001,7 +1132,7 @@ fn hover_flyout(
     let was_open = ui.data(|d| d.get_temp::<bool>(flyout_id.with("open"))).unwrap_or(false);
     let stamp = ui.data(|d| d.get_temp::<f64>(stamp_key)).unwrap_or(-1e9);
     let open = open_now && (trigger || (was_open && (keep_alive || now - stamp < 0.3)));
-    if open {
+    if trigger || keep_alive {
         ui.data_mut(|d| d.insert_temp(stamp_key, now));
     }
     ui.data_mut(|d| d.insert_temp(flyout_id.with("open"), open));
@@ -1230,7 +1361,18 @@ fn closest_six(digits: &str) -> String {
 /// code in white. Clicking the swatch (a pointing hand) opens the colour picker -- a hue /
 /// saturation wheel, a brightness slider and a hex field, everything live. ONE call draws the row
 /// and runs its picker; copy that one line to add another colour setting anywhere.
-fn color_setting(ui: &mut egui::Ui, t: &Tokens, id: egui::Id, label: &str, color: &mut String, default: &str) -> bool {
+struct ColorAutomation<'a> {
+    registry: &'a mut crate::automation::Registry,
+    prefix: &'a str,
+}
+
+impl ColorAutomation<'_> {
+    fn add(&mut self, suffix: &str, response: &egui::Response, label: &str) {
+        self.registry.add_response(&format!("{}.{}", self.prefix, suffix), response, label);
+    }
+}
+
+fn color_setting(ui: &mut egui::Ui, t: &Tokens, automation: &mut ColorAutomation<'_>, id: egui::Id, label: &str, color: &mut String, default: &str) -> bool {
     let mut changed = false;
     let row_w = ui.available_width().max(170.0);
     let (row, _) = ui.allocate_exact_size(egui::vec2(row_w, 30.0), Sense::hover());
@@ -1243,6 +1385,7 @@ fn color_setting(ui: &mut egui::Ui, t: &Tokens, id: egui::Id, label: &str, color
     let x0 = row.center().x - group_w / 2.0;
     let swatch = Rect::from_min_size(pos2(x0 + galley.size().x + gap, row.center().y - 11.0), egui::vec2(box_w, 22.0));
     let resp = ui.interact(swatch, id, Sense::click());
+    automation.add("swatch", &resp, label);
     if resp.hovered() {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     }
@@ -1254,6 +1397,7 @@ fn color_setting(ui: &mut egui::Ui, t: &Tokens, id: egui::Id, label: &str, color
     // the reset button at the row's right end, the same as Effect Controls' parameter reset
     let rr = Rect::from_center_size(pos2(row.max.x - 14.0, row.center().y), vec2(16.0, 16.0));
     let rresp = ui.interact(rr, id.with("reset"), Sense::click()).on_hover_text(tl!("Reset"));
+    automation.add("reset", &rresp, &format!("Reset {label}"));
     icons::paint(ui.painter(), rr.shrink(2.0), Icon::Reset, if rresp.hovered() { t.text } else { t.text_dim });
     if rresp.clicked() {
         *color = default.to_string();
@@ -1290,6 +1434,7 @@ fn color_setting(ui: &mut egui::Ui, t: &Tokens, id: egui::Id, label: &str, color
                     // the wheel: hue around the ring, saturation towards the edge. One seamless
                     // mesh, so it is just colours -- no seams between the parts.
                     let (slot, resp) = ui.allocate_exact_size(egui::vec2(132.0, 132.0), Sense::click_and_drag());
+                    automation.add("wheel", &resp, &format!("{label} color wheel"));
                     let c = slot.center();
                     let outer = 62.0;
                     let mut mesh = egui::Mesh::default();
@@ -1343,6 +1488,7 @@ fn color_setting(ui: &mut egui::Ui, t: &Tokens, id: egui::Id, label: &str, color
                     let (hrow, _) = ui.allocate_exact_size(egui::vec2(132.0, 26.0), Sense::hover());
                     let field = Rect::from_min_size(pos2(hrow.center().x - 46.0, hrow.center().y - 11.0), egui::vec2(92.0, 22.0));
                     let edit = ui.put(field, egui::TextEdit::singleline(&mut buf).align(egui::Align2::CENTER_CENTER));
+                    automation.add("hex", &edit, &format!("{label} hex value"));
                     hex_focus = edit.has_focus();
                     if edit.changed() {
                         let digits: String = buf.chars().filter(|c| c.is_ascii_hexdigit()).take(6).collect();
@@ -1687,9 +1833,10 @@ mod zoom_drag_scale_tests {
 #[cfg(test)]
 mod controls_tests {
     use super::{
-        MINIMAP_MAX_COLUMNS, SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, binding_matches_held_key, minimap_clips_fit, minimap_column_count, minimap_runs,
-        shift_drag_rate,
+        MINIMAP_MAX_COLUMNS, SHIFT_CONTENT_RATE, SHIFT_THUMB_RATE, binding_matches_held_key, controls_listen_key, controls_listening, minimap_clips_fit,
+        minimap_column_count, minimap_coverage_excluding, minimap_runs, record_minimap_track_coverage, shift_drag_rate, zoombar_popup_open_key,
     };
+    use crate::FilmcraftApp;
 
     /// The minimap's clips vanish below a quarter of the screen's width -- exactly at the quarter
     /// they still show -- and nothing else (the width alone decides).
@@ -1712,9 +1859,32 @@ mod controls_tests {
     }
 
     #[test]
+    fn custom_zoom_popup_keeps_shortcut_capture_listening() {
+        let app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| {
+            data.insert_temp(zoombar_popup_open_key(), true);
+            data.insert_temp(controls_listen_key(), Some(0usize));
+        });
+        assert!(controls_listening(&app, &ctx), "the custom Area popup is open even with no Popup positions set");
+    }
+
+    #[test]
     fn minimap_keeps_adjacent_same_class_clip_cuts() {
         assert_eq!(minimap_runs(&[2, 2, 2, 2], &[2]), vec![(0, 2, 2), (2, 4, 2)]);
         assert_eq!(minimap_runs(&[2, 2, 0, 2, 2], &[]), vec![(0, 2, 2), (3, 5, 2)]);
+    }
+
+    #[test]
+    fn minimap_coverage_checks_other_tracks_without_scanning_clips_per_cut() {
+        let mut top = vec![(0, 0)];
+        let mut next = vec![(0, 0)];
+        record_minimap_track_coverage(&mut top, &mut next, 0, 1, 2);
+        record_minimap_track_coverage(&mut top, &mut next, 0, 2, 2);
+        record_minimap_track_coverage(&mut top, &mut next, 0, 3, 1);
+        assert_eq!(minimap_coverage_excluding(&top, &next, 0, 1), 2, "a same-kind track covers the cut");
+        assert_eq!(minimap_coverage_excluding(&top, &next, 0, 2), 2, "either top track can be excluded");
+        assert_eq!(minimap_coverage_excluding(&top, &next, 0, 3), 2, "the higher priority overlay remains visible");
     }
 
     #[test]
@@ -1854,58 +2024,14 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         // simply ends where the winner begins. Drawn after the thumb (slightly transparent), so
         // clips never disappear behind the slider.
         let cols = minimap_column_count(bar.width());
-        let mut class = vec![0u8; cols];
         let pri_audio = app.session.state.timeline_ui.prioritise_audio;
-        let media_class = |item: &TrackItem, is_audio: bool| {
-            let offline = app.session.project.item(item.item).and_then(|i| i.as_media()).is_some_and(|m| m.offline);
-            if offline {
-                3u8
-            } else if is_audio == pri_audio {
-                2
-            } else {
-                1
-            }
-        };
-        let mut adjacent_cuts = Vec::<usize>::new();
-        for (tracks, is_audio) in [(&seq.video_tracks, false), (&seq.audio_tracks, true)] {
-            for tr in tracks.iter() {
-                for it in tr.items.iter() {
-                    let top = media_class(it, is_audio);
-                    let a = minimap_x(it.start.seconds());
-                    let b = minimap_x(it.end().seconds());
-                    let c0 = ((a - bar.min.x).floor() as isize).max(0) as usize;
-                    let c1 = ((b - bar.min.x).ceil() as isize).clamp(0, cols as isize) as usize;
-                    for cell in class.iter_mut().take(c1).skip(c0) {
-                        *cell = (*cell).max(top);
-                    }
-                }
-                for pair in tr.items.windows(2) {
-                    let Some((left, right)) = pair.first().zip(pair.get(1)) else { continue };
-                    if left.end() != right.start || media_class(left, is_audio) != media_class(right, is_audio) {
-                        continue;
-                    }
-                    let boundary = left.end().seconds();
-                    let blocked_by_other_track = [(&seq.video_tracks, false), (&seq.audio_tracks, true)]
-                        .into_iter()
-                        .filter(|(other_tracks, other_audio)| *other_audio != is_audio || !std::ptr::eq(*other_tracks, tracks))
-                        .flat_map(|(other_tracks, other_audio)| {
-                            other_tracks.iter().flat_map(move |other| other.items.iter().map(move |item| (item, other_audio)))
-                        })
-                        .any(|(item, other_audio)| {
-                            item.start.seconds() < boundary && item.end().seconds() > boundary && media_class(item, other_audio) >= media_class(left, is_audio)
-                        });
-                    if !blocked_by_other_track {
-                        let x = minimap_x(boundary);
-                        if cols > 1 {
-                            let col = ((x - bar.min.x).floor() as isize).clamp(1, (cols - 1) as isize) as usize;
-                            adjacent_cuts.push(col);
-                        }
-                    }
-                }
-            }
+        let sequence_id = app.session.state.active_sequence.unwrap_or_default();
+        let cache_key = (sequence_id, app.session.revision, cols, bar.width().to_bits(), pri_audio, app.session.state.timeline_ui.show_whole_timeline);
+        if app.tl.minimap_cache.as_ref().is_none_or(|cache| cache.key != cache_key) {
+            let (class, adjacent_cuts) = minimap_coverage(seq, &app.session.project, minimap_span, bar.width(), cols, pri_audio);
+            app.tl.minimap_cache = Some(MinimapCache { key: cache_key, class, adjacent_cuts });
         }
-        adjacent_cuts.sort_unstable();
-        adjacent_cuts.dedup();
+        let (class, adjacent_cuts) = app.tl.minimap_cache.as_ref().map_or((&[][..], &[][..]), |cache| (cache.class.as_slice(), cache.adjacent_cuts.as_slice()));
         // Everything on the device pixel grid: one solid, continuous shape per rectangle, the
         // same height whatever the width.
         let ppp = ui.ctx().pixels_per_point().max(1.0);
@@ -1929,7 +2055,7 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
             }
         };
         // 1 pt off each run's ends: the gap between two rectangles is the vertical cut line
-        let runs: Vec<(f32, f32, u8)> = minimap_runs(&class, &adjacent_cuts)
+        let runs: Vec<(f32, f32, u8)> = minimap_runs(class, adjacent_cuts)
             .into_iter()
             .map(|(start, c, k)| {
                 let x0 = snap(bar.min.x + start as f32 + 0.5);
@@ -2138,20 +2264,23 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
     // a Controls binding the user chose: its chord does what the gesture used to do (the
     // built-in gestures still work). A chord with Ctrl/Alt fires even while a text field has
     // focus (it is a shortcut, not typing); a plain key only when nothing else wants the keyboard.
-    let chord = input_text(ui);
+    let chord = input_text(ui, true);
     let chord_text = chord.as_deref();
     // while a Controls box is naming a new shortcut, no binding may fire on that key. A chord
     // with Ctrl/Alt fires even in a text field (it is a shortcut, not typing); a plain key only
     // when no text field has focus (`egui_wants_keyboard_input` is not enough: any clicked widget
     // counts there, including the box itself).
-    let chord_ok = !controls_listening(app, ui.ctx()) && chord_text.is_some_and(|c| c.contains("Ctrl") || c.contains("Alt") || !ui.ctx().text_edit_focused());
+    let key_pressed = ui.input(|i| i.events.iter().any(|event| matches!(event, egui::Event::Key { pressed: true, .. })));
+    let chord_ok = key_pressed
+        && !controls_listening(app, ui.ctx())
+        && chord_text.is_some_and(|c| c.contains("Ctrl") || c.contains("Alt") || !ui.ctx().text_edit_focused());
     let (center_bound, explode_bound, alternate_drag_bound, settings_bound) = {
         let s = &app.session.state.timeline_ui;
         let bound = |binding: &str| chord_ok && !binding.is_empty() && chord_text == Some(binding) && chord_text.is_some_and(|c| !c.ends_with("Click"));
         (
             bound(&s.control_center_on_playhead),
             bound(&s.control_explode_slider),
-            chord_ok && !s.control_alternate_drag_speed.is_empty() && binding_held(ui, &s.control_alternate_drag_speed),
+            !controls_listening(app, ui.ctx()) && !s.control_alternate_drag_speed.is_empty() && binding_held(ui, &s.control_alternate_drag_speed),
             bound(&s.control_settings) && ui.rect_contains_pointer(bar),
         )
     };
@@ -2269,7 +2398,8 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         let (floor, ceiling) = zoom_pps_limits(seq_seconds, view_w, min_view);
         let fit_pps = (view_w.max(1.0) as f64 / span.max(1e-9)).clamp(floor, ceiling);
         let playhead = app.session.playhead().seconds();
-        let target_scroll = (playhead - side).clamp(0.0, (timeline_extent(seq_seconds) - span).max(0.0));
+        let effective_span = view_w.max(1.0) as f64 / fit_pps.max(1e-9);
+        let target_scroll = (playhead - effective_span / 2.0).clamp(0.0, (timeline_extent(seq_seconds) - effective_span).max(0.0));
         let v = &mut app.ui.timeline;
         v.target_pps = fit_pps;
         v.target_scroll = target_scroll;
@@ -2634,6 +2764,13 @@ pub fn set_zoombar_hidden(app: &mut FilmcraftApp, ctx: &egui::Context, hidden: b
     app.session.state.timeline_ui.zoom_bar_hidden = hidden;
     app.session.project_view_changed();
     if hidden {
+        close_zoombar_popup(ctx);
+        app.tl.zoombar_settings_pos = None;
+        app.tl.zoombar_hide_dialog_open = false;
+        ctx.data_mut(|data| {
+            data.remove::<f32>(zoombar_popup_content_height_key());
+            data.insert_temp(controls_listen_key(), None::<usize>);
+        });
         if matches!(app.tl.drag, Some(Drag::ZoomBar { .. })) {
             app.tl.drag = None;
         }
@@ -2653,12 +2790,20 @@ pub fn set_zoombar_hidden(app: &mut FilmcraftApp, ctx: &egui::Context, hidden: b
 /// down. Every frame this unwinds anything that slipped through (a lag spike, a lost focus, a
 /// changed panel, Escape mid-press), so the cursor can never stay invisible or confined when it
 /// shouldn't.
-pub fn zoombar_cursor_watchdog(tl: &mut super::TlState, ctx: &egui::Context) {
+pub fn zoombar_cursor_watchdog(tl: &mut super::TlState, ctx: &egui::Context, alternate_speed_bindings: &[&str]) {
     // the pin is legitimate during a zoom-bar Shift drag or a track slider's (which pins the
     // same cursor to its own press pixel)
     let live_drag = matches!(tl.drag, Some(Drag::ZoomBar { .. })) || tl.track_slider_dragging;
     let still = tl.zoombar_cursor_lock.is_some_and(|(viewport, _)| {
-        live_drag && ctx.input_for(viewport, |i| i.focused && i.pointer.button_down(egui::PointerButton::Primary) && i.modifiers.shift)
+        live_drag
+            && ctx.input_for(viewport, |i| {
+                let alternate_speed = alternate_speed_bindings.iter().filter(|binding| !binding.is_empty()).any(|binding| {
+                    i.keys_down.iter().any(|key| {
+                        binding_matches_held_key(binding, &format!("{key:?}"), i.modifiers.ctrl || i.modifiers.mac_cmd, i.modifiers.shift, i.modifiers.alt)
+                    })
+                });
+                i.focused && i.pointer.button_down(egui::PointerButton::Primary) && (i.modifiers.shift || alternate_speed)
+            })
     });
     if !still && let Some((viewport, _origin)) = tl.zoombar_cursor_lock.take() {
         tl.zoombar_unlock_catchup = true;
@@ -2686,13 +2831,34 @@ mod cursor_viewport_watchdog_tests {
         output.textures_delta.clear();
 
         let mut tl = TlState { zoombar_cursor_lock: Some((ViewportId::ROOT, pos)), track_slider_dragging: true, ..TlState::default() };
-        zoombar_cursor_watchdog(&mut tl, &ctx);
+        zoombar_cursor_watchdog(&mut tl, &ctx, &[]);
         assert!(tl.zoombar_cursor_lock.is_some(), "the focused owner still holds Shift and the primary button");
 
         let floating = ViewportId::from_hash_of("floating timeline");
         tl.zoombar_cursor_lock = Some((floating, pos));
-        zoombar_cursor_watchdog(&mut tl, &ctx);
+        zoombar_cursor_watchdog(&mut tl, &ctx, &[]);
         assert!(tl.zoombar_cursor_lock.is_none(), "root-window input cannot keep a floating viewport's cursor captured");
+    }
+
+    #[test]
+    fn watchdog_keeps_cursor_lock_for_a_held_alternate_speed_chord() {
+        let ctx = Context::default();
+        let pos = Pos2::new(20.0, 30.0);
+        let input = RawInput {
+            focused: true,
+            events: vec![
+                Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE },
+                Event::Key { key: egui::Key::K, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+            ],
+            ..RawInput::default()
+        };
+        let mut output = ctx.run_ui(input, |_| {});
+        output.textures_delta.clear();
+        let mut tl = TlState { zoombar_cursor_lock: Some((ViewportId::ROOT, pos)), track_slider_dragging: true, ..TlState::default() };
+
+        zoombar_cursor_watchdog(&mut tl, &ctx, &["K"]);
+
+        assert!(tl.zoombar_cursor_lock.is_some(), "the configured alternate-speed chord keeps the drag cursor pinned");
     }
 }
 
@@ -2730,6 +2896,7 @@ pub(super) fn vertical_scrollbar(
     shift_speed: f32,
     t: &Tokens,
     id: &str,
+    bindings: [&str; 4],
 ) -> (bool, Rect, u8) {
     if bar.height() < 2.0 || bar.width() < 6.0 {
         return (false, bar, 0);
@@ -2753,6 +2920,15 @@ pub(super) fn vertical_scrollbar(
     let y = bar.min.y + travel * pos;
     let thumb = Rect::from_min_size(pos2(bar.min.x, y), vec2(bar.width(), h));
     let resp = ui.interact(bar, egui::Id::unique(("tl-vs", id)), Sense::click_and_drag());
+    let chord = input_text(ui, true);
+    let chord_text = chord.as_deref();
+    let chord_ok = !controls_listening_for_bar(ui.ctx())
+        && chord_text.is_some_and(|value| value.contains("Ctrl") || value.contains("Alt") || !ui.ctx().text_edit_focused());
+    let over_bar = ui.rect_contains_pointer(bar);
+    let copy_binding = over_bar && chord_ok && !bindings[0].is_empty() && chord_text == Some(bindings[0]);
+    let minimum_binding = over_bar && chord_ok && !bindings[1].is_empty() && chord_text == Some(bindings[1]);
+    let alternate_binding = !controls_listening_for_bar(ui.ctx()) && !bindings[2].is_empty() && binding_held(ui, bindings[2]);
+    let settings_binding = over_bar && chord_ok && !bindings[3].is_empty() && chord_text == Some(bindings[3]);
     let hover = ui.rect_contains_pointer(thumb) || resp.dragged();
     p.rect_filled(thumb, thumb.width() / 2.0, if hover { t.scroll_thumb_hover } else { t.scroll_thumb });
     const CIRCLE: f32 = 7.0;
@@ -2770,6 +2946,8 @@ pub(super) fn vertical_scrollbar(
                 1u8
             } else if (q.y - circle_b).abs() <= CIRCLE && (q.x - cx).abs() <= CIRCLE {
                 2u8
+            } else if q.y < thumb.min.y || q.y > thumb.max.y {
+                0u8
             } else if q.y < thumb.min.y + ZONE {
                 1u8
             } else if q.y > thumb.max.y - ZONE {
@@ -2840,8 +3018,9 @@ pub(super) fn vertical_scrollbar(
         // Confined grab, and a warp back to the pin every frame; the motion is measured by hand
         // against the pin. Without Shift the drag is ordinary pointer motion.
         let shift = ui.input(|i| i.modifiers.shift);
+        let alternate_speed = shift || alternate_binding;
         let mut pinned_dy = 0.0f64;
-        if shift && let Some(origin) = ui.input(|i| i.pointer.hover_pos().or(i.pointer.latest_pos())) {
+        if alternate_speed && let Some(origin) = ui.input(|i| i.pointer.hover_pos().or(i.pointer.latest_pos())) {
             if tl.zoombar_cursor_lock.is_none() {
                 let viewport = ui.ctx().viewport_id();
                 tl.zoombar_cursor_lock = Some((viewport, origin));
@@ -2874,7 +3053,7 @@ pub(super) fn vertical_scrollbar(
         // pointer motion -- the same rate on both sliders whatever their track counts, so a 12
         // track video slider and a 3 track audio slider feel 1:1 with each other. 1x is slow,
         // Custom 10x is a hundred times it (many times faster than the plain drag).
-        let shift_on = shift && tl.zoombar_cursor_lock.is_some();
+        let shift_on = (shift || alternate_binding) && tl.zoombar_cursor_lock.is_some();
         let rate = shift_drag_rate(shift_speed);
         // the height zoom moves the THUMB (0.06 thumb points per pointer point at 1x), the scroll
         // moves the CONTENT (0.2 content points): each rate is a constant, never one the track
@@ -2980,8 +3159,10 @@ pub(super) fn vertical_scrollbar(
     // click sets the minimum track height; Ctrl+Shift+double-click does so for BOTH sliders. Either way the single
     // click beneath them is not a jump.
     let mut clicks = 0u8;
-    if resp.double_clicked() {
-        clicks = if ui.input(|i| i.modifiers.shift && i.modifiers.command) {
+    if resp.double_clicked() || copy_binding || minimum_binding {
+        clicks = if minimum_binding {
+            2
+        } else if ui.input(|i| i.modifiers.shift && i.modifiers.command) {
             3
         } else if ui.input(|i| i.modifiers.shift) {
             2
@@ -3001,7 +3182,7 @@ pub(super) fn vertical_scrollbar(
     }
     // right-click: the settings popup, always to the LEFT of the sliders (their alternate
     // position comes later), at the pointer's height
-    if ui.rect_contains_pointer(bar) && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
+    if settings_binding || ui.rect_contains_pointer(bar) && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
         let y = ui.input(|i| i.pointer.interact_pos()).map(|p| p.y).unwrap_or(bar.center().y);
         // to the LEFT of the sliders (their alternate position is the left edge of the Timeline,
         // where that would run off the screen -- then it opens to their right instead)
@@ -3079,10 +3260,10 @@ fn track_slider_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         "timeline.trackSlider.settings.controlsFlyout",
         "Controls",
         &[
-            (tl!("Center on Playhead:"), "Double Click", 0),
-            (tl!("Explode Slider:"), "Triple Click", 1),
-            (tl!("Alternate Drag Speed:"), "Shift + Drag", 2),
-            (tl!("Settings:"), "Right Click", 3),
+            (tl!("Copy Other Slider:"), "Double Click", 4),
+            (tl!("Minimum Track Height:"), "Shift + Double Click", 5),
+            (tl!("Alternate Drag Speed:"), "Shift + Drag", 6),
+            (tl!("Settings:"), "Right Click", 7),
         ],
     );
     // Smooth Animations eases the double-click moves (which land on the OTHER slider);

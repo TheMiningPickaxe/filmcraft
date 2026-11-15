@@ -54,7 +54,7 @@ pub use layout::{Layout, Row, max_pps, max_scroll, min_pps, scroll_to_reveal, ti
 pub(crate) use menus::{CLIP_MENU, EDIT_POINT_TYPES};
 use ruler::draw_top;
 pub use ruler::ruler_steps;
-pub use scrollbars::{controls_listening, set_track_slider_hidden, set_zoombar_hidden, zoombar_cursor_watchdog};
+pub use scrollbars::{controls_listening, custom_control_shortcut_pending, set_track_slider_hidden, set_zoombar_hidden, zoombar_cursor_watchdog};
 use scrollbars::{vertical_scrollbar, zoom_scrollbar};
 pub use snap::{hit_json, locate};
 pub(super) use snap::{snap, snap_caption};
@@ -97,6 +97,19 @@ const SNAP_PX: f32 = 9.0;
 /// Waveform peaks are kept per audio stream: (item, index into the media's `audio_streams`).
 pub type PeakKey = (ItemId, usize);
 
+/// Cached minimap coverage for one sequence, content revision, width and priority configuration.
+pub(super) struct MinimapCache {
+    key: (ItemId, u64, usize, u32, bool, bool),
+    class: Vec<u8>,
+    adjacent_cuts: Vec<usize>,
+}
+
+#[derive(Clone, Copy)]
+pub struct TrackAnimation {
+    pub sequence: ItemId,
+    pub target: [f32; 4],
+}
+
 /// Transient interaction state.
 #[derive(Default)]
 pub struct TlState {
@@ -136,7 +149,10 @@ pub struct TlState {
     /// Track slider motion targets for Smooth Animations: `[video height, video scroll, audio
     /// height, audio scroll]`. The double-click moves land on the OTHER slider and ease there;
     /// a drag writes straight through and cancels the targets.
-    pub track_anim: Option<[f32; 4]>,
+    pub track_anim: Option<TrackAnimation>,
+    /// Minimap coverage is keyed by sequence content, width and classification settings; it is
+    /// rebuilt only after one of those inputs changes.
+    pub(super) minimap_cache: Option<MinimapCache>,
     /// The track sliders' end-circle ring width, eased between its states while Smooth Animations
     /// is on (the zoom bar's [`Self::zoombar_ring_w`] on its end) -- one per slider, so the video
     /// and audio sliders can never fight over one shared number.
@@ -188,6 +204,7 @@ impl TlState {
         self.duplicates = None;
         self.duplicates_pending = None;
         self.duplicates_done = Default::default();
+        self.minimap_cache = None;
     }
 }
 
@@ -394,7 +411,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // ---- sequence tabs strip (top-left header block)
     // ---- animated zoom / scroll
     animate_view(app, &ctx, content, seq_id, seq);
-    animate_track_sliders(app, &ctx);
+    animate_track_sliders(app, &ctx, seq_id);
     let pps = app.ui.timeline.pps;
     let scroll = app.ui.timeline.scroll;
 
@@ -421,10 +438,17 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // track), the same reveal the video side keeps above its topmost row
     let max_as = ((na as f32 + 1.0 / 3.0) * ah - audio_area.height()).max(0.0);
     app.ui.timeline.a_scroll = app.ui.timeline.a_scroll.clamp(0.0, max_as);
-    if let Some(mut target) = app.tl.track_anim {
-        target[1] = clamp_track_scroll_target(target[1], max_vs);
-        target[3] = clamp_track_scroll_target(target[3], max_as);
-        app.tl.track_anim = Some(target);
+    if let Some(mut animation) = app.tl.track_anim {
+        if Some(animation.sequence) != app.session.state.active_sequence {
+            app.tl.track_anim = None;
+        } else {
+            let target = &mut animation.target;
+            let target_max_vs = (nv as f32 * target[0] + target[0] / 3.0 - video_area.height()).max(0.0);
+            let target_max_as = ((na as f32 + 1.0 / 3.0) * target[2] - audio_area.height()).max(0.0);
+            target[1] = clamp_track_scroll_target(target[1], target_max_vs);
+            target[3] = clamp_track_scroll_target(target[3], target_max_as);
+            app.tl.track_anim = Some(animation);
+        }
     }
     for (i, tr) in seq.audio_tracks.iter().enumerate() {
         let top = audio_area.min.y + i as f32 * ah - app.ui.timeline.a_scroll;
@@ -432,7 +456,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         rows.push(Row { track: tr.id, kind: TrackKind::Audio, index: i, rect, lane: app.ui.timeline.track_lanes.contains_key(&tr.id.0) });
     }
     let (v_scroll, a_scroll) = (app.ui.timeline.v_scroll, app.ui.timeline.a_scroll);
-    let layout = Layout { content, ruler, rows: rows.clone(), pps, scroll, split_y, v_scroll, a_scroll };
+    let layout = Layout { content, ruler, video_top: video_area.min.y, rows: rows.clone(), pps, scroll, split_y, v_scroll, a_scroll };
     app.tl.layout = Some(layout.clone());
 
     // ---- backgrounds
@@ -568,6 +592,12 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         let inverted = app.session.state.timeline_ui.inverted_controls;
         let decouple = app.session.state.timeline_ui.track_slider_decouple;
         let shift_speed = app.session.state.timeline_ui.track_slider_shift_drag_speed as f32;
+        let track_bindings = [
+            app.session.state.timeline_ui.track_control_copy_slider.as_str(),
+            app.session.state.timeline_ui.track_control_minimum_height.as_str(),
+            app.session.state.timeline_ui.track_control_alternate_drag_speed.as_str(),
+            app.session.state.timeline_ui.track_control_settings.as_str(),
+        ];
         // a few points clear of the A/V divider's black band at each end, so the line never
         // clips over the sliders' rounded caps; the column sits against the body's edge --
         // right normally, left (in front of the headers) with Alternate Slider Position
@@ -599,6 +629,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             shift_speed,
             &t,
             "vs",
+            track_bindings,
         );
         app.auto.add(
             "timeline.trackSlider.video.bar",
@@ -622,6 +653,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             shift_speed,
             &t,
             "as",
+            track_bindings,
         );
         app.auto.add(
             "timeline.trackSlider.audio.bar",
@@ -671,7 +703,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 }
             }
             if app.session.state.timeline_ui.track_slider_smooth {
-                app.tl.track_anim = Some(tg);
+                app.tl.track_anim = Some(TrackAnimation { sequence: seq_id, target: tg });
                 ctx.request_repaint();
             } else {
                 app.ui.timeline.video_track_h = tg[0];
@@ -715,10 +747,15 @@ fn clamp_track_scroll_target(value: f32, maximum: f32) -> f32 {
     if !maximum.is_finite() || maximum < 0.0 || !value.is_finite() { 0.0 } else { value.clamp(0.0, maximum) }
 }
 
-fn animate_track_sliders(app: &mut FilmcraftApp, ctx: &egui::Context) {
-    let Some(tg) = app.tl.track_anim else {
+fn animate_track_sliders(app: &mut FilmcraftApp, ctx: &egui::Context, seq_id: ItemId) {
+    let Some(animation) = app.tl.track_anim else {
         return;
     };
+    if animation.sequence != seq_id {
+        app.tl.track_anim = None;
+        return;
+    }
+    let tg = animation.target;
     let smooth = app.session.state.timeline_ui.track_slider_smooth;
     let v = &mut app.ui.timeline;
     if smooth {
@@ -753,6 +790,7 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
     let empty = seq.duration().seconds() <= 0.0;
     let dur_s = seq.duration().seconds().max(1.0);
     let min_zoom_view = app.session.state.timeline_ui.max_zoom_secs();
+    let mut fit_completed = false;
     {
         let v = &mut app.ui.timeline;
         if let Some(p) = v.fit_empty
@@ -769,6 +807,7 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
             v.target_scroll = 0.0;
             v.fit_pending = false;
             v.fit_empty = empty.then_some(v.target_pps);
+            fit_completed = true;
         }
         // however the zoom was set (wheel, keys, the bar, a script), zooming out stops at the
         // extent and zooming in stops at the Maximum Zoom Level setting
@@ -844,7 +883,7 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
             v.scroll = v.target_scroll;
         }
         if v.target_scroll != previous_target_scroll {
-            app.timeline_auto_scroll_pending = true;
+            app.timeline_auto_scroll_pending = Some((seq_id, app.session.document_epoch, v.target_scroll));
         }
     }
     // A jump while stopped (Home, End, edit points, markers) brings the playhead into view.
@@ -873,6 +912,19 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
         }
         v.scroll = v.scroll.clamp(0.0, max_scroll(seconds, content.width(), v.pps));
         v.target_scroll = v.target_scroll.clamp(0.0, max_scroll(seconds, content.width(), v.target_pps));
+        if let Some((pending_sequence, pending_document, _)) = app.timeline_auto_scroll_pending {
+            app.timeline_auto_scroll_pending = Some((pending_sequence, pending_document, v.target_scroll));
+        }
+        if fit_completed {
+            app.timeline_view_last = Some(filmcraft_engine::project::SequenceView {
+                pps: v.target_pps,
+                scroll: v.target_scroll,
+                v_scroll: v.v_scroll,
+                a_scroll: v.a_scroll,
+                video_track_h: v.video_track_h,
+                audio_track_h: v.audio_track_h,
+            });
+        }
     }
 }
 
@@ -1302,6 +1354,7 @@ mod waveform_drag_anchor_tests {
         Layout {
             content: Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 400.0)),
             ruler: Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 20.0)),
+            video_top: 20.0,
             rows: Vec::new(),
             pps: 100.0,
             scroll: 0.0,
@@ -1488,6 +1541,7 @@ mod new_track_tests {
         let layout = Layout {
             content: Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 500.0)),
             ruler: Rect::from_min_max(pos2(0.0, -20.0), pos2(800.0, 0.0)),
+            video_top: 0.0,
             rows: vec![row(TrackKind::Video, &seq.video_tracks[0], 150.0), row(TrackKind::Audio, &seq.audio_tracks[0], 205.0)],
             pps: 100.0,
             scroll: 0.0,
@@ -1535,6 +1589,7 @@ mod new_track_tests {
         let layout = Layout {
             content,
             ruler: Rect::from_min_max(pos2(0.0, 60.0), pos2(1000.0, 100.0)),
+            video_top: content.min.y,
             rows: vec![
                 // V1 scrolled 40 px: it reaches 40 px below the divider
                 row(1, TrackKind::Video, 240.0, 340.0),
@@ -1588,6 +1643,7 @@ mod new_track_tests {
         let layout = Layout {
             content: Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 500.0)),
             ruler: Rect::from_min_max(pos2(0.0, -20.0), pos2(800.0, 0.0)),
+            video_top: 0.0,
             rows,
             pps: 100.0,
             scroll: 0.0,

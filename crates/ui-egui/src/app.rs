@@ -105,7 +105,7 @@ impl FilmcraftApp {
             last_timeline_width: 1000.0,
             timeline_view_of: None,
             timeline_view_document: ime_document_epoch,
-            timeline_auto_scroll_pending: false,
+            timeline_auto_scroll_pending: None,
             pending_timeline_drop: None,
             clip_mismatch: None,
             file_drag_hover: None,
@@ -322,7 +322,11 @@ impl FilmcraftApp {
         // spike, a focus loss or anything else can never leave it stuck on the mouse. The
         // watchdog also covers the track sliders' Shift drags (same lock), and those stay live
         // while the zoom bar is hidden, so it runs unconditionally (it is a no-op without a lock)
-        crate::panels::timeline::zoombar_cursor_watchdog(&mut self.tl, ctx);
+        crate::panels::timeline::zoombar_cursor_watchdog(
+            &mut self.tl,
+            ctx,
+            &[&self.session.state.timeline_ui.control_alternate_drag_speed, &self.session.state.timeline_ui.track_control_alternate_drag_speed],
+        );
         // Remember the pass's clock before anything reads `now()`. A hidden logic-only tick keeps
         // the last UI time (which is stale there), so `now()` never runs behind the host clock.
         self.ui_clock = self.ui_clock.max(ctx.input(|i| i.time));
@@ -438,6 +442,9 @@ impl FilmcraftApp {
         }
         // Only a real, accepted UI pass may issue a capture: it observes the final layout for this
         // pass and `screenshot` itself forces the paint needed when the window is hidden.
+        // Drawing the frame can start a track-slider animation (for example, a double-click
+        // fit), so settle the screenshot counter against the post-draw animation state.
+        self.timeline_still = next_timeline_still(self.timeline_still, self.ui.timeline.animating(), self.tl.track_anim.is_some());
         capture::issue(self, &ctx);
     }
 }

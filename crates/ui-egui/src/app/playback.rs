@@ -308,22 +308,22 @@ impl FilmcraftApp {
             (Tick::ZERO, dur)
         };
         if let Some(end) = self.playback.stop_at.filter(|e| t >= *e && self.playback.speed > 0.0 && !self.playback.looping) {
-            self.session.set_playhead(self.playback.rest_at.unwrap_or(end));
+            self.session.set_playhead_during_playback(self.playback.rest_at.unwrap_or(end));
             self.stop();
         } else if t >= hi && self.playback.speed > 0.0 && (self.playback.looping || !self.session.voiceover.recording()) {
             // a voice-over take keeps playing (and recording) into the empty timeline past the end
             if self.playback.looping {
-                self.session.set_playhead(lo);
+                self.session.set_playhead_during_playback(lo);
                 self.play(self.playback.speed);
             } else {
-                self.session.set_playhead(hi - rate.frame_duration());
+                self.session.set_playhead_during_playback(hi - rate.frame_duration());
                 self.stop();
             }
         } else if t <= Tick::ZERO && self.playback.speed < 0.0 {
-            self.session.set_playhead(Tick::ZERO);
+            self.session.set_playhead_during_playback(Tick::ZERO);
             self.stop();
         } else {
-            self.session.set_playhead(t);
+            self.session.set_playhead_during_playback(t);
             self.playback.smooth_playhead = Some((self.smooth_playhead(t, now), now));
         }
         ctx.request_repaint();

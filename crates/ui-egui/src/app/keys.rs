@@ -25,12 +25,15 @@ impl FilmcraftApp {
         // A focused dock divider or floating-window grip takes the arrow keys to nudge it, but no
         // other key: Space and the other shortcuts keep working (#1482).
         let divider_focused = self.divider_focused(ctx);
-        if (ctx.egui_wants_keyboard_input() && !divider_focused)
-            || self.dialog == Some(Dialog::Shortcuts)
-            || self.ui.clip_dialog.is_some()
-            // a Controls box is naming a new shortcut: nothing else may hear the key
-            || panels::timeline::controls_listening(self, ctx)
-        {
+        let controls_listening = panels::timeline::controls_listening(self, ctx);
+        if (ctx.egui_wants_keyboard_input() && !divider_focused) || self.dialog == Some(Dialog::Shortcuts) || self.ui.clip_dialog.is_some() {
+            return;
+        }
+        if controls_listening {
+            ctx.input(|input| self.sync_v_down(&input.events));
+            return;
+        }
+        if panels::timeline::custom_control_shortcut_pending(self, ctx) {
             return;
         }
         // A focused text field takes every unmodified key, including the ones our shortest
@@ -48,6 +51,14 @@ impl FilmcraftApp {
         panels::masks::pen_take_back(self, ctx, text_focused);
         let fire = ctx.input_mut(|i| self.match_shortcuts(i, text_focused, divider_focused, label_selected));
         self.fire_shortcuts(ctx, fire);
+    }
+
+    fn sync_v_down(&mut self, events: &[egui::Event]) {
+        for event in events {
+            if let egui::Event::Key { key: egui::Key::V, pressed, .. } = event {
+                self.v_down = *pressed;
+            }
+        }
     }
 
     /// Key, text and clipboard events that a floating panel in its own OS window left over
@@ -440,6 +451,17 @@ mod key_repeat_tests {
         let right = |repeat| Event::Key { key: Key::ArrowRight, physical_key: Some(Key::ArrowRight), pressed: true, repeat, modifiers: Modifiers::NONE };
         assert_eq!(fired(vec![right(false), right(true)]).len(), 1, "one pass consumes every press of the chord");
         assert_eq!(fired(vec![right(true)]), ["playhead.stepForward"]);
+    }
+
+    #[test]
+    fn v_pressed_while_controls_listen_is_not_replayed_as_paste_on_release() {
+        let mut app = super::FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.sync_v_down(&[Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: true, repeat: false, modifiers: Modifiers::COMMAND }]);
+        assert!(app.v_down, "the listening path remembers the captured press");
+        let mut input = egui::InputState::default();
+        input.events = vec![Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND }];
+        assert!(app.match_shortcuts(&mut input, false, false, false).is_empty(), "the release must not synthesize another paste press");
+        assert!(!app.v_down);
     }
 }
 
