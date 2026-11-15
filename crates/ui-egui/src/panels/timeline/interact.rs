@@ -343,7 +343,14 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
         let inv = app.session.state.timeline_ui.inverted_controls;
         // Trackpads deliver horizontal time scrolling as delta.x only; Shift keeps its fast rate.
         let horizontal_only = w.delta.y == 0.0 && w.delta.x != 0.0;
-        let wdy = if horizontal_only || (w.shift && w.delta.y == 0.0) { w.delta.x } else { w.delta.y };
+        // Alt+horizontal is still a trackpad time gesture, not the vertical-wheel zoom shortcut.
+        let wdy = if horizontal_only && w.alt {
+            0.0
+        } else if horizontal_only || (w.shift && w.delta.y == 0.0) {
+            w.delta.x
+        } else {
+            w.delta.y
+        };
         // Ctrl + Shift + wheel zooms about the pointer, and Inverted controls turns that around
         if (w.pinch - 1.0).abs() > 1e-4 || (w.alt && wdy != 0.0) || (w.command && w.shift && wdy != 0.0) {
             let f = if (w.pinch - 1.0).abs() > 1e-4 {
@@ -365,10 +372,10 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
             // Ctrl + wheel moves the tracks up and down. Settings ▸ Timeline ▸
             // Timeline Mouse Scrolling "Horizontal" swaps those two.
             let swap = app.session.prefs.timeline.mouse_scrolling == "horizontal";
-            let time = if w.shift {
+            let time = if horizontal_only && !w.command {
+                Some(w.delta.x * if w.shift { 10.0 } else { 1.0 })
+            } else if w.shift {
                 Some(wdy * 10.0)
-            } else if horizontal_only && !w.command {
-                Some(w.delta.x)
             } else if w.command == swap {
                 Some(wdy)
             } else {

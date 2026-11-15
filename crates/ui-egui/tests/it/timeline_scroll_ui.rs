@@ -366,6 +366,10 @@ fn the_wheel_moves_the_timeline_sideways_and_option_wheel_zooms() {
     assert_eq!(d.view(), (5.0, 50.0, 0.0, 0.0));
     d.wheel(0.2, -50.0, 0.0, json!({"shift": true}));
     assert_eq!(d.view(), (15.0, 50.0, 0.0, 0.0), "Shift keeps the 10x horizontal-scroll speed");
+    d.ok("ui.set", json!({"timeline": {"pps": 50.0, "scroll": 4.0}}));
+    d.frames(3);
+    d.wheel(0.2, -50.0, 0.0, json!({"alt": true}));
+    assert_eq!(d.view(), (5.0, 50.0, 0.0, 0.0), "Alt does not turn horizontal trackpad time scrolling into zoom");
     d.ok("ui.set", json!({"timeline": {"scroll": 4.0}}));
     d.frames(3);
     d.wheel(0.2, 0.0, -50.0, json!({"shift": true}));
