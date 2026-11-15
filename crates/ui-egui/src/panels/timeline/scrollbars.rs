@@ -110,7 +110,9 @@ fn zoombar_popup_content(app: &mut FilmcraftApp, ui: &mut egui::Ui, screen_heigh
     if !needs_scroll {
         ui.visuals_mut().widgets.inactive.bg_fill = original_inactive;
         let rows = ui.scope(|ui| zoombar_settings_rows(app, ui));
-        ui.ctx().data_mut(|data| data.insert_temp(zoombar_popup_content_height_key(), rows.response.rect.height()));
+        if measuring {
+            ui.ctx().data_mut(|data| data.insert_temp(zoombar_popup_content_height_key(), rows.response.rect.height()));
+        }
         return;
     }
     let fresh = ui.ctx().data(|data| data.get_temp::<bool>(fresh_key)).unwrap_or(false);
@@ -134,7 +136,7 @@ fn zoombar_popup_content(app: &mut FilmcraftApp, ui: &mut egui::Ui, screen_heigh
         ui.visuals_mut().widgets.inactive.bg_fill = original_inactive;
         zoombar_settings_rows(app, ui);
     });
-    ui.ctx().data_mut(|data| data.insert_temp(zoombar_popup_content_height_key(), output.content_size.y));
+    let _ = output;
 }
 
 fn zoombar_popup_open_key() -> egui::Id {
@@ -2884,34 +2886,49 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
             .clamp(screen.left(), (screen.right() - popup_width).max(screen.left())),
         requested_pos.y.clamp(screen.top(), screen.bottom()),
     );
-    let popup_response = if open_at.is_some() {
+    if open_at.is_some() {
         let auto_count = app.auto.elements.len();
-        egui::Area::new(popup_id)
+        let measurement = egui::Area::new(popup_id)
             .order(egui::Order::Foreground)
+            .default_size(egui::vec2(popup_width, screen.height()))
             .fixed_pos(screen.min)
             .fade_in(false)
             .interactable(false)
             .sizing_pass(true)
-            .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true)).inner);
+            .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true)).response.rect.height());
+        let _ = measurement;
+        // Egui's sizing pass can produce different widget heights from a normal layout. Run a
+        // hidden normal layout too, so the visible area's bottom pivot has its real size immediately.
+        let measured = egui::Area::new(popup_id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .fade_in(false)
+            .interactable(false)
+            .show(&ctx, |ui| {
+                ui.set_invisible();
+                egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true));
+            });
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("timeline-zoombar-popup-frame-height"), measured.response.rect.height()));
         app.auto.elements.truncate(auto_count);
-        ctx.request_repaint();
-        None
-    } else {
+    }
+    let popup_response = {
         let is_open = ctx.data(|data| data.get_temp::<bool>(zoombar_popup_open_key())).unwrap_or(false);
-        if is_open && let Some(size) = area_size {
-            let content_height = ctx.data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(size.y);
-            let popup_height = (content_height + 16.0).min((screen.height() - 12.0).max(1.0)).max(1.0);
+        if is_open {
+            let content_height = ctx.data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
+            let measured_height = ctx.data(|data| data.get_temp::<f32>(egui::Id::unique("timeline-zoombar-popup-frame-height"))).unwrap_or(content_height + 16.0);
+            let popup_height = measured_height.min((screen.height() - 12.0).max(1.0)).max(1.0);
             let x = popup_pos.x;
-            let y = if above { popup_pos.y - popup_height - 6.0 } else { popup_pos.y + 6.0 };
-            let y = y.clamp(screen.top(), (screen.bottom() - popup_height).max(screen.top()));
+            let y = if above { popup_pos.y.max(screen.top() + popup_height) } else { popup_pos.y.min(screen.bottom() - popup_height) };
             let panel = egui::Area::new(popup_id)
                 .order(egui::Order::Foreground)
+                .pivot(if above { egui::Align2::LEFT_BOTTOM } else { egui::Align2::LEFT_TOP })
                 .default_size(egui::vec2(popup_width, popup_height))
                 .fixed_pos(pos2(x, y))
                 .constrain_to(screen)
                 .fade_in(false)
                 .interactable(true)
                 .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), false)).inner);
+            ctx.data_mut(|data| data.insert_temp(egui::Id::unique("timeline-zoombar-popup-rect"), panel.response.rect));
             Some(panel)
         } else {
             None

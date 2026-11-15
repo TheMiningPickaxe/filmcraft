@@ -990,16 +990,35 @@ fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
     d.right_click_first_visible_frame(point.0, point.1);
 
     let row = "timeline.zoomBar.settings.smoothAnimations";
-    assert!(!d.harness.state().auto.elements.iter().any(|element| element.id == row), "the sizing pass must not expose a partially positioned menu");
-    d.frames(1);
+    assert!(d.harness.state().auto.elements.iter().any(|element| element.id == row), "the menu must be visible on the release frame");
     let first = d.rect_now(row);
+    let painted = |d: &Driver, rect: [f32; 4]| {
+        let center = egui::pos2(rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
+        d.harness.output().shapes.iter().any(|shape| shape.clip_rect.contains(center) && shape.shape.visual_bounding_rect().contains(center))
+    };
+    assert!(painted(&d, first), "menu must be painted on the release frame");
+    let popup = d.harness.ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("timeline-zoombar-popup-rect"))).expect("popup rectangle");
+    assert!((popup.bottom() - point.1).abs() < 1.0, "popup must touch the click: {popup:?}, {point:?}");
     assert!(first[1] + first[3] <= point.1 + 1.0, "the menu opens above the clicked slider: {first:?}, pointer={point:?}");
     let last = d.rect_now("timeline.zoomBar.settings.hideSlider");
     assert!(last[1] + last[3] <= 980.0, "the full menu fits without a default scrollbar: {last:?}");
 
     d.frames(1);
     let next = d.rect_now(row);
-    assert!((next[1] - first[1]).abs() <= 1.0, "the menu stays in place after its first visible frame: {first:?} -> {next:?}");
+    assert!((next[1] - first[1]).abs() < 1.0, "the menu stays in place after its first visible frame: {first:?} -> {next:?}");
+    d.click_at(bar[0] + 5.0, point.1, "left");
+    d.frames(2);
+    assert!(!d.harness.state().auto.elements.iter().any(|element| element.id == row), "outside click closed the menu");
+    let bar_after = d.rect("timeline.zoomBar.track");
+    assert!((bar_after[1] - bar[1]).abs() < 1.0, "bar moved: {bar:?} -> {bar_after:?}");
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(point.0, point.1)));
+    d.frames(1);
+    d.right_click_first_visible_frame(point.0, point.1);
+    let reopened = d.rect_now(row);
+    assert!(painted(&d, reopened), "reopened menu must be painted on the release frame");
+    d.frames(1);
+    let reopened_next = d.rect_now(row);
+    assert!((reopened_next[1] - reopened[1]).abs() < 1.0, "reopened menu jumped: {reopened:?} -> {reopened_next:?}");
 }
 /// "Timeline Slider Settings": the Timeline menu's row above Unhide Timeline Slider, only while
 /// the bar is hidden, opening the exact same settings as right-clicking the bar itself.
