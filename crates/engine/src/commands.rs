@@ -117,7 +117,7 @@ fn has_saved_path(s: &Session) -> std::result::Result<(), String> {
     if s.path.is_some() { Ok(()) } else { Err("the project has not been saved yet".into()) }
 }
 fn has_recovery(s: &Session) -> std::result::Result<(), String> {
-    if s.recovery_candidates().is_empty() { Err("there are no unsaved changes to recover".into()) } else { Ok(()) }
+    if s.recovery_candidates().is_empty() { Err("there are no recovery sessions to open".into()) } else { Ok(()) }
 }
 
 pub(crate) fn has_seq(s: &Session) -> std::result::Result<(), String> {
@@ -2006,7 +2006,7 @@ fn build() -> Vec<CommandSpec> {
             let path = str_p(p, "path").ok_or_else(|| bad("file.open", "need `path`"))?.to_string();
             open_project(s, &path)
         }),
-        cmd!("file.recover", "Recover Unsaved Changes…", ["File"], None, r#"{"id":str?}"#, has_recovery, |s, p| recover(s, str_p(p, "id"))),
+        cmd!("file.recover", "Open Recovery Session…", ["File"], None, r#"{"id":str?}"#, has_recovery, |s, p| recover(s, str_p(p, "id"))),
         cmd!("file.discardRecovery", "Discard Unsaved Changes", [], None, r#"{"id":str?,"all":bool?}"#, has_recovery, |s, p| {
             let all = bool_p(p, "all").unwrap_or(false);
             let id = str_p(p, "id").map(str::to_string);
@@ -2041,6 +2041,7 @@ fn build() -> Vec<CommandSpec> {
             Ok(s.persistence.as_ref().map(|p| p.candidates_json()).unwrap_or_else(|| json!([])))
         }),
         cmd!("file.autoSaveNow", "Auto Save Now", [], None, "{}", always, |s, _| {
+            s.sync_persistence_inner(true);
             let per = s.persistence.as_ref().ok_or_else(|| EngineError::Other("auto-save is not running in this session".into()))?;
             let r = per.auto_save_now().map_err(EngineError::Other)?;
             s.poll_persistence();
@@ -5452,11 +5453,7 @@ fn recover(s: &mut Session, id: Option<&str>) -> Result<Value> {
     let loaded = crate::autosave::load_candidate(&c).map_err(EngineError::Other)?;
     install_project(s, loaded.project, c.meta.project_path.clone(), !c.meta.dirty);
     if let Some(view) = loaded.view {
-        if s.prefs.timeline.restore_open_sequences {
-            s.restore_project_view(view);
-        } else {
-            s.state.timeline_ui = view.timeline_ui.checked();
-        }
+        s.restore_project_view(view);
     }
     // The recovered snapshot itself is now the baseline. Preserve whether its view was unsaved
     // without treating a clean project's view-only change as unsaved project content.
@@ -5485,7 +5482,11 @@ fn recover(s: &mut Session, id: Option<&str>) -> Result<Value> {
         ))
     })?;
     per.candidates.remove(idx);
-    s.toast(format!("Recovered unsaved changes to {} from {saved_at}", c.meta.project_name));
+    if c.meta.dirty {
+        s.toast(format!("Recovered unsaved changes to {} from {saved_at}", c.meta.project_name));
+    } else {
+        s.toast(format!("Recovered Timeline view settings for {} from {saved_at}", c.meta.project_name));
+    }
     Ok(json!({"id": c.id, "name": c.meta.project_name, "path": c.meta.project_path, "savedAt": saved_at, "revision": c.meta.revision}))
 }
 

@@ -158,6 +158,14 @@ pub struct TimelineUiSettings {
     pub control_alternate_drag_speed: String,
     /// Control-menu binding for opening slider settings; empty keeps the built-in gesture.
     pub control_settings: String,
+    /// Track-slider binding for copying the other track slider's height and scroll.
+    pub track_control_copy_slider: String,
+    /// Track-slider binding for setting this slider to minimum track height.
+    pub track_control_minimum_height: String,
+    /// Track-slider binding for alternate drag speed.
+    pub track_control_alternate_drag_speed: String,
+    /// Track-slider binding for opening slider settings.
+    pub track_control_settings: String,
 }
 
 fn default_playhead_custom() -> f64 {
@@ -210,6 +218,10 @@ impl Default for TimelineUiSettings {
             control_explode_slider: String::new(),
             control_alternate_drag_speed: String::new(),
             control_settings: String::new(),
+            track_control_copy_slider: String::new(),
+            track_control_minimum_height: String::new(),
+            track_control_alternate_drag_speed: String::new(),
+            track_control_settings: String::new(),
         }
     }
 }
@@ -243,9 +255,16 @@ impl TimelineUiSettings {
         self.video_indicator_color = normalize_hex_color(&self.video_indicator_color).unwrap_or_else(|| "#64b5f6".to_string());
         self.audio_indicator_color = normalize_hex_color(&self.audio_indicator_color).unwrap_or_else(|| "#2e7d32".to_string());
         self.offline_indicator_color = normalize_hex_color(&self.offline_indicator_color).unwrap_or_else(|| "#d32f2f".to_string());
-        for binding in
-            [&mut self.control_center_on_playhead, &mut self.control_explode_slider, &mut self.control_alternate_drag_speed, &mut self.control_settings]
-        {
+        for binding in [
+            &mut self.control_center_on_playhead,
+            &mut self.control_explode_slider,
+            &mut self.control_alternate_drag_speed,
+            &mut self.control_settings,
+            &mut self.track_control_copy_slider,
+            &mut self.track_control_minimum_height,
+            &mut self.track_control_alternate_drag_speed,
+            &mut self.track_control_settings,
+        ] {
             // Bindings are display text from project files; keep them within UI layout bounds.
             if binding.len() > 48 || binding.chars().any(char::is_control) {
                 binding.clear();
@@ -331,6 +350,10 @@ fn lenient_timeline_ui<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Timelin
         control_explode_slider: read!(control_explode_slider, String),
         control_alternate_drag_speed: read!(control_alternate_drag_speed, String),
         control_settings: read!(control_settings, String),
+        track_control_copy_slider: read!(track_control_copy_slider, String),
+        track_control_minimum_height: read!(track_control_minimum_height, String),
+        track_control_alternate_drag_speed: read!(track_control_alternate_drag_speed, String),
+        track_control_settings: read!(track_control_settings, String),
     }
     .checked())
 }
@@ -392,6 +415,10 @@ mod tests {
         assert!(s.control_explode_slider.is_empty());
         assert!(s.control_alternate_drag_speed.is_empty());
         assert!(s.control_settings.is_empty());
+        assert!(s.track_control_copy_slider.is_empty());
+        assert!(s.track_control_minimum_height.is_empty());
+        assert!(s.track_control_alternate_drag_speed.is_empty());
+        assert!(s.track_control_settings.is_empty());
         assert!(s.track_slider_snap, "Snap to Tracks is on by default");
     }
 
@@ -416,6 +443,10 @@ mod tests {
             control_explode_slider: "x\n".to_string(),
             control_alternate_drag_speed: "y".repeat(49),
             control_settings: "z".repeat(49),
+            track_control_copy_slider: "x".repeat(49),
+            track_control_minimum_height: "x\n".to_string(),
+            track_control_alternate_drag_speed: "y".repeat(49),
+            track_control_settings: "z".repeat(49),
             ..TimelineUiSettings::default()
         }
         .checked();
@@ -435,6 +466,10 @@ mod tests {
         assert!(s.control_explode_slider.is_empty());
         assert!(s.control_alternate_drag_speed.is_empty());
         assert!(s.control_settings.is_empty());
+        assert!(s.track_control_copy_slider.is_empty());
+        assert!(s.track_control_minimum_height.is_empty());
+        assert!(s.track_control_alternate_drag_speed.is_empty());
+        assert!(s.track_control_settings.is_empty());
         assert_eq!(s.max_zoom_secs(), 3.0);
     }
 

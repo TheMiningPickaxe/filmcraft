@@ -544,6 +544,8 @@ mod tests {
                 playhead_side_last_custom: 20.5,
                 shift_drag_last_custom: 42.5,
                 max_zoom_last_custom: 0.25,
+                track_control_copy_slider: "G".into(),
+                track_control_minimum_height: "Shift + G".into(),
                 ..TimelineUiSettings::default()
             },
         };

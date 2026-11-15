@@ -542,7 +542,7 @@ pub struct Session {
     last_view_snapshot_sent: Option<web_time::Instant>,
     /// A project view is unchanged while only project content revisions advance. Reuse it for
     /// those recovery snapshots; document and view epochs invalidate it when the view can differ.
-    persistence_view_cache: Option<(u64, u64, filmcraft_project::ProjectView)>,
+    persistence_view_cache: Option<(u64, u64, u64, filmcraft_project::ProjectView)>,
     pub path: Option<String>,
     pub state: EditorState,
     pub media: Arc<MediaPool>,
@@ -991,7 +991,9 @@ impl Session {
         {
             self.log.push(panels::Level::Error, id, e.to_string());
         }
-        self.sync_persistence();
+        // Commands may be the only input source in CLI/MCP/headless sessions. Do not throttle
+        // their view snapshots: without a UI poll loop there may be no later retry before a crash.
+        self.sync_persistence_inner(true);
         // playback reads the newest snapshot (mixer moves, mutes… are heard while playing)
         self.previews.live.publish_project(self.project.clone());
         if r.is_ok() && journal {
@@ -1065,14 +1067,15 @@ impl Session {
     }
 
     fn persistence_project_view(&mut self) -> filmcraft_project::ProjectView {
-        if let Some((document_epoch, view_epoch, view)) = &self.persistence_view_cache
+        if let Some((document_epoch, revision, view_epoch, view)) = &self.persistence_view_cache
             && *document_epoch == self.document_epoch
+            && *revision == self.revision
             && *view_epoch == self.view_epoch
         {
             return view.clone();
         }
         let view = self.project_view();
-        self.persistence_view_cache = Some((self.document_epoch, self.view_epoch, view.clone()));
+        self.persistence_view_cache = Some((self.document_epoch, self.revision, self.view_epoch, view.clone()));
         view
     }
 
@@ -1325,6 +1328,7 @@ impl Session {
         }
         self.state.open_sequences.retain(|s| p.sequence(*s).is_some());
         self.state.timeline_views.retain(|s, _| p.sequence(*s).is_some());
+        self.persistence_view_cache = None;
         if let Some(s) = self.state.source_item
             && p.item(s).is_none()
         {
@@ -1385,12 +1389,22 @@ impl Session {
     }
 
     pub fn set_playhead(&mut self, t: Tick) {
+        self.set_playhead_inner(t, true);
+    }
+
+    /// Update the playhead while transport is running without recording the moving frame as an
+    /// unsaved project-view edit. Stopping playback leaves the saved playhead position intact.
+    pub fn set_playhead_during_playback(&mut self, t: Tick) {
+        self.set_playhead_inner(t, false);
+    }
+
+    fn set_playhead_inner(&mut self, t: Tick, mark_view_dirty: bool) {
         if let Some(s) = self.state.active_sequence {
             let rate = self.active_sequence().map(|s| s.settings.frame_rate).unwrap_or_default();
             let playhead = rate.snap(t.max(Tick::ZERO));
-            let changed = self.state.playheads.get(&s).copied() != Some(playhead);
+            let changed = self.state.playheads.get(&s).copied().unwrap_or_default() != playhead;
             self.state.playheads.insert(s, playhead);
-            if changed {
+            if changed && mark_view_dirty {
                 self.view_changed();
             }
             if self.state.selection_follows_playhead {

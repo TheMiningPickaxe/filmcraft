@@ -595,6 +595,7 @@ pub fn make_offline(s: &mut Session, p: &Value) -> Result<Value> {
                 && deletable_media(s, *id, &path)
                 && std::fs::remove_file(&path).is_ok()
             {
+                s.media.remove(*id);
                 deleted.push(path.clone());
             }
         }
