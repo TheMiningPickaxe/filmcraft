@@ -87,7 +87,7 @@ fn clean_project_view_changes_are_recovered_without_dirtying_content() {
 }
 
 #[test]
-fn recovery_snapshot_reuses_the_project_view_after_content_only_edits() {
+fn recovery_snapshot_refreshes_the_view_cache_after_content_only_edits() {
     let d = temp_dir("view-cache");
     let mut s = demo();
     start(&mut s, &d);
@@ -99,7 +99,17 @@ fn recovery_snapshot_reuses_the_project_view_after_content_only_edits() {
     s.execute("sequence.addEdit", json!({"seconds": 1.5})).unwrap();
 
     assert_eq!(s.view_epoch, view_epoch, "content edits do not invalidate the project view");
-    assert_eq!(s.persistence_view_cache, cached, "the last view snapshot is reused while only content changes");
+    let Some((cached_document, cached_revision, cached_view_epoch, cached_view)) = cached else {
+        panic!("the view snapshot should have been cached");
+    };
+    let Some((document, revision, cached_view_epoch_after_edit, view)) = &s.persistence_view_cache else {
+        panic!("the content edit should refresh the view cache");
+    };
+    assert_eq!(*document, cached_document);
+    assert_ne!(*revision, cached_revision, "content revisions invalidate the cached view");
+    assert_eq!(*revision, s.revision);
+    assert_eq!(*cached_view_epoch_after_edit, cached_view_epoch);
+    assert_eq!(*view, cached_view, "the projected view itself remains unchanged");
     s.shutdown();
 }
 
@@ -334,12 +344,13 @@ fn crash_recovery_end_to_end() {
 }
 
 #[test]
-fn recovery_restores_timeline_settings_when_sequence_tab_restore_is_disabled() {
+fn recovery_restores_full_view_when_ordinary_open_preference_is_disabled() {
     let d = temp_dir("recover-no-open-tabs");
     let mut a = demo();
     start(&mut a, &d);
     let first = a.state.active_sequence.unwrap();
     a.execute("file.newSequence", json!({"name": "Recovery tab"})).unwrap();
+    let recovery_tab = a.state.active_sequence.unwrap();
     a.state.timeline_ui.inverted_controls = true;
     a.project_view_changed();
     a.execute("sequence.addEdit", json!({"seconds": 1.5})).unwrap();
@@ -353,9 +364,8 @@ fn recovery_restores_timeline_settings_when_sequence_tab_restore_is_disabled() {
     recovered.execute("file.recover", json!({})).unwrap();
 
     assert!(recovered.state.timeline_ui.inverted_controls, "recovery still restores Timeline settings");
-    assert_eq!(recovered.state.open_sequences, [first], "the preference keeps only the first sequence tab");
-    assert_eq!(recovered.state.active_sequence, Some(first));
-    assert!(recovered.state.timeline_views.is_empty(), "sequence tab views are not restored when disabled");
+    assert_eq!(recovered.state.open_sequences, [first, recovery_tab], "recovery restores all saved sequence tabs independently of ordinary open preferences");
+    assert_eq!(recovered.state.active_sequence, Some(recovery_tab));
     recovered.shutdown();
 }
 
@@ -541,6 +551,48 @@ fn auto_save_now_skips_clean_project_view_only_changes() {
 
     assert!(result["path"].is_null(), "a view-only change is not an auto-save of project content");
     assert!(!d.join("Auto-Save").exists(), "no auto-save file is created for clean content");
+    s.shutdown();
+}
+
+#[test]
+fn explicit_auto_save_syncs_the_latest_view_with_unsaved_content() {
+    let d = temp_dir("auto-save-fresh-view");
+    let mut s = demo();
+    start(&mut s, &d);
+    s.execute("file.saveAs", json!({"path": d.join("saved.fcproj").to_string_lossy()})).unwrap();
+    s.execute("sequence.addEdit", json!({"seconds": 0.5})).unwrap();
+    s.state.timeline_ui.inverted_controls = true;
+    s.project_view_changed();
+
+    let result = s.execute("file.autoSaveNow", json!({})).unwrap();
+    let path = result["path"].as_str().expect("content-dirty auto-save has a path");
+    let loaded = filmcraft_format::decode(&std::fs::read(path).unwrap()).unwrap();
+    assert!(loaded.view.is_some_and(|view| view.timeline_ui.inverted_controls), "explicit save includes the latest view state");
+    s.shutdown();
+}
+
+#[test]
+fn content_revision_invalidates_the_persistence_view_cache() {
+    let mut s = demo();
+    let _cached = s.persistence_project_view();
+    s.execute("file.newSequence", json!({"name": "New sequence"})).unwrap();
+    let view = s.persistence_project_view();
+    assert_eq!(view.active_sequence, s.state.active_sequence, "the cache reflects sequence state changed by a content edit");
+}
+
+#[test]
+fn playback_playhead_motion_does_not_mark_view_state_unsaved() {
+    let d = temp_dir("playback-clean-view");
+    let mut s = demo();
+    start(&mut s, &d);
+    s.execute("file.saveAs", json!({"path": d.join("saved.fcproj").to_string_lossy()})).unwrap();
+    let next = s.playhead() + s.sequence_rate().frame_duration();
+
+    s.set_playhead_during_playback(next);
+
+    assert!(!s.is_view_dirty(), "transport movement alone does not prompt to save the project");
+    s.set_playhead(next + s.sequence_rate().frame_duration());
+    assert!(s.is_view_dirty(), "a user-initiated playhead change remains a saveable view edit");
     s.shutdown();
 }
 
