@@ -87,7 +87,7 @@ fn clean_project_view_changes_are_recovered_without_dirtying_content() {
 }
 
 #[test]
-fn recovery_snapshot_refreshes_the_view_cache_after_content_only_edits() {
+fn recovery_snapshot_reuses_the_view_cache_after_content_only_edits() {
     let d = temp_dir("view-cache");
     let mut s = demo();
     start(&mut s, &d);
@@ -99,17 +99,16 @@ fn recovery_snapshot_refreshes_the_view_cache_after_content_only_edits() {
     s.execute("sequence.addEdit", json!({"seconds": 1.5})).unwrap();
 
     assert_eq!(s.view_epoch, view_epoch, "content edits do not invalidate the project view");
-    let Some((cached_document, cached_revision, cached_view_epoch, cached_view)) = cached else {
+    let Some((cached_document, cached_view_epoch, cached_view)) = &cached else {
         panic!("the view snapshot should have been cached");
     };
-    let Some((document, revision, cached_view_epoch_after_edit, view)) = &s.persistence_view_cache else {
-        panic!("the content edit should refresh the view cache");
+    let Some((document, cached_view_epoch_after_edit, view)) = &s.persistence_view_cache else {
+        panic!("the content edit should retain the view cache");
     };
-    assert_eq!(*document, cached_document);
-    assert_ne!(*revision, cached_revision, "content revisions invalidate the cached view");
-    assert_eq!(*revision, s.revision);
-    assert_eq!(*cached_view_epoch_after_edit, cached_view_epoch);
-    assert_eq!(*view, cached_view, "the projected view itself remains unchanged");
+    assert_eq!(document, cached_document);
+    assert_eq!(s.persistence_view_cache, cached, "content-only revisions reuse the same cached view");
+    assert_eq!(cached_view_epoch_after_edit, cached_view_epoch);
+    assert_eq!(view, cached_view, "the projected view itself remains unchanged");
     s.shutdown();
 }
 
@@ -572,10 +571,12 @@ fn explicit_auto_save_syncs_the_latest_view_with_unsaved_content() {
 }
 
 #[test]
-fn content_revision_invalidates_the_persistence_view_cache() {
+fn timeline_view_change_invalidates_the_persistence_view_cache() {
     let mut s = demo();
     let _cached = s.persistence_project_view();
+    let view_epoch = s.view_epoch;
     s.execute("file.newSequence", json!({"name": "New sequence"})).unwrap();
+    assert_ne!(s.view_epoch, view_epoch, "opening the new sequence changes the project view");
     let view = s.persistence_project_view();
     assert_eq!(view.active_sequence, s.state.active_sequence, "the cache reflects sequence state changed by a content edit");
 }

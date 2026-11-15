@@ -1722,6 +1722,7 @@ fn build() -> Vec<CommandSpec> {
                         place_items(s, &json!({"time": end.0}), &json!(rest.iter().map(|i| i.0).collect::<Vec<_>>()))?;
                     }
                 }
+                s.view_changed();
                 s.events.push(crate::Event::OpenSequence(id));
                 Ok(json!({"sequence": id.0}))
             })
