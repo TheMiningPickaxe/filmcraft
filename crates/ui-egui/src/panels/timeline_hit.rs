@@ -410,6 +410,7 @@ pub(crate) mod tests {
         let layout = Layout {
             content: row,
             ruler: Rect::from_min_max(pos2(0.0, 0.0), pos2(2000.0, 40.0)),
+            video_top: TOP,
             rows: vec![Row { track, kind: TrackKind::Video, index: 0, rect: row, lane: false }],
             pps: 100.0,
             scroll: 0.0,

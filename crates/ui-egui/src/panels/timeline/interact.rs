@@ -171,7 +171,7 @@ fn marquee_clips(seq: &Sequence, layout: &Layout, r: Rect) -> Vec<ClipId> {
 /// A move previews the same track-lock restrictions as its eventual edit.
 fn drag_is_locked(session: &filmcraft_engine::Session, seq: &Sequence, drag: &Drag) -> bool {
     let clips = match drag {
-        Drag::Move { clips, track_delta, .. } => return move_is_locked(seq, clips, *track_delta),
+        Drag::Move { clips, track_delta, new_track, .. } => return move_is_locked_for_drop(seq, clips, *track_delta, new_track.is_some()),
         Drag::Trim { clip, .. } | Drag::Stretch { clip, .. } | Drag::Remix { clip, .. } | Drag::Slip { clip, .. } | Drag::Slide { clip, .. } => vec![*clip],
         Drag::Roll { left, right, .. } => vec![*left, *right],
         Drag::Transition { id, .. } => return seq.all_tracks().any(|t| t.locked && t.transitions.iter().any(|tr| tr.id == *id)),
@@ -190,6 +190,54 @@ fn move_is_locked(seq: &Sequence, clips: &[ClipId], delta: i32) -> bool {
 
 fn move_is_locked_for_drop(seq: &Sequence, clips: &[ClipId], track_delta: i32, creates_track: bool) -> bool {
     move_is_locked(seq, clips, if creates_track { 0 } else { track_delta })
+}
+
+struct MoveDragContext<'a> {
+    app: &'a mut FilmcraftApp,
+    seq: &'a Sequence,
+    layout: &'a Layout,
+    pointer: Pos2,
+    rate: filmcraft_time::FrameRate,
+    copy: bool,
+}
+
+impl MoveDragContext<'_> {
+    fn update(&mut self, clips: Vec<ClipId>, grab_tick: Tick, start_track: TrackId) -> (Drag, bool) {
+        let raw = self.rate.snap_nearest(self.layout.tick_at(self.pointer.x) - grab_tick);
+        let first = clips.iter().filter_map(|c| self.seq.find_item(*c).map(|(_, i)| i.start)).min().unwrap_or_default();
+        let last = clips.iter().filter_map(|c| self.seq.find_item(*c).map(|(_, i)| i.end())).max().unwrap_or_default();
+        let s1 = snap(self.app, self.seq, self.layout, first + raw, &clips) - first;
+        let offset = if s1 != raw { s1 } else { snap(self.app, self.seq, self.layout, last + raw, &clips) - last };
+        let offset = offset.max(-first);
+        let start_row = self.layout.rows.iter().find(|r| r.track == start_track);
+        // A clip dragged off its own pane lands on the nearest visible row of its own kind.
+        let cur_row = self.layout.row_at(self.pointer.y).filter(|r| start_row.is_some_and(|s| r.kind == s.kind)).or_else(|| {
+            let kind = start_row?.kind;
+            nearest_visible_row(self.layout, self.pointer.y, kind)
+        });
+        let track_delta = match (cur_row, start_row) {
+            (Some(c), Some(s)) if c.kind == s.kind => c.index as i32 - s.index as i32,
+            _ => 0,
+        };
+        let new_track = start_row.and_then(|start| {
+            let (vh, ah) = (self.app.ui.timeline.video_track_h, self.app.ui.timeline.audio_track_h);
+            new_track_at(self.seq, self.layout, self.pointer.y, vh, ah).filter(|(kind, _)| *kind == start.kind)
+        });
+        let blocked = move_is_locked_for_drop(self.seq, &clips, track_delta, new_track.is_some());
+        let drag = if blocked {
+            Drag::Move { clips, grab_tick, start_track, offset: Tick::ZERO, track_delta: 0, new_track: None, copy: self.copy }
+        } else {
+            Drag::Move { clips, grab_tick, start_track, offset, track_delta, new_track, copy: self.copy }
+        };
+        (drag, blocked)
+    }
+}
+
+/// Apply the final lock validation used by `drag_update` after it recomputes a drag.
+fn validate_updated_drag(session: &filmcraft_engine::Session, seq: &Sequence, drag: Option<Drag>) -> (Option<Drag>, bool) {
+    let Some(drag) = drag else { return (None, false) };
+    let blocked = drag_is_locked(session, seq, &drag);
+    ((!blocked).then_some(drag), blocked)
 }
 
 fn drag_uses_video_scroll(seq: &Sequence, clips: &[ClipId], start_track: TrackId) -> bool {
@@ -283,7 +331,7 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
     //   Ctrl + wheel     the tracks under the pointer, up and down
     //   Option + wheel   zoom about the pointer
     // Settings ▸ Timeline ▸ Timeline Mouse Scrolling "Horizontal" swaps the wheel and Ctrl +
-    // wheel. Shift remaps horizontal-only wheel events to the Timeline's time axis; a pinch zooms.
+    // wheel. Horizontal-only trackpad input scrolls time; Shift accelerates it and a pinch zooms.
     if ui.rect_contains_pointer(rect)
         && let Some(p) = ctx.pointer_hover_pos()
         // While a zoom-bar drag is going on the wheel belongs to the zoom bar: the track area
@@ -293,8 +341,9 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
     {
         let w = wheel_input(&ctx);
         let inv = app.session.state.timeline_ui.inverted_controls;
-        // macOS delivers Shift+wheel sideways (delta.x only): only Shift remaps that axis to time.
-        let wdy = if w.shift && w.delta.y == 0.0 { w.delta.x } else { w.delta.y };
+        // Trackpads deliver horizontal time scrolling as delta.x only; Shift keeps its fast rate.
+        let horizontal_only = w.delta.y == 0.0 && w.delta.x != 0.0;
+        let wdy = if horizontal_only || (w.shift && w.delta.y == 0.0) { w.delta.x } else { w.delta.y };
         // Ctrl + Shift + wheel zooms about the pointer, and Inverted controls turns that around
         if (w.pinch - 1.0).abs() > 1e-4 || (w.alt && wdy != 0.0) || (w.command && w.shift && wdy != 0.0) {
             let f = if (w.pinch - 1.0).abs() > 1e-4 {
@@ -318,6 +367,8 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
             let swap = app.session.prefs.timeline.mouse_scrolling == "horizontal";
             let time = if w.shift {
                 Some(wdy * 10.0)
+            } else if horizontal_only && !w.command {
+                Some(w.delta.x)
             } else if w.command == swap {
                 Some(wdy)
             } else {
@@ -329,14 +380,25 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
                     let sign = if app.session.state.timeline_ui.inverted_controls { -1.0 } else { 1.0 };
                     let v = &mut app.ui.timeline;
                     let limit = max_scroll(seq.duration().seconds(), layout.content.width(), v.pps);
+                    app.timeline_auto_scroll_pending = None;
                     v.target_scroll = (v.target_scroll - sign * d as f64 / v.pps).clamp(0.0, limit);
                     v.scroll = v.target_scroll;
                 }
                 // up and down: the video tracks above the divider, the audio tracks below it (the
                 // lowest video track is at the bottom, so wheeling up brings higher ones in).
                 // Inverted controls turns both around too.
-                None if p.y < layout.split_y => app.ui.timeline.v_scroll += if inv { -w.delta.y } else { w.delta.y },
-                None => app.ui.timeline.a_scroll -= if inv { -w.delta.y } else { w.delta.y },
+                None if p.y < layout.split_y => {
+                    if w.delta.y != 0.0 {
+                        app.tl.track_anim = None;
+                        app.ui.timeline.v_scroll += if inv { -w.delta.y } else { w.delta.y };
+                    }
+                }
+                None => {
+                    if w.delta.y != 0.0 {
+                        app.tl.track_anim = None;
+                        app.ui.timeline.a_scroll -= if inv { -w.delta.y } else { w.delta.y };
+                    }
+                }
             }
         }
     }
@@ -720,49 +782,30 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
             }
             Drag::Pan { last, start_scroll, start_v, audio, start_a } => {
                 let dx = p.x - last.x;
+                let dy = p.y - last.y;
                 let v = &mut app.ui.timeline;
+                app.timeline_auto_scroll_pending = None;
                 v.target_scroll = (v.target_scroll - dx as f64 / v.pps).max(0.0);
                 v.scroll = v.target_scroll;
                 // the tracks follow the pointer: the video tracks hang from the divider (scrolling
                 // brings higher ones down), the audio tracks start at it, as with the wheel
                 if audio {
-                    v.a_scroll -= p.y - last.y;
+                    v.a_scroll -= dy;
                 } else {
-                    v.v_scroll += p.y - last.y;
+                    v.v_scroll += dy;
+                }
+                if dx.is_finite() && dy.is_finite() && (dx != 0.0 || dy != 0.0) {
+                    app.session.view_changed();
                 }
                 Some(Drag::Pan { last: p, start_scroll, start_v, audio, start_a })
             }
             Drag::Move { clips, grab_tick, start_track, .. } => {
-                let raw = rate.snap_nearest(t_here - grab_tick);
-                // snap the moved block's start or end
-                let first = clips.iter().filter_map(|c| seq.find_item(*c).map(|(_, i)| i.start)).min().unwrap_or_default();
-                let last = clips.iter().filter_map(|c| seq.find_item(*c).map(|(_, i)| i.end())).max().unwrap_or_default();
-                let s1 = snap(app, seq, layout, first + raw, &clips) - first;
-                let offset = if s1 != raw { s1 } else { snap(app, seq, layout, last + raw, &clips) - last };
-                let offset = offset.max(-first);
-                let start_row = layout.rows.iter().find(|r| r.track == start_track);
-                // a clip dragged off its own pane (a video clip below the A/V divider, an audio
-                // one above it) lands on the NEAREST row of its own kind instead of snapping back
-                // to where the drag started
-                let cur_row = layout.row_at(p.y).filter(|r| start_row.is_some_and(|s| r.kind == s.kind)).or_else(|| {
-                    let kind = start_row?.kind;
-                    nearest_visible_row(layout, p.y, kind)
-                });
-                let track_delta = match (cur_row, start_row) {
-                    (Some(c), Some(s)) if c.kind == s.kind => c.index as i32 - s.index as i32,
-                    _ => 0,
-                };
-                let new_track = start_row.and_then(|start| {
-                    let (vh, ah) = (app.ui.timeline.video_track_h, app.ui.timeline.audio_track_h);
-                    new_track_at(seq, layout, p.y, vh, ah).filter(|(kind, _)| *kind == start.kind)
-                });
-                if move_is_locked_for_drop(seq, &clips, track_delta, new_track.is_some()) {
+                let mut update = MoveDragContext { app, seq, layout, pointer: p, rate, copy: mods.alt };
+                let (drag, blocked) = update.update(clips, grab_tick, start_track);
+                if blocked {
                     ctx.set_cursor_icon(CursorIcon::NotAllowed);
-                    Some(Drag::Move { clips, grab_tick, start_track, offset: Tick::ZERO, track_delta: 0, new_track: None, copy: mods.alt })
-                } else {
-                    // A linked or multitrack selection gets one destination per source track.
-                    Some(Drag::Move { clips, grab_tick, start_track, offset, track_delta, new_track, copy: mods.alt })
                 }
+                Some(drag)
             }
             Drag::Trim { clip, edge, mode, from, linked, .. } => seq.find_item(clip).map(|(_, it)| {
                 let base = if edge == filmcraft_edit::Edge::In { it.start } else { it.end() };
@@ -846,13 +889,11 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
             }
             other => Some(other),
         };
-        app.tl.drag = new.filter(|drag| {
-            let blocked = drag_is_locked(&app.session, seq, drag);
-            if blocked {
-                ctx.set_cursor_icon(CursorIcon::NotAllowed);
-            }
-            !blocked
-        });
+        let (updated_drag, blocked) = validate_updated_drag(&app.session, seq, new);
+        app.tl.drag = updated_drag;
+        if blocked {
+            ctx.set_cursor_icon(CursorIcon::NotAllowed);
+        }
         // the trim cursor stays for the whole drag of an edge: the hover feedback above stops once
         // a drag is in progress (#1780)
         if matches!(
@@ -891,7 +932,7 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
             if let Some(Drag::Move { clips, start_track, .. }) = app.tl.drag.clone() {
                 let video = drag_uses_video_scroll(seq, &clips, start_track);
                 let (top, bottom) =
-                    if video { (layout.content.min.y, layout.split_y) } else { (layout.split_y + super::DIVIDER_H, layout.content.max.y - super::MASTER_H) };
+                    if video { (layout.video_top, layout.split_y) } else { (layout.split_y + super::DIVIDER_H, layout.content.max.y - super::MASTER_H) };
                 // only past the pane's own edges (above it / below it), ramped over 24 pt
                 let up = ((top - p.y) / 24.0).clamp(0.0, 1.0);
                 let down = ((p.y - bottom) / 24.0).clamp(0.0, 1.0);
@@ -919,7 +960,7 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
 
 #[cfg(test)]
 mod visible_row_fallback_tests {
-    use super::{drag_uses_video_scroll, move_is_locked_for_drop, nearest_visible_row};
+    use super::{drag_uses_video_scroll, move_is_locked_for_drop, nearest_visible_row, validate_updated_drag};
     use crate::panels::timeline::layout::{Layout, Row};
     use egui::{Rect, pos2};
     use filmcraft_project::{ClipId, ItemId, Label, Project, SequenceSettings, TrackId, TrackItem, TrackKind};
@@ -961,10 +1002,12 @@ mod visible_row_fallback_tests {
     fn nearest_row_fallback_ignores_rows_hidden_by_their_pane() {
         let visible = Row { track: TrackId(1), kind: TrackKind::Video, index: 0, rect: Rect::from_min_max(pos2(0.0, 20.0), pos2(100.0, 40.0)), lane: false };
         let hidden = Row { track: TrackId(2), kind: TrackKind::Video, index: 1, rect: Rect::from_min_max(pos2(0.0, 100.0), pos2(100.0, 120.0)), lane: false };
+        let above_pane = Row { track: TrackId(3), kind: TrackKind::Video, index: 2, rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 10.0)), lane: false };
         let layout = Layout {
             content: Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 100.0)),
             ruler: Rect::NOTHING,
-            rows: vec![visible, hidden],
+            video_top: 20.0,
+            rows: vec![visible, hidden, above_pane],
             pps: 1.0,
             scroll: 0.0,
             split_y: 50.0,
@@ -972,6 +1015,7 @@ mod visible_row_fallback_tests {
             a_scroll: 0.0,
         };
         assert_eq!(nearest_visible_row(&layout, 110.0, TrackKind::Video).map(|row| row.track), Some(TrackId(1)));
+        assert_eq!(nearest_visible_row(&layout, 8.0, TrackKind::Video).map(|row| row.track), Some(TrackId(1)));
     }
 
     #[test]
@@ -984,6 +1028,29 @@ mod visible_row_fallback_tests {
         sequence.video_tracks[1].locked = true;
         assert!(move_is_locked_for_drop(sequence, &[clip.id], 1, false), "the ordinary drop targets the locked row");
         assert!(!move_is_locked_for_drop(sequence, &[clip.id], 1, true), "a new row has no locked destination");
+    }
+
+    #[test]
+    fn final_drag_filter_keeps_new_track_drop_over_a_locked_fallback() {
+        let mut project = Project::new("locked fallback");
+        let sequence_id = project.new_sequence("s", SequenceSettings::default(), 2, 1, None);
+        let sequence = project.sequence_mut(sequence_id).unwrap();
+        let clip = clip(1);
+        sequence.video_tracks[0].items.push(clip.clone());
+        sequence.video_tracks[1].locked = true;
+        let session = filmcraft_engine::Session::new(std::sync::Arc::new(filmcraft_engine::FsServices));
+        let drag = crate::panels::timeline::Drag::Move {
+            clips: vec![clip.id],
+            grab_tick: Tick::ZERO,
+            start_track: sequence.video_tracks[0].id,
+            offset: Tick::ZERO,
+            track_delta: 1,
+            new_track: Some((TrackKind::Video, Rect::NOTHING)),
+            copy: false,
+        };
+        let (updated, blocked) = validate_updated_drag(&session, sequence, Some(drag));
+        assert!(!blocked, "the final drag-update validation must honor a newly-created destination");
+        assert!(matches!(updated, Some(crate::panels::timeline::Drag::Move { new_track: Some(_), .. })));
     }
 
     #[test]
@@ -1669,7 +1736,7 @@ mod marquee_tests {
     fn layout(v_scroll: f32, a_scroll: f32) -> Layout {
         let content = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 600.0));
         let ruler = Rect::from_min_max(pos2(0.0, 0.0), pos2(1000.0, 20.0));
-        Layout { content, ruler, rows: Vec::new(), pps: 100.0, scroll: 0.0, split_y: 300.0, v_scroll, a_scroll }
+        Layout { content, ruler, video_top: 20.0, rows: Vec::new(), pps: 100.0, scroll: 0.0, split_y: 300.0, v_scroll, a_scroll }
     }
 
     /// #2978: V1 scrolled down under the audio tracks, behind A1. A box drawn on A1 takes A1's

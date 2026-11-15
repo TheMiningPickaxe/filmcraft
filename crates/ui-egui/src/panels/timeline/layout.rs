@@ -15,6 +15,8 @@ pub struct Row {
 pub struct Layout {
     pub content: Rect,
     pub ruler: Rect,
+    /// Top of the video pane below any caption rows.
+    pub video_top: f32,
     pub rows: Vec<Row>,
     pub pps: f64,
     pub scroll: f64,
@@ -48,7 +50,10 @@ impl Layout {
     pub fn shown(&self, row: &Row) -> Rect {
         let mut r = row.rect;
         match row.kind {
-            TrackKind::Video => r.max.y = r.max.y.min(self.split_y),
+            TrackKind::Video => {
+                r.min.y = r.min.y.max(self.video_top);
+                r.max.y = r.max.y.min(self.split_y);
+            }
             TrackKind::Audio => {
                 r.min.y = r.min.y.max(self.split_y + DIVIDER_H);
                 r.max.y = r.max.y.min(self.content.max.y - MASTER_H);
