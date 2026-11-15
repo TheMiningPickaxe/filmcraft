@@ -196,7 +196,6 @@ fn zoombar_popup_open_key() -> egui::Id {
     egui::Id::unique("timeline-zoombar-settings-open")
 }
 
-
 /// The rows of the zoom bar's settings popup (see [`zoombar_settings`]).
 // one section per setting keeps the popup's rows in visual order; splitting the function would
 // scatter the popup's layout over the file
@@ -2202,15 +2201,10 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         let _ = measurement;
         // Egui's sizing pass can produce different widget heights from a normal layout. Run a
         // hidden normal layout too, so the visible area's bottom pivot has its real size immediately.
-        let measured = egui::Area::new(popup_id)
-            .order(egui::Order::Foreground)
-            .fixed_pos(screen.min)
-            .fade_in(false)
-            .interactable(false)
-            .show(&ctx, |ui| {
-                ui.set_invisible();
-                egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true));
-            });
+        let measured = egui::Area::new(popup_id).order(egui::Order::Foreground).fixed_pos(screen.min).fade_in(false).interactable(false).show(&ctx, |ui| {
+            ui.set_invisible();
+            egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true));
+        });
         ctx.data_mut(|data| data.insert_temp(egui::Id::unique("timeline-zoombar-popup-frame-height"), measured.response.rect.height()));
         app.auto.elements.truncate(auto_count);
     }
@@ -2218,7 +2212,8 @@ pub(super) fn zoom_scrollbar(app: &mut FilmcraftApp, ui: &mut egui::Ui, bar: Rec
         let is_open = ctx.data(|data| data.get_temp::<bool>(zoombar_popup_open_key())).unwrap_or(false);
         if is_open {
             let content_height = ctx.data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
-            let measured_height = ctx.data(|data| data.get_temp::<f32>(egui::Id::unique("timeline-zoombar-popup-frame-height"))).unwrap_or(content_height + 16.0);
+            let measured_height =
+                ctx.data(|data| data.get_temp::<f32>(egui::Id::unique("timeline-zoombar-popup-frame-height"))).unwrap_or(content_height + 16.0);
             let popup_height = measured_height.min((screen.height() - 12.0).max(1.0)).max(1.0);
             let x = popup_pos.x;
             let y = if above { popup_pos.y.max(screen.top() + popup_height) } else { popup_pos.y.min(screen.bottom() - popup_height) };

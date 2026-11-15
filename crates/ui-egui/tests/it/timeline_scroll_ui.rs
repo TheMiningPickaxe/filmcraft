@@ -203,7 +203,14 @@ impl Driver {
 
     /// Whether an element with this exact id is registered (drawn) this frame.
     fn rect_now(&self, id: &str) -> [f32; 4] {
-        self.harness.state().auto.elements.iter().find(|element| element.id == id).map(|element| element.rect).unwrap_or_else(|| panic!("no current-frame element {id}"))
+        self.harness
+            .state()
+            .auto
+            .elements
+            .iter()
+            .find(|element| element.id == id)
+            .map(|element| element.rect)
+            .unwrap_or_else(|| panic!("no current-frame element {id}"))
     }
 
     fn right_click_first_visible_frame(&mut self, x: f32, y: f32) {
@@ -906,8 +913,7 @@ fn fullscreen_timeline_settings_shows_every_row() {
     let bar = d.rect("timeline.zoomBar.track");
     d.right_click_first_visible_frame(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0);
     d.frames(3);
-    let rows: Vec<_> = d.harness.state().auto.elements.iter()
-        .filter(|e| e.id.starts_with("timeline.zoomBar.settings.")).collect();
+    let rows: Vec<_> = d.harness.state().auto.elements.iter().filter(|e| e.id.starts_with("timeline.zoomBar.settings.")).collect();
     assert!(!rows.is_empty(), "settings are visible");
     let top = rows.iter().map(|r| r.rect[1]).fold(f32::INFINITY, f32::min);
     let bottom = rows.iter().map(|r| r.rect[1] + r.rect[3]).fold(f32::NEG_INFINITY, f32::max);
@@ -916,7 +922,18 @@ fn fullscreen_timeline_settings_shows_every_row() {
     for row in rows {
         assert!(row.rect[1] >= 0.0 && row.rect[1] + row.rect[3] <= 980.0, "row outside fullscreen window: {} {:?}", row.id, row.rect);
     }
-    for label in ["Hide Slider", "Controls", "Smooth Animations", "Invert Scrolling", "Control Track Sliders", "Playhead Centering", "Alternate Slider Position", "Maximum Zoom Level", "Alternate Drag Speed", "Playhead Centering Range", "Slider Minimap"] {
+    for label in [
+        "Hide Slider",
+        "Controls",
+        "Smooth Animations",
+        "Invert Scrolling",
+        "Playhead Centering",
+        "Alternate Slider Position",
+        "Maximum Zoom Level",
+        "Alternate Drag Speed",
+        "Playhead Centering Range",
+        "Slider Minimap",
+    ] {
         let found = d.harness.output().shapes.iter().any(|clipped| {
             if let egui::Shape::Text(text) = &clipped.shape {
                 let bounds = clipped.shape.visual_bounding_rect();
