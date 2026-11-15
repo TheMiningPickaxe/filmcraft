@@ -116,7 +116,7 @@ fn self_referencing_compound_media_is_ignored_without_recursing() {
 }
 
 #[test]
-fn media_cut_off_by_the_depth_limit_is_complete_when_reached_higher_up() {
+fn media_cut_off_by_xml_depth_is_complete_when_reached_higher_up() {
     // m0 … m64 nest one inside the next. Project A reaches m63 at the depth limit, so m64 is left
     // out of it; project B refers to m63 directly, where m64 fits, and must not get the cut-off copy.
     let mut media = String::new();

@@ -145,11 +145,13 @@ struct Imp<'a, 'i, 'r> {
     media_nodes: HashMap<String, Node<'a, 'i>>,
     media_items: HashMap<String, ItemId>,
     media_active: HashSet<String>,
+    sequence_stack: Vec<ItemId>,
+    deferred_audio_refs: Vec<(ItemId, ItemId, filmcraft_project::ClipId, usize)>,
     /// Nested media, storylines or elements cut off by the depth limits.
     truncation_hits: usize,
     /// Media imported incomplete (a nested one below it was left out), by id: the nesting depth
     /// it was imported at. Reached again at a shallower depth it is imported again.
-    media_truncated_at: HashMap<String, usize>,
+    media_truncated_at: HashMap<String, (usize, usize)>,
     /// Re-imports of truncated media still allowed.
     reimports_left: usize,
     effects: HashMap<String, String>,
@@ -203,6 +205,8 @@ pub(crate) fn import(text: &str, opts: &ImportOptions, report: &mut Report) -> R
         media_nodes: HashMap::new(),
         media_items: HashMap::new(),
         media_active: HashSet::new(),
+        sequence_stack: Vec::new(),
+        deferred_audio_refs: Vec::new(),
         truncation_hits: 0,
         media_truncated_at: HashMap::new(),
         reimports_left: MAX_REIMPORTS,
@@ -269,6 +273,7 @@ pub(crate) fn import(text: &str, opts: &ImportOptions, report: &mut Report) -> R
             imp.b.top.push(id);
         }
     }
+    imp.restore_deferred_audio_refs();
     if imp.b.p.items.is_empty() {
         return Err(Error::Empty);
     }
@@ -331,8 +336,14 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         if let Some(i) = self.media_items.get(id) {
             // Imported with a nested one cut off: import it again (into the same item) where that
             // one now fits.
-            let shallower = self.media_truncated_at.get(id).is_some_and(|d| depth < *d) && !self.media_active.contains(id);
+            let shallower =
+                self.media_truncated_at.get(id).is_some_and(|&(media_depth, xml_depth)| {
+                    depth <= media_depth && self.depth <= xml_depth && (depth < media_depth || self.depth < xml_depth)
+                }) && !self.media_active.contains(id);
             if !shallower || self.reimports_left == 0 {
+                if self.media_truncated_at.contains_key(id) {
+                    self.truncation_hits = self.truncation_hits.saturating_add(1);
+                }
                 return Some(*i);
             }
             self.reimports_left -= 1;
@@ -359,7 +370,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         self.media_active.remove(id);
         self.media_items.insert(id.into(), item);
         if self.truncation_hits > hits_before {
-            self.media_truncated_at.insert(id.into(), depth);
+            self.media_truncated_at.insert(id.into(), (depth, self.depth));
         } else {
             self.media_truncated_at.remove(id);
         }
@@ -374,6 +385,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
             settings.sample_rate = sr;
         }
         let id = reuse.unwrap_or_else(|| self.b.reserve_sequence(name, settings.clone(), bin));
+        self.sequence_stack.push(id);
         let mut seq = empty_sequence(settings);
         let tc_start = attr_time(s, "tcStart").unwrap_or(Tick::ZERO);
         seq.start_timecode = rate.frame_at(tc_start);
@@ -386,7 +398,43 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         }
         seq.markers.sort_by_key(|m| m.start);
         self.b.put_sequence(id, seq);
+        let _ = self.sequence_stack.pop();
         id
+    }
+
+    /// Reimporting a truncated nested sequence can reveal its audio tracks after a parent has
+    /// already created a video-only reference. Repair only the references recorded at that
+    /// incomplete import site, preserving explicit video-only `srcEnable` choices.
+    fn restore_deferred_audio_refs(&mut self) {
+        for (parent_id, child_id, video_id, audio_lane) in std::mem::take(&mut self.deferred_audio_refs) {
+            let child_has_audio = self.b.p.sequence(child_id).is_some_and(|sequence| sequence.audio_tracks.iter().any(|track| !track.items.is_empty()));
+            if !child_has_audio {
+                continue;
+            }
+            let Some(mut parent) = self.b.p.sequence(parent_id).cloned() else { continue };
+            let Some(video) = parent.video_tracks.iter_mut().find_map(|track| track.items.iter_mut().find(|item| item.id == video_id)) else { continue };
+            let has_audio_ref = parent
+                .audio_tracks
+                .iter()
+                .any(|track| track.items.iter().any(|item| item.item == child_id && item.start == video.start && item.duration == video.duration));
+            if has_audio_ref {
+                continue;
+            }
+            let link = self.b.link_id();
+            video.link = Some(link);
+            let mut audio = self.b.clip(child_id, TrackKind::Audio, &video.name, video.start, video.duration, video.source_in);
+            audio.speed = video.speed;
+            audio.reverse = video.reverse;
+            audio.enabled = video.enabled;
+            audio.label = video.label;
+            audio.link = Some(link);
+            audio.markers = video.markers.clone();
+            if self.b.place(&mut parent, TrackKind::Audio, audio_lane, audio).is_some() {
+                self.b.put_sequence(parent_id, parent);
+            } else {
+                self.report.warn("FCPXML recovered nested audio could not be placed within the track limit");
+            }
+        }
     }
 
     /// Lay out a storyline, refusing nesting past [`MAX_XML_DEPTH`].
@@ -488,6 +536,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         let local_start = attr_time(el, "start").unwrap_or(Tick::ZERO);
         let mut vclip = None;
         let mut placed: Vec<(TrackKind, filmcraft_project::ClipId)> = Vec::new();
+        let mut deferred_audio_reference = None;
         let name = el.attribute("name").unwrap_or("Clip").to_string();
         // Media and source in.
         let media: Option<(ItemId, Tick, bool, bool)> = match tag {
@@ -521,7 +570,11 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
             "ref-clip" => el.attribute("ref").and_then(|r| {
                 let item = self.media(r)?;
                 let tc = self.b.p.sequence(item).map(|s| s.settings.frame_rate.tick_of(s.start_timecode)).unwrap_or(Tick::ZERO);
-                Some((item, tc, true, self.b.p.sequence(item).is_some_and(|s| s.audio_tracks.iter().any(|t| !t.items.is_empty()))))
+                let has_audio = self.b.p.sequence(item).is_some_and(|s| s.audio_tracks.iter().any(|t| !t.items.is_empty()));
+                if !has_audio && el.attribute("srcEnable") != Some("video") && self.media_truncated_at.contains_key(r) {
+                    deferred_audio_reference = Some(item);
+                }
+                Some((item, tc, true, has_audio))
             }),
             "gap" => None,
             "title" | "audio" | "sync-clip" | "mc-clip" | "live-drawing" => {
@@ -576,6 +629,9 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
                 placed.push((kind, id));
                 if kind == TrackKind::Video {
                     vclip = Some(id);
+                    if let (Some(child), Some(parent)) = (deferred_audio_reference, self.sequence_stack.last().copied()) {
+                        self.deferred_audio_refs.push((parent, child, id, lane.max(0) as usize));
+                    }
                 }
             }
         }
