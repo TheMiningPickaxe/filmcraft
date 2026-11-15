@@ -202,6 +202,25 @@ impl Driver {
     }
 
     /// Whether an element with this exact id is registered (drawn) this frame.
+    fn rect_now(&self, id: &str) -> [f32; 4] {
+        self.harness.state().auto.elements.iter().find(|element| element.id == id).map(|element| element.rect).unwrap_or_else(|| panic!("no current-frame element {id}"))
+    }
+
+    fn right_click_first_visible_frame(&mut self, x: f32, y: f32) {
+        let pos = egui::pos2(x, y);
+        let input = self.harness.input_mut();
+        input.events.push(egui::Event::PointerMoved(pos));
+        input.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed: true, modifiers: egui::Modifiers::default() });
+        self.frames(1);
+        self.harness.input_mut().events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        self.frames(1);
+    }
+
     fn has(&mut self, id: &str) -> bool {
         self.ok("ui.elements", json!({"prefix": id})).as_array().is_some_and(|a| a.iter().any(|e| e["id"] == json!(id)))
     }
@@ -881,31 +900,103 @@ fn the_minimap_flyout_stays_open_on_the_way_in_and_its_settings_click() {
     assert_eq!(d.app().session.state.timeline_ui.fill_clips, !before_fill, "Fill Clips presses too");
 }
 
-/// The first zoom-bar settings popup frame must place the menu on the side with more room.
 #[test]
-fn zoom_bar_settings_menu_opens_above_on_its_first_frame_when_there_is_more_room_above() {
+fn fullscreen_timeline_settings_shows_every_row() {
     let mut d = Driver::demo();
     let bar = d.rect("timeline.zoomBar.track");
-    let point = (bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0);
-    d.click_at(point.0, point.1, "right");
-
-    let menu_rect = |d: &mut Driver| {
-        d.app()
-            .auto
-            .elements
-            .iter()
-            .find(|element| element.id == "timeline.zoomBar.settings.smoothAnimations")
-            .map(|element| element.rect)
-            .expect("settings row is registered on the opening frame")
-    };
-    let first = menu_rect(&mut d);
-    assert!(first[1] + first[3] <= point.1 + 1.0, "the menu opens above the slider immediately: {first:?}, pointer={point:?}");
-
-    d.frames(1);
-    let next = menu_rect(&mut d);
-    assert!(next[1] + next[3] <= point.1 + 1.0, "the menu stays above the slider: {first:?} -> {next:?}");
+    d.right_click_first_visible_frame(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0);
+    d.frames(3);
+    let rows: Vec<_> = d.harness.state().auto.elements.iter()
+        .filter(|e| e.id.starts_with("timeline.zoomBar.settings.")).collect();
+    assert!(!rows.is_empty(), "settings are visible");
+    let top = rows.iter().map(|r| r.rect[1]).fold(f32::INFINITY, f32::min);
+    let bottom = rows.iter().map(|r| r.rect[1] + r.rect[3]).fold(f32::NEG_INFINITY, f32::max);
+    assert!(bottom - top > 400.0, "all settings must occupy their full natural height");
+    assert!((bar[1] + bar[3] / 2.0 - bottom).abs() < 40.0, "menu bottom must be beside the click: bottom={bottom}, bar={bar:?}");
+    for row in rows {
+        assert!(row.rect[1] >= 0.0 && row.rect[1] + row.rect[3] <= 980.0, "row outside fullscreen window: {} {:?}", row.id, row.rect);
+    }
+    for label in ["Hide Slider", "Controls", "Smooth Animations", "Invert Scrolling", "Control Track Sliders", "Playhead Centering", "Alternate Slider Position", "Maximum Zoom Level", "Alternate Drag Speed", "Playhead Centering Range", "Slider Minimap"] {
+        let found = d.harness.output().shapes.iter().any(|clipped| {
+            if let egui::Shape::Text(text) = &clipped.shape {
+                let bounds = clipped.shape.visual_bounding_rect();
+                text.galley.job.text.contains(label) && text.opacity_factor > 0.0 && clipped.clip_rect.contains_rect(bounds)
+            } else {
+                false
+            }
+        });
+        assert!(found, "menu label is missing or clipped: {label}");
+    }
 }
 
+#[test]
+fn fullscreen_timeline_settings_does_not_scroll() {
+    let mut d = Driver::demo();
+    let bar = d.rect("timeline.zoomBar.track");
+    d.click_at(bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0, "right");
+    d.frames(3);
+    let id = "timeline.zoomBar.settings.sliderMinimap";
+    let before = d.rect(id);
+    for dy in [-2000.0, 2000.0] {
+        d.ok("ui.scroll", json!({"id": id, "fx": 0.5, "fy": 0.5, "dx": 0.0, "dy": dy, "modifiers": {}}));
+        d.frames(3);
+        let after = d.rect(id);
+        assert!((after[1] - before[1]).abs() < 0.5, "menu scrolled: {before:?} -> {after:?}");
+    }
+}
+
+/// The zoom-bar settings popup must use its measured height before its first visible frame.
+#[test]
+fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
+    let mut d = Driver::demo();
+    // A minimized native window can keep the app at its last tiny client size until it is
+    // maximized from the title bar. Recreate that viewport transition before the first menu open.
+    d.harness.set_size(egui::vec2(1.0, 1.0));
+    d.harness.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().minimized = Some(true);
+    d.frames(1);
+    d.harness.set_size(egui::vec2(1600.0, 980.0));
+    d.harness.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().minimized = Some(false);
+    d.frames(1);
+    let bar = d.rect("timeline.zoomBar.track");
+    let point = (bar[0] + bar[2] / 2.0, bar[1] + bar[3] / 2.0);
+    d.right_click_first_visible_frame(point.0, point.1);
+
+    let row = "timeline.zoomBar.settings.smoothAnimations";
+    assert!(d.harness.state().auto.elements.iter().any(|element| element.id == row), "the menu must be visible on the release frame");
+    let first = d.rect_now(row);
+    let painted = |d: &Driver| {
+        d.harness.output().shapes.iter().any(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape {
+                text.galley.job.text == "Smooth Animations" && text.opacity_factor > 0.0 && shape.clip_rect.contains_rect(shape.shape.visual_bounding_rect())
+            } else {
+                false
+            }
+        })
+    };
+    assert!(painted(&d), "menu must be painted on the release frame");
+    let popup = d.harness.ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("timeline-zoombar-popup-rect"))).expect("popup rectangle");
+    assert!((popup.bottom() - point.1).abs() < 1.0, "popup must touch the click: {popup:?}, {point:?}");
+    assert!(first[1] + first[3] <= point.1 + 1.0, "the menu opens above the clicked slider: {first:?}, pointer={point:?}");
+    let last = d.rect_now("timeline.zoomBar.settings.hideSlider");
+    assert!(last[1] + last[3] <= 980.0, "the full menu fits without a default scrollbar: {last:?}");
+
+    d.frames(1);
+    let next = d.rect_now(row);
+    assert!((next[1] - first[1]).abs() < 1.0, "the menu stays in place after its first visible frame: {first:?} -> {next:?}");
+    d.click_at(bar[0] + 5.0, point.1, "left");
+    d.frames(2);
+    assert!(!d.harness.state().auto.elements.iter().any(|element| element.id == row), "outside click closed the menu");
+    let bar_after = d.rect("timeline.zoomBar.track");
+    assert!((bar_after[1] - bar[1]).abs() < 1.0, "bar moved: {bar:?} -> {bar_after:?}");
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(point.0, point.1)));
+    d.frames(1);
+    d.right_click_first_visible_frame(point.0, point.1);
+    let reopened = d.rect_now(row);
+    assert!(painted(&d), "reopened menu must be painted on the release frame");
+    d.frames(1);
+    let reopened_next = d.rect_now(row);
+    assert!((reopened_next[1] - reopened[1]).abs() < 1.0, "reopened menu jumped: {reopened:?} -> {reopened_next:?}");
+}
 /// "Timeline Slider Settings": the Timeline menu's row above Unhide Timeline Slider, only while
 /// the bar is hidden, opening the exact same settings as right-clicking the bar itself.
 #[test]
