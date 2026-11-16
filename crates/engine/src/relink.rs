@@ -597,8 +597,9 @@ pub fn make_offline(s: &mut Session, p: &Value) -> Result<Value> {
                 // Drop the cached FileReader first so its pooled Windows handle is released
                 // before remove_file attempts to unlink the media.
                 s.media.remove_cached(*id);
-                if std::fs::remove_file(&path).is_ok() {
-                    deleted.push(path.clone());
+                match std::fs::remove_file(&path) {
+                    Ok(()) => deleted.push(path.clone()),
+                    Err(error) => log::warn!("make offline: couldn't delete {path}: {error}"),
                 }
             }
         }

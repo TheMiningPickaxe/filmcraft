@@ -334,10 +334,8 @@ fn tabs_that_do_not_fit_are_reached_through_a_list() {
 
 #[test]
 fn a_reopened_project_shows_its_tabs_as_they_were_left() {
-    let dir = std::env::temp_dir().join(format!("filmcraft-tabs-ui-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("tabs.fcproj").to_string_lossy().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tabs.fcproj").to_string_lossy().to_string();
 
     let mut d = Driver::new();
     let main = d.active();
@@ -371,5 +369,4 @@ fn a_reopened_project_shows_its_tabs_as_they_were_left() {
     assert_eq!(e.view(), (15.0, 0.5, 60.0));
     e.click(&format!("timeline.tab.{main}"));
     assert_eq!(e.view(), (250.0, 2.0, 80.0));
-    let _ = std::fs::remove_dir_all(&dir);
 }

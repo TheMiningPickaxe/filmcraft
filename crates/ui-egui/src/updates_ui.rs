@@ -47,6 +47,19 @@ impl FilmcraftApp {
     }
 }
 
+/// Whether an update dialog is covering the workspace. The startup card uses a foreground Area
+/// instead of egui::Modal, so DockArea cannot discover it through egui's modal-layer state.
+pub(crate) fn dialog_open(app: &FilmcraftApp) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        app.updates_rt.manual_window_open || app.updates_rt.updater.prompt_open()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        app.updates_rt.manual_window_open
+    }
+}
+
 pub(crate) fn check(app: &mut FilmcraftApp) -> Result<Value, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {

@@ -2,7 +2,7 @@
 //! Recover), the Revert confirmation (Yes, No) and Settings (Help, Reset…, OK, Cancel). egui leaves
 //! `Visuals::interact_cursor` unset, so each dialog's `button` helper asks for the hand itself.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{Sender, channel};
 use std::time::{Duration, Instant};
 
@@ -74,13 +74,6 @@ impl Driver {
     }
 }
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("fc-dialog-buttons-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
-}
-
 fn demo() -> Session {
     let mut s = Session::default();
     s.execute("file.openDemoProject", json!({})).unwrap();
@@ -130,16 +123,14 @@ fn session_after_view_only_crash(data: &Path) -> Session {
 
 #[test]
 fn recovery_prompt_buttons_show_the_pointing_hand() {
-    let data = temp_dir("recovery");
+    let data = tempfile::tempdir().unwrap();
     // The prompt opens by itself at start-up.
-    let mut d = Driver::new(session_after_crash(&data));
+    let mut d = Driver::new(session_after_crash(data.path()));
     d.assert_pointing_hand(&["recovery.discard", "recovery.later", "recovery.recover"]);
     // Only the buttons: the empty space between Discard and Not Now keeps the default pointer.
     let (discard, later) = (d.rect("recovery.discard"), d.rect("recovery.later"));
     let gap = egui::pos2((discard.right() + later.left()) / 2.0, discard.center().y);
     assert_eq!(d.cursor_at(gap), CursorIcon::Default, "between the buttons");
-    drop(d);
-    let _ = std::fs::remove_dir_all(&data);
 }
 
 #[test]
@@ -155,15 +146,13 @@ fn view_only_recovery_prompt_uses_timeline_settings_labels() {
 
 #[test]
 fn revert_confirmation_buttons_show_the_pointing_hand() {
-    let data = temp_dir("revert");
+    let data = tempfile::tempdir().unwrap();
     let mut s = demo();
-    s.execute("file.saveAs", json!({"path": data.join("film.fcproj").to_string_lossy()})).unwrap();
+    s.execute("file.saveAs", json!({"path": data.path().join("film.fcproj").to_string_lossy()})).unwrap();
     s.execute("sequence.addEdit", json!({"seconds": 1.5})).unwrap();
     let mut d = Driver::new(s);
     d.menu("file.revert");
     d.assert_pointing_hand(&["revert.yes", "revert.no"]);
-    drop(d);
-    let _ = std::fs::remove_dir_all(&data);
 }
 
 #[test]

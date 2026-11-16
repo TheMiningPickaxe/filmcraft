@@ -47,6 +47,20 @@ fn saved_file_is_versioned_and_save_copy_keeps_state() {
 }
 
 #[test]
+fn save_copy_records_its_successful_write_in_the_autosave_fence() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("p.fcproj").to_string_lossy().to_string();
+    let mut session = demo();
+    session.execute("file.saveAs", json!({"path": path})).unwrap();
+    session.execute("sequence.addEdit", json!({"seconds": 1.0})).unwrap();
+    let revision = session.revision;
+    session.execute("file.saveCopy", json!({"path": session.path.clone().unwrap()})).unwrap();
+    assert!(session.is_dirty(), "Save Copy does not adopt the project path or clear the dirty baseline");
+    let fence = session.project_file_fence.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert!(fence.is_stale(&path, revision.saturating_sub(1), session.view_epoch), "a queued older autosave cannot overwrite the successful Save Copy");
+}
+
+#[test]
 fn legacy_project_opens_and_first_save_keeps_a_backup() {
     let d = temp_dir("legacy");
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../format/tests/fixtures/v1-edit.fcproj");

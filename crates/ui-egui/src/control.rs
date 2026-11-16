@@ -1,7 +1,7 @@
 //! Programmatic control of the running app (agents, tests, MCP bridge).
 //!
 //! Transport-agnostic: a transport thread (TCP in the desktop app) sends [`ControlRequest`]s; the
-//! UI thread handles them between frames and replies with `{"ok":â€¦, "result"|"error":â€¦}`.
+//! UI thread handles them between frames and replies with `{"ok":…, "result"|"error":…}`.
 //!
 //! Methods:
 //! - `engine.execute {command, params}` / `ui.menu.invoke {id}`: run any engine or UI command
@@ -10,7 +10,7 @@
 //! - `ui.elements {prefix?}`: registered widgets (optionally filtered by id prefix)
 //! - `ui.set {tool?, workspace?, mode?, theme?, focused?, playbackRes?, timeline?:{pps,scroll}}`
 //! - `ui.panel.show {panel}` / `ui.panel.close {panel}`
-//! - `ui.set {tts: {voice, pitch, pace, textâ€¦}}`: patch the Text to Speech panel draft
+//! - `ui.set {tts: {voice, pitch, pace, text…}}`: patch the Text to Speech panel draft
 //! - `ui.click {id | x,y, button?, count?, modifiers?}` / `ui.move {x,y}` / `ui.scroll {x,y,dx,dy}`
 //! - `ui.drag {from:{id|x,y}, to:{id|x,y}, steps?, modifiers?}`: synthetic press-move-release
 //! - `ui.key {key, command?, shift?, alt?, ctrl?}` / `ui.type {text}`
@@ -119,7 +119,7 @@ fn point(app: &FilmcraftApp, p: &Value) -> Result<egui::Pos2, String> {
 
 fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outcome {
     let s = |k: &str| p.get(k).and_then(Value::as_str);
-    // Text to Speech panel draft (voice, pitch, pace, textâ€¦), merged into the current one
+    // Text to Speech panel draft (voice, pitch, pace, text…), merged into the current one
     if let Some(patch) = p.get("tts") {
         let mut cur = serde_json::to_value(&app.ui.tts).unwrap_or_default();
         merge(&mut cur, patch);
@@ -203,7 +203,7 @@ fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outc
             Err(e) => return err(format!("`export`: {e}")),
         }
     }
-    // panel settings (`panels::panel_state`): {"scopes": {...}, "timecode": {...}, â€¦}, merged
+    // panel settings (`panels::panel_state`): {"scopes": {...}, "timecode": {...}, …}, merged
     if let Some(patch) = p.get("panels") {
         let mut cur = serde_json::to_value(&app.ui.panels).unwrap_or_default();
         merge(&mut cur, patch);
@@ -216,7 +216,7 @@ fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outc
     if let Err(e) = set_panel_views(app, p) {
         return err(e);
     }
-    // Essential Graphics â–¸ Browse and the template / font dialogs (`panels::graphics_templates`), merged
+    // Essential Graphics ▸ Browse and the template / font dialogs (`panels::graphics_templates`), merged
     if let Some(patch) = p.get("gfxTemplates") {
         let mut cur = serde_json::to_value(&app.ui.gfx_templates).unwrap_or_default();
         merge(&mut cur, patch);
@@ -259,21 +259,22 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
     // resulting view below so a follow-up close command cannot race the next UI frame.
     let initial_view_epoch = app.session.view_epoch;
     app.sync_timeline_view();
-    for (key, min, max) in [
-        ("playheadSideSeconds", 0.1, 3600.0),
-        ("shiftDragSpeed", 0.1, 50.0),
-        ("maxZoomLevel", 0.05, 3.0),
-        ("trackSliderShiftDragSpeed", 0.1, 10.0),
-        ("videoTrackHeight", 8.0, 600.0),
-        ("audioTrackHeight", 8.0, 600.0),
-    ] {
-        if let Some(value) = tl.get(key) {
-            let valid = value.as_f64().is_some_and(|v| v.is_finite() && (min..=max).contains(&v));
-            if !valid {
-                return Err(format!("timeline.{key} must be a finite number between {min} and {max}"));
-            }
-        }
-    }
+    let bounded = |key: &str, min: f64, max: f64| -> Result<Option<f64>, String> {
+        tl.get(key)
+            .map(|value| {
+                value
+                    .as_f64()
+                    .filter(|v| v.is_finite() && (min..=max).contains(v))
+                    .ok_or_else(|| format!("timeline.{key} must be a finite number between {min} and {max}"))
+            })
+            .transpose()
+    };
+    let playhead_side_seconds = bounded("playheadSideSeconds", 0.1, 3600.0)?;
+    let shift_drag_speed = bounded("shiftDragSpeed", 0.1, 50.0)?;
+    let max_zoom_level = bounded("maxZoomLevel", 0.05, 3.0)?;
+    let track_slider_shift_drag_speed = bounded("trackSliderShiftDragSpeed", 0.1, 10.0)?;
+    let video_track_height = bounded("videoTrackHeight", 8.0, 600.0)?;
+    let audio_track_height = bounded("audioTrackHeight", 8.0, 600.0)?;
     for key in ["positionIndicatorColor", "videoIndicatorColor", "audioIndicatorColor", "offlineIndicatorColor"] {
         if let Some(value) = tl.get(key) {
             let valid = value.as_str().and_then(filmcraft_project::normalize_hex_color).is_some();
@@ -282,6 +283,17 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
             }
         }
     }
+    let thumbnail_mode = tl
+        .get("thumbnails")
+        .and_then(Value::as_str)
+        .map(|mode| {
+            if mode.eq_ignore_ascii_case("off") {
+                Ok(None)
+            } else {
+                ThumbnailMode::from_name(mode).map(Some).ok_or_else(|| format!("unknown thumbnail mode `{mode}` (off, head, headAndTail, continuous)"))
+            }
+        })
+        .transpose()?;
     let timeline_settings_before = app.session.state.timeline_ui.clone();
     // hostile control parameters: NaN or infinite zoom/scroll would poison every rect in the
     // Timeline, so only finite, positive values are accepted. The zoom ceiling is applied by
@@ -302,7 +314,7 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
     if let Some(v) = tl.get("invertedControls").and_then(Value::as_bool) {
         app.session.state.timeline_ui.inverted_controls = v;
     }
-    if let Some(v) = tl.get("playheadSideSeconds").and_then(Value::as_f64).filter(|v| v.is_finite() && (0.1..=3600.0).contains(v)) {
+    if let Some(v) = playhead_side_seconds {
         app.session.state.timeline_ui.playhead_side_seconds = v;
         let custom = ![3.0, 5.0, 10.0, 30.0].contains(&v);
         if custom {
@@ -310,7 +322,7 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         }
         app.session.state.timeline_ui.playhead_side_custom = custom;
     }
-    if let Some(v) = tl.get("shiftDragSpeed").and_then(Value::as_f64).filter(|v| v.is_finite() && (0.1..=50.0).contains(v)) {
+    if let Some(v) = shift_drag_speed {
         app.session.state.timeline_ui.shift_drag_speed = v;
         let custom = ![0.25, 0.5, 1.0, 2.0].contains(&v);
         if custom {
@@ -324,7 +336,7 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
             app.tl.playhead_captured = false;
         }
     }
-    if let Some(v) = tl.get("maxZoomLevel").and_then(Value::as_f64).filter(|v| v.is_finite() && (0.05..=3.0).contains(v)) {
+    if let Some(v) = max_zoom_level {
         app.session.state.timeline_ui.max_zoom_seconds = v;
         // the zoom established under the old ceiling is clamped to the new one by animate_view
         let custom = ![0.1, 0.2, 0.4, 0.8].contains(&v);
@@ -353,7 +365,7 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
     if let Some(v) = tl.get("trackSliderAlternatePosition").and_then(Value::as_bool) {
         app.session.state.timeline_ui.track_slider_alternate_position = v;
     }
-    if let Some(v) = tl.get("trackSliderShiftDragSpeed").and_then(Value::as_f64).filter(|v| v.is_finite() && (0.1..=10.0).contains(v)) {
+    if let Some(v) = track_slider_shift_drag_speed {
         app.session.state.timeline_ui.track_slider_shift_drag_speed = v;
         let custom = ![0.5, 1.0].contains(&v);
         if custom {
@@ -392,13 +404,31 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         }
     }
     // the same 8-600 pt bounds SequenceView::checked() gives a project file's track heights
-    if let Some(v) = tl.get("videoTrackHeight").and_then(Value::as_f64).filter(|v| v.is_finite() && (8.0..=600.0).contains(v)) {
+    if let Some(v) = video_track_height {
         app.ui.timeline.video_track_h = v as f32;
         app.tl.track_anim = None;
     }
-    if let Some(v) = tl.get("audioTrackHeight").and_then(Value::as_f64).filter(|v| v.is_finite() && (8.0..=600.0).contains(v)) {
+    if let Some(v) = audio_track_height {
         app.ui.timeline.audio_track_h = v as f32;
         app.tl.track_anim = None;
+    }
+    if app.ui.timeline.fit_pending
+        && (tl.get("videoTrackHeight").is_some() || tl.get("audioTrackHeight").is_some())
+        && let Some(active) = app.session.state.active_sequence
+    {
+        let view = filmcraft_engine::project::SequenceView {
+            pps: app.ui.timeline.target_pps,
+            scroll: app.ui.timeline.target_scroll,
+            v_scroll: app.ui.timeline.v_scroll,
+            a_scroll: app.ui.timeline.a_scroll,
+            video_track_h: app.ui.timeline.video_track_h,
+            audio_track_h: app.ui.timeline.audio_track_h,
+        };
+        if app.session.state.timeline_views.get(&active) != Some(&view) {
+            app.session.state.timeline_views.insert(active, view);
+            app.timeline_view_last = Some(view);
+            app.session.view_changed();
+        }
     }
     if let Some(v) = tl.get("showVideoNames").and_then(Value::as_bool) {
         app.ui.timeline.show_video_names = v;
@@ -410,15 +440,12 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         app.session.project_view_changed();
     }
     // Show Video Thumbnails: "off" or a mode ("head", "headAndTail", "continuous")
-    if let Some(m) = tl.get("thumbnails").and_then(Value::as_str) {
-        if m.eq_ignore_ascii_case("off") {
-            app.ui.timeline.show_thumbnails = false;
-        } else {
-            let Some(mode) = ThumbnailMode::from_name(m) else {
-                return Err(format!("unknown thumbnail mode `{m}` (off, head, headAndTail, continuous)"));
-            };
+    if let Some(mode) = thumbnail_mode {
+        if let Some(mode) = mode {
             app.ui.timeline.show_thumbnails = true;
             app.ui.timeline.thumbnail_mode = mode;
+        } else {
+            app.ui.timeline.show_thumbnails = false;
         }
     }
     app.sync_timeline_view();
@@ -1036,10 +1063,39 @@ mod input_bounds_tests {
         app.session.state.timeline_views.insert(sequence, initial);
         app.sync_timeline_view();
         let epoch = app.session.view_epoch;
-        let outcome = request(&mut app, "ui.set", json!({"timeline": {"videoTrackHeight": 80.0}}));
+        let outcome = request(&mut app, "ui.set", json!({"timeline": {"fit": true, "videoTrackHeight": 80.0}}));
         assert!(matches!(outcome, Outcome::Done(_)));
         assert!(app.session.view_epoch > epoch, "the control update marks the project view dirty before returning");
         assert_eq!(app.session.state.timeline_views.get(&sequence).map(|view| view.video_track_h), Some(80.0));
+    }
+
+    #[test]
+    fn ui_set_track_height_persists_before_the_first_layout_fit() {
+        let mut app = app();
+        app.session.execute("file.openDemoProject", json!({})).unwrap();
+        let sequence = app.session.state.active_sequence.unwrap();
+        app.session.state.timeline_views.remove(&sequence);
+        app.sync_timeline_view();
+        assert!(app.ui.timeline.fit_pending);
+        let epoch = app.session.view_epoch;
+
+        let outcome = request(&mut app, "ui.set", json!({"timeline": {"videoTrackHeight": 80.0}}));
+
+        assert!(matches!(outcome, Outcome::Done(reply) if reply["ok"] == true));
+        assert!(app.session.view_epoch > epoch);
+        assert_eq!(app.session.state.timeline_views.get(&sequence).map(|view| view.video_track_h), Some(80.0));
+    }
+
+    #[test]
+    fn invalid_thumbnail_mode_rejects_before_any_timeline_write() {
+        let mut app = app();
+        app.session.execute("file.openDemoProject", json!({})).unwrap();
+        let zoom_before = app.session.state.timeline_ui.max_zoom_seconds;
+        let epoch_before = app.session.view_epoch;
+        let outcome = request(&mut app, "ui.set", json!({"timeline": {"maxZoomLevel": 0.8, "thumbnails": "bogus"}}));
+        assert!(matches!(outcome, Outcome::Done(reply) if reply["ok"] == false));
+        assert_eq!(app.session.state.timeline_ui.max_zoom_seconds, zoom_before);
+        assert_eq!(app.session.view_epoch, epoch_before);
     }
 
     #[test]
@@ -1095,9 +1151,9 @@ mod base64_tests {
     #[test]
     fn screenshot_crop_clips_negative_panel_origin() {
         // A panel starting two points left of / one point above the window: only the visible
-        // 2Ã—3 pixels are captured, not the requested 4Ã—4 starting at (0, 0).
+        // 2×3 pixels are captured, not the requested 4×4 starting at (0, 0).
         assert_eq!(super::crop_pixels([8, 8], Some([-2.0, -1.0, 4.0, 4.0]), 1.0).unwrap(), (0, 0, 2, 3));
-        // The same crop at 2Ã— scale clips the same logical region to the pixel grid.
+        // The same crop at 2× scale clips the same logical region to the pixel grid.
         assert_eq!(super::crop_pixels([16, 16], Some([-2.0, -1.0, 4.0, 4.0]), 2.0).unwrap(), (0, 0, 4, 6));
         // Partly outside on the right/bottom uses the visible remainder.
         assert_eq!(super::crop_pixels([8, 8], Some([6.0, 5.0, 4.0, 4.0]), 1.0).unwrap(), (6, 5, 2, 3));

@@ -510,13 +510,18 @@ impl DockContent<PanelKind> for FilmContent<'_> {
         self.app.auto.viewport = egui::ViewportId::ROOT;
         // The body fills its frame; allocating it lets a floated panel take its full size.
         ui.allocate_rect(ui.max_rect(), Sense::hover());
+        // A foreground update card is not an egui Modal, and inactive native windows can keep
+        // stale focus rings otherwise. Only paint these outlines for the focused viewport when
+        // no app-wide dialog covers the workspace.
+        let modal_open = self.app.modal_open(ui.ctx()) || crate::updates_ui::dialog_open(self.app);
+        let viewport_focused = ui.ctx().input(|input| input.viewport().focused.unwrap_or(input.focused));
         // Painted after the body so child backgrounds cannot hide the focus outline (#1075).
         // Alternate Slider Position puts the zoom bar against the top edge of the Timeline body,
         // where this line would lie right on top of it: there the line stays off the body and the
         // whole window edge carries the 1px line instead (Timeline only) -- the native window's
         // edge when the panel has its own window, else the group window with its tab strip.
-        if self.app.ui.focused == *panel {
-            let alternate_top = *panel == PanelKind::Timeline && self.app.session.state.timeline_ui.alternate_slider_position;
+        if !modal_open && viewport_focused && self.app.ui.focused == *panel {
+            let alternate_top = alternate_timeline_outline(*panel, &self.app.session.state.timeline_ui);
             if alternate_top {
                 // Draw the same 2px focus line along the window edge. A floating window can hold
                 // several groups, and the window rect would highlight the neighbours too.
@@ -526,7 +531,9 @@ impl DockContent<PanelKind> for FilmContent<'_> {
                 ui.painter().rect_stroke(frame, 0.0, Stroke::new(1.0, t.focus), StrokeKind::Inside);
             }
         }
-        if self.app.ui.focused == *panel
+        if !modal_open
+            && viewport_focused
+            && self.app.ui.focused == *panel
             && native_track_slider_outline(
                 *panel,
                 viewport,
@@ -628,6 +635,27 @@ impl DockContent<PanelKind> for FilmContent<'_> {
             self.app.ui.focused = *active;
             self.menu = Some((*active, rect.left_bottom(), ui.ctx().viewport_id()));
         }
+    }
+}
+
+fn alternate_timeline_outline(panel: PanelKind, settings: &filmcraft_project::TimelineUiSettings) -> bool {
+    panel == PanelKind::Timeline && settings.alternate_slider_position && !settings.zoom_bar_hidden
+}
+
+#[cfg(test)]
+mod focus_outline_tests {
+    use super::alternate_timeline_outline;
+    use crate::dock::PanelKind;
+    use filmcraft_project::TimelineUiSettings;
+
+    #[test]
+    fn hidden_zoom_bar_disables_the_alternate_window_edge_outline() {
+        let mut settings = TimelineUiSettings { alternate_slider_position: true, ..TimelineUiSettings::default() };
+        assert!(alternate_timeline_outline(PanelKind::Timeline, &settings));
+        settings.zoom_bar_hidden = true;
+        assert!(!alternate_timeline_outline(PanelKind::Timeline, &settings));
+        settings.zoom_bar_hidden = false;
+        assert!(!alternate_timeline_outline(PanelKind::Project, &settings));
     }
 }
 

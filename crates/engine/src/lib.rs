@@ -1191,6 +1191,7 @@ impl Session {
     pub fn edit_group<R>(&mut self, label: &str, f: impl FnOnce(&mut Session) -> Result<R>) -> Result<R> {
         let (project, state, undo, redo, limit) =
             (self.project.clone(), self.state.clone(), self.history.undo.len(), self.history.redo.clone(), self.history.limit);
+        let transient_playheads = self.transient_playheads.clone();
         // keep every step the group makes, however many, so the first one can be found afterwards
         self.history.limit = usize::MAX;
         // a panic inside the group must not leave the history unlimited: restore, then let it go on
@@ -1203,6 +1204,7 @@ impl Session {
             s.history.merge_key = None;
             s.project = project.clone();
             s.state = state.clone();
+            s.transient_playheads = transient_playheads.clone();
             s.persistence_view_cache = None;
             s.bump();
         };
@@ -1302,6 +1304,7 @@ impl Session {
         self.history.merge_key = None;
         let cur = std::mem::replace(&mut self.project, prev);
         self.history.redo.push((label.clone(), cur, origin));
+        self.transient_playheads.clear();
         self.fix_state();
         self.bump();
         Some(label)
@@ -1312,6 +1315,7 @@ impl Session {
         self.history.merge_key = None;
         let cur = std::mem::replace(&mut self.project, next);
         self.history.undo.push((label.clone(), cur, origin));
+        self.transient_playheads.clear();
         self.fix_state();
         self.bump();
         Some(label)
@@ -1517,6 +1521,54 @@ impl Session {
         let Some((w, h)) = size else { return Err(EngineError::Other("the requested render frame exceeds the image size limits".into())) };
         filmcraft_project::validate_frame_size(w, h).map_err(|e| EngineError::Other(format!("cannot render a {w}x{h} frame: {e}")))?;
         Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod edit_group_transient_playhead_tests {
+    use super::*;
+
+    #[test]
+    fn failed_group_restores_transient_playhead_on_error_and_panic() {
+        let mut session = Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let sequence = session.state.active_sequence.unwrap();
+        let rate = session.active_sequence().unwrap().settings.frame_rate;
+        let before = rate.snap(Tick(10 * filmcraft_time::TICKS_PER_SECOND));
+        session.set_playhead_during_playback(before);
+        let result = session.edit_group::<()>("Fail", |session| {
+            session.set_playhead(Tick(20 * filmcraft_time::TICKS_PER_SECOND));
+            Err(EngineError::Other("abort".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(session.transient_playheads.get(&sequence), Some(&before));
+        assert_eq!(session.playhead(), before);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = session.edit_group::<()>("Panic", |session| {
+                session.set_playhead(Tick(30 * filmcraft_time::TICKS_PER_SECOND));
+                panic!("group failure");
+            });
+        }));
+        assert!(panic.is_err());
+        assert_eq!(session.transient_playheads.get(&sequence), Some(&before));
+        assert_eq!(session.playhead(), before);
+    }
+
+    #[test]
+    fn undo_and_redo_clear_transient_playheads_for_replaced_projects() {
+        let mut session = Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let sequence = session.state.active_sequence.unwrap();
+        session.execute("sequence.addEdit", serde_json::json!({"seconds": 0.5})).unwrap();
+        session.set_playhead_during_playback(Tick::from_seconds_f64(2.0));
+        assert!(session.undo().is_some());
+        assert!(session.transient_playheads.is_empty(), "undo must not leave a playhead for a discarded project snapshot");
+
+        session.set_playhead_during_playback(Tick::from_seconds_f64(3.0));
+        assert!(session.redo().is_some());
+        assert!(session.transient_playheads.is_empty(), "redo must not carry an old playhead into its replacement snapshot");
+        assert!(session.project.sequence(sequence).is_some());
     }
 }
 

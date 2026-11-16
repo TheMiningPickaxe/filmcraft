@@ -26,7 +26,8 @@ impl SequenceView {
             return None;
         }
         Some(SequenceView {
-            pps: self.pps.clamp(1e-6, 1e5),
+            // Timeline geometry permits up to 1,000,000 points over the minimum 0.05-second view.
+            pps: self.pps.clamp(1e-6, 20_000_000.0),
             scroll: self.scroll.clamp(0.0, 1e7),
             v_scroll: self.v_scroll.clamp(0.0, 1e6),
             a_scroll: self.a_scroll.clamp(0.0, 1e6),
@@ -417,6 +418,12 @@ mod tests {
         let reopened: ProjectView = serde_json::from_slice(&bytes).unwrap();
 
         assert_eq!(reopened.sequences.get(&item).copied().and_then(SequenceView::checked).map(|sequence| sequence.pps), Some(pps));
+    }
+
+    #[test]
+    fn sequence_view_keeps_supported_zoom_above_one_hundred_thousand_pps() {
+        let view = SequenceView { pps: 120_000.0, scroll: 0.0, v_scroll: 0.0, a_scroll: 0.0, video_track_h: 24.0, audio_track_h: 24.0 };
+        assert_eq!(view.checked().map(|checked| checked.pps), Some(120_000.0));
     }
 
     /// The Controls bindings start empty (the built-in gestures do the actions) and Snap to

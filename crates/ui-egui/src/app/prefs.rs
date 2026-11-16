@@ -206,6 +206,10 @@ impl FilmcraftApp {
     ///   channel).
     pub(crate) fn sync_timeline_view(&mut self) {
         let playback_scroll_target = self.timeline_auto_scroll_pending.take();
+        if self.timeline_view_document != self.session.document_epoch {
+            self.tl.zoombar_settings_pos = None;
+            self.tl.track_slider_settings_pos = None;
+        }
         let Some(active) = self.session.state.active_sequence else {
             self.timeline_view_of = None;
             self.tl.track_anim = None;

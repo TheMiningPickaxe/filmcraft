@@ -5,6 +5,12 @@ use super::{AUDIO_RETRY_S, AUDIO_STALL_S, FilmcraftApp, Tick, frames, json, pane
 use filmcraft_engine::Session;
 
 impl FilmcraftApp {
+    fn preserve_playback_end_reveal(&mut self) {
+        if let Some(sequence) = self.session.state.active_sequence {
+            self.timeline_auto_scroll_pending = Some((sequence, self.session.document_epoch, self.ui.timeline.target_scroll));
+        }
+    }
+
     // ---------------------------------------------------------------- playback
 
     pub fn toggle_play(&mut self, speed: f64) {
@@ -309,6 +315,7 @@ impl FilmcraftApp {
         };
         if let Some(end) = self.playback.stop_at.filter(|e| t >= *e && self.playback.speed > 0.0 && !self.playback.looping) {
             self.session.set_playhead_during_playback(self.playback.rest_at.unwrap_or(end));
+            self.preserve_playback_end_reveal();
             self.stop();
         } else if t >= hi && self.playback.speed > 0.0 && (self.playback.looping || !self.session.voiceover.recording()) {
             // a voice-over take keeps playing (and recording) into the empty timeline past the end
@@ -317,6 +324,7 @@ impl FilmcraftApp {
                 self.play(self.playback.speed);
             } else {
                 self.session.set_playhead_during_playback(hi - rate.frame_duration());
+                self.preserve_playback_end_reveal();
                 self.stop();
             }
         } else if t <= Tick::ZERO && self.playback.speed < 0.0 {
@@ -409,6 +417,61 @@ mod playback_restart_tests {
         assert_eq!(app.session.state.playheads.get(&sequence), Some(&end));
         assert_eq!(app.session.playhead(), Tick::ZERO);
         app.stop();
+    }
+
+    #[test]
+    fn natural_end_reveal_after_no_scroll_playback_is_not_a_saved_view_edit() {
+        use egui::{RawInput, Rect, pos2, vec2};
+
+        let mut session = Session::default();
+        session.execute("file.openDemoProject", json!({})).unwrap();
+        session.prefs.timeline.auto_scroll = "noScroll".into();
+        let sequence = session.state.active_sequence.unwrap();
+        let end = session.active_sequence().unwrap().duration();
+        let mut app = FilmcraftApp::new(session);
+        app.audio = None;
+        app.sync_timeline_view();
+        app.ui.timeline.fit_pending = false;
+        app.ui.timeline.pps = 100.0;
+        app.ui.timeline.target_pps = 100.0;
+        app.ui.timeline.scroll = 0.0;
+        app.ui.timeline.target_scroll = 0.0;
+        let view = filmcraft_engine::project::SequenceView {
+            pps: 100.0,
+            scroll: 0.0,
+            v_scroll: 0.0,
+            a_scroll: 0.0,
+            video_track_h: app.ui.timeline.video_track_h,
+            audio_track_h: app.ui.timeline.audio_track_h,
+        };
+        app.session.state.timeline_views.insert(sequence, view);
+        app.timeline_view_last = Some(view);
+        let ctx = egui::Context::default();
+        let input = || RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 500.0))), ..RawInput::default() };
+        let mut output = ctx.run_ui(input(), |ui| {
+            let rect = ui.max_rect();
+            crate::panels::timeline::show(&mut app, ui, rect);
+        });
+        output.textures_delta.clear();
+
+        app.playback.playing = true;
+        app.playback.speed = 1.0;
+        app.playback.anchor_tick = Tick::ZERO;
+        app.playback.anchor_time = 0.0;
+        app.set_now_for_test(end.seconds() + 1.0);
+        app.advance_playback(&ctx);
+        assert!(!app.playback.playing);
+        let epoch = app.session.view_epoch;
+
+        let mut output = ctx.run_ui(input(), |ui| {
+            let rect = ui.max_rect();
+            crate::panels::timeline::show(&mut app, ui, rect);
+        });
+        output.textures_delta.clear();
+        app.sync_timeline_view();
+
+        assert!(app.session.state.timeline_views.get(&sequence).is_some_and(|view| view.scroll > 0.0), "the final playhead was revealed");
+        assert_eq!(app.session.view_epoch, epoch, "the automatic reveal does not make playback appear as a manual edit");
     }
 }
 

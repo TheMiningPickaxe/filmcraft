@@ -851,23 +851,22 @@ fn clear_and_automate_buttons_need_a_selection() {
 
 // ------------------------------------------------------------------------------------ Media Browser
 
-fn media_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("fc-mb-ui-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("Selects")).unwrap();
+fn media_dir(_tag: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("Selects")).unwrap();
     let wav = filmcraft_media::wav::write_wav16(&[0.0; 9600], 2, 48_000);
     for n in ["a-interview.wav", "b-roll.wav"] {
-        std::fs::write(dir.join(n), &wav).unwrap();
+        std::fs::write(dir.path().join(n), &wav).unwrap();
     }
-    std::fs::write(dir.join("Selects").join("pick.wav"), &wav).unwrap();
-    std::fs::write(dir.join("readme.txt"), b"not media").unwrap();
+    std::fs::write(dir.path().join("Selects").join("pick.wav"), &wav).unwrap();
+    std::fs::write(dir.path().join("readme.txt"), b"not media").unwrap();
     dir
 }
 
 #[test]
 fn file_dialog_import_uses_shown_bin_unless_explicit() {
     let dir = media_dir("import-bin");
-    let path = dir.join("a-interview.wav").to_string_lossy().into_owned();
+    let path = dir.path().join("a-interview.wav").to_string_lossy().into_owned();
     let mut app = FilmcraftApp::new(Session::default());
     app.hooks.pick_files = Some(Box::new(move |_| vec![path.clone()]));
     let parent = app.session.execute("file.newBin", json!({"name": "Footage"})).unwrap()["bin"].as_u64().unwrap();
@@ -891,13 +890,12 @@ fn file_dialog_import_uses_shown_bin_unless_explicit() {
     }
     app.session.media.clear();
     drop(app);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn media_browser_navigation_import_and_columns() {
     let dir = media_dir("nav");
-    let d0 = dir.to_string_lossy().to_string();
+    let d0 = dir.path().to_string_lossy().to_string();
     let mut d = Driver::with(Session::default());
     d.ok("ui.panel.show", json!({"panel": "MediaBrowser"}));
     d.ok("ui.set", json!({"focused": "MediaBrowser"}));
@@ -936,7 +934,7 @@ fn media_browser_navigation_import_and_columns() {
     d.click("mediaBrowser.menu.favorite");
     assert_eq!(d.app().session.prefs.media_browser.favorites, std::slice::from_ref(&d0));
     d.frames(2);
-    let fav_name = dir.file_name().unwrap().to_string_lossy().to_string();
+    let fav_name = dir.path().file_name().unwrap().to_string_lossy().to_string();
     assert!(d.has(&format!("mediaBrowser.tree.favorites.{fav_name}")));
     assert!(d.has("mediaBrowser.tree.recent"));
     // select two files and Import from the panel menu
@@ -978,20 +976,19 @@ fn media_browser_navigation_import_and_columns() {
     d.exec("mediaBrowser.settings", json!({"fileTypes": "image", "view": "list"}));
     d.frames(3);
     assert!(!d.has("mediaBrowser.entry.b-roll.wav") && d.has("mediaBrowser.entry.Selects"));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn media_browser_list_columns_resize_by_their_right_edge() {
     let dir = media_dir("resize");
-    let prefs_path = dir.join("preferences.json");
+    let prefs_path = dir.path().join("preferences.json");
     let mut session = Session::default();
     session.prefs_path = Some(prefs_path.clone());
     let mut d = Driver::with(session);
     d.ok("ui.panel.show", json!({"panel": "MediaBrowser"}));
     d.ok("ui.set", json!({"focused": "MediaBrowser"}));
     d.ok("ui.menu.invoke", json!({"id": "window.maximizeFrame"}));
-    d.exec("mediaBrowser.navigate", json!({"path": dir.to_string_lossy()}));
+    d.exec("mediaBrowser.navigate", json!({"path": dir.path().to_string_lossy()}));
     d.frames(3);
     d.wait_for("mediaBrowser.entry.b-roll.wav");
     let name0 = d.rect("mediaBrowser.header.Name");
@@ -1009,20 +1006,19 @@ fn media_browser_list_columns_resize_by_their_right_edge() {
     // and written to preferences.json, so it survives a restart
     let on_disk = filmcraft_engine::autosave::Preferences::load(&prefs_path).media_browser.column_widths.get("Name").copied();
     assert_eq!(on_disk, Some(saved), "preferences.json");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn media_browser_column_dragged_past_the_header_is_still_saved() {
     let dir = media_dir("resize-out");
-    let prefs_path = dir.join("preferences.json");
+    let prefs_path = dir.path().join("preferences.json");
     let mut session = Session::default();
     session.prefs_path = Some(prefs_path.clone());
     let mut d = Driver::with(session);
     d.ok("ui.panel.show", json!({"panel": "MediaBrowser"}));
     d.ok("ui.set", json!({"focused": "MediaBrowser"}));
     d.ok("ui.menu.invoke", json!({"id": "window.maximizeFrame"}));
-    d.exec("mediaBrowser.navigate", json!({"path": dir.to_string_lossy()}));
+    d.exec("mediaBrowser.navigate", json!({"path": dir.path().to_string_lossy()}));
     d.frames(3);
     d.wait_for("mediaBrowser.entry.b-roll.wav");
     // the last column's edge, dragged until it (and its handle) is past the header's right end
@@ -1033,7 +1029,6 @@ fn media_browser_column_dragged_past_the_header_is_still_saved() {
     assert_eq!(d.app().ui.media_browser.column_drag, None, "the drag ended");
     let on_disk = filmcraft_engine::autosave::Preferences::load(&prefs_path).media_browser.column_widths.get("Size").copied();
     assert_eq!(on_disk, Some(800.0), "preferences.json");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1046,12 +1041,11 @@ fn media_browser_list_clamps_a_hand_edited_column_width() {
     d.ok("ui.panel.show", json!({"panel": "MediaBrowser"}));
     d.ok("ui.set", json!({"focused": "MediaBrowser"}));
     d.ok("ui.menu.invoke", json!({"id": "window.maximizeFrame"}));
-    d.exec("mediaBrowser.navigate", json!({"path": dir.to_string_lossy()}));
+    d.exec("mediaBrowser.navigate", json!({"path": dir.path().to_string_lossy()}));
     d.frames(3);
     d.wait_for("mediaBrowser.entry.b-roll.wav");
     let name = d.rect("mediaBrowser.header.Name");
     assert!((name[2] - 800.0).abs() < 1.0, "Name is {} wide", name[2]);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1063,7 +1057,7 @@ fn media_browser_drag_imports_into_the_project_panel() {
     // the Editing workspace has Project and Media Browser in one group: put the browser beside it
     d.ok("ui.set", json!({"workspace": "Editing"}));
     d.ok("ui.panel.show", json!({"panel": "MediaBrowser"}));
-    d.exec("mediaBrowser.navigate", json!({"path": dir.to_string_lossy()}));
+    d.exec("mediaBrowser.navigate", json!({"path": dir.path().to_string_lossy()}));
     d.frames(3);
     d.wait_for("mediaBrowser.entry.b-roll.wav");
     let n0 = d.app().session.project.items.len();
@@ -1078,7 +1072,6 @@ fn media_browser_drag_imports_into_the_project_panel() {
     d.ok("ui.drag", json!({"from": {"x": from.0, "y": from.1}, "to": {"x": tl[0] + tl[2] * 0.6, "y": tl[1] + tl[3] * 0.75}, "steps": 20}));
     d.frames(6);
     assert_eq!(d.app().session.project.items.len(), n0 + 1, "kept after a drop on the Timeline");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Dragging several selected Media Browser files onto the Timeline (#1360) places every one of
@@ -1091,7 +1084,7 @@ fn media_browser_drag_places_every_selected_file() {
     let mut d = Driver::with(session);
     d.ok("ui.set", json!({"workspace": "Editing"}));
     d.ok("ui.panel.show", json!({"panel": "MediaBrowser"}));
-    d.exec("mediaBrowser.navigate", json!({"path": dir.to_string_lossy()}));
+    d.exec("mediaBrowser.navigate", json!({"path": dir.path().to_string_lossy()}));
     d.frames(3);
     d.wait_for("mediaBrowser.entry.b-roll.wav");
     let listed = d.exec("mediaBrowser.list", json!({}));
@@ -1114,7 +1107,6 @@ fn media_browser_drag_places_every_selected_file() {
     assert_eq!(d.app().session.project.items.len(), n0 + 1, "only the new file is imported");
     let status = d.app().ui.status.clone();
     assert_eq!((placed(&mut d, "a-interview.wav"), placed(&mut d, "b-roll.wav")), (1, 1), "both files are placed; status: {status}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Dragging one of several selected Project items onto the Timeline places all of them, back to
@@ -1423,7 +1415,7 @@ fn escape_takes_back_a_media_browser_drag() {
     let mut d = Driver::with(session);
     d.ok("ui.set", json!({"workspace": "Editing"}));
     d.ok("ui.panel.show", json!({"panel": "MediaBrowser"}));
-    d.exec("mediaBrowser.navigate", json!({"path": dir.to_string_lossy()}));
+    d.exec("mediaBrowser.navigate", json!({"path": dir.path().to_string_lossy()}));
     d.frames(3);
     d.wait_for("mediaBrowser.entry.b-roll.wav");
     let (n0, before) = (d.app().session.project.items.len(), d.app().session.project.to_json());
@@ -1447,7 +1439,6 @@ fn escape_takes_back_a_media_browser_drag() {
     d.frames(6);
     assert_eq!(d.app().session.project.items.len(), n0, "the import was taken back");
     assert_eq!(d.app().session.project.to_json(), before, "nothing was placed on the Timeline");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A clip dragged onto the New Item button makes a sequence from it, as File ▸ New ▸ Sequence
@@ -1593,7 +1584,7 @@ fn a_dragged_media_browser_thumbnail_size_is_written_to_preferences() {
     d.ok("ui.panel.show", json!({"panel": "MediaBrowser"}));
     d.ok("ui.set", json!({"focused": "MediaBrowser"}));
     d.ok("ui.menu.invoke", json!({"id": "window.maximizeFrame"}));
-    d.exec("mediaBrowser.navigate", json!({"path": dir.to_string_lossy()}));
+    d.exec("mediaBrowser.navigate", json!({"path": dir.path().to_string_lossy()}));
     d.exec("mediaBrowser.settings", json!({"view": "thumbnails", "thumbnailSize": 100.0}));
     d.wait_for("mediaBrowser.thumbnailSize");
     let r = d.rect("mediaBrowser.thumbnailSize");
@@ -1604,7 +1595,6 @@ fn a_dragged_media_browser_thumbnail_size_is_written_to_preferences() {
     assert!(s1 > 150.0, "100 → {s1}");
     assert_eq!(saved_prefs(&path).media_browser.thumbnail_size, s1, "preferences.json");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// #3774: the footer's Zoom sizes List view's thumbnails and scales the Freeform canvas, not

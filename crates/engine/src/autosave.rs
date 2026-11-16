@@ -16,9 +16,10 @@
 //! engine already keeps for undo) — a pointer copy and a channel send. Serialization and all file
 //! I/O happen on the worker thread, so neither ever stalls the UI.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -875,20 +876,48 @@ pub struct Persistence {
 /// Coordinates automatic writes to the current project file with explicit saves.
 #[derive(Default)]
 pub(crate) struct ProjectFileFence {
-    pub(crate) last_saved: Option<(String, u64, u64)>,
+    saved_paths: HashMap<PathBuf, (u64, u64)>,
+}
+
+fn project_file_identity(path: &str) -> PathBuf {
+    let path = Path::new(path);
+    if let Ok(canonical) = fs::canonicalize(path) {
+        return canonical;
+    }
+    let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map_or_else(|_| path.to_path_buf(), |cwd| cwd.join(path)) };
+    if let (Some(parent), Some(name)) = (absolute.parent(), absolute.file_name())
+        && let Ok(parent) = fs::canonicalize(parent)
+    {
+        return parent.join(name);
+    }
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 impl ProjectFileFence {
-    fn is_stale(&self, path: &str, revision: u64, view_epoch: u64) -> bool {
-        self.last_saved
-            .as_ref()
-            .is_some_and(|(saved_path, saved_revision, saved_view_epoch)| saved_path == path && (revision < *saved_revision || view_epoch < *saved_view_epoch))
+    pub(crate) fn is_stale(&self, path: &str, revision: u64, view_epoch: u64) -> bool {
+        self.saved_paths
+            .get(&project_file_identity(path))
+            .is_some_and(|(saved_revision, saved_view_epoch)| revision < *saved_revision || view_epoch < *saved_view_epoch)
     }
 
     fn covers(&self, path: &str, revision: u64, view_epoch: u64) -> bool {
-        self.last_saved.as_ref().is_some_and(|(saved_path, saved_revision, saved_view_epoch)| {
-            saved_path == path && (*saved_revision > revision || (*saved_revision == revision && *saved_view_epoch >= view_epoch))
-        })
+        self.saved_paths
+            .get(&project_file_identity(path))
+            .is_some_and(|(saved_revision, saved_view_epoch)| *saved_revision > revision || (*saved_revision == revision && *saved_view_epoch >= view_epoch))
+    }
+
+    pub(crate) fn record_saved(&mut self, path: &str, revision: u64, view_epoch: u64) {
+        self.saved_paths.insert(project_file_identity(path), (revision, view_epoch));
     }
 }
 
@@ -939,6 +968,7 @@ impl Persistence {
             journaled_content_dirty: false,
             journaled_view_dirty: false,
             autosaved: 0,
+            autosaved_view_epoch: 0,
             autosaved_path: None,
             first_pending: None,
             last_change: Instant::now(),
@@ -1123,6 +1153,7 @@ struct Worker {
     journaled_content_dirty: bool,
     journaled_view_dirty: bool,
     autosaved: u64,
+    autosaved_view_epoch: u64,
     autosaved_path: Option<PathBuf>,
     first_pending: Option<Instant>,
     last_change: Instant,
@@ -1334,13 +1365,21 @@ impl Worker {
         let serialize_ms = t0.elapsed().as_secs_f64() * 1000.0;
         let t1 = Instant::now();
         let unix = unix_now();
-        let r = if s.revision != self.autosaved {
+        let cached_version_missing = self.autosaved_path.as_ref().is_none_or(|path| !path.is_file());
+        let r = if s.revision != self.autosaved || cached_version_missing {
             names::write_auto_save(&dir, &name, unix, (self.local_offset)(unix), &bytes, self.prefs.max_versions as usize)
                 .inspect(|path| {
                     self.autosaved = s.revision;
+                    self.autosaved_view_epoch = s.view_epoch;
                     self.autosaved_path = Some(path.clone());
                 })
                 .map_err(|error| error.to_string())
+        } else if s.view_epoch != self.autosaved_view_epoch {
+            self.autosaved_path
+                .as_ref()
+                .ok_or_else(|| "auto-save version is missing for the completed revision".to_string())
+                .and_then(|path| filmcraft_format::atomic_write(path, &bytes).map(|()| path.clone()).map_err(|error| error.to_string()))
+                .inspect(|_| self.autosaved_view_epoch = s.view_epoch)
         } else {
             self.autosaved_path.clone().ok_or_else(|| "auto-save version is missing for the completed revision".to_string())
         };
@@ -1356,7 +1395,7 @@ impl Worker {
                     let result = if stale { Ok(false) } else { filmcraft_format::atomic_write(Path::new(p), &bytes).map(|()| true) };
                     match result {
                         Ok(true) => {
-                            fence.last_saved = Some((p.clone(), s.revision, s.view_epoch));
+                            fence.record_saved(p, s.revision, s.view_epoch);
                             let _ = self.events.send(WorkerEvent::SavedProject { path: p.clone(), revision: s.revision, view_epoch: s.view_epoch });
                         }
                         Ok(false) => {}
@@ -1543,11 +1582,90 @@ mod durability_tests {
 
     #[test]
     fn an_automatic_save_skips_a_snapshot_older_than_the_explicit_save_fence() {
-        let fence = ProjectFileFence { last_saved: Some(("project.fcproj".into(), 12, 8)) };
+        let fence = ProjectFileFence { saved_paths: HashMap::from([(project_file_identity("project.fcproj"), (12, 8))]) };
         assert!(fence.is_stale("project.fcproj", 11, 8));
         assert!(fence.is_stale("project.fcproj", 12, 7));
         assert!(!fence.is_stale("project.fcproj", 12, 8));
         assert!(!fence.is_stale("another.fcproj", 1, 0));
+    }
+
+    #[test]
+    fn saving_as_another_path_keeps_the_first_paths_write_fence() {
+        let mut fence = ProjectFileFence::default();
+        fence.record_saved("A.fcproj", 12, 8);
+        fence.record_saved("B.fcproj", 13, 9);
+
+        assert!(fence.is_stale("A.fcproj", 11, 8), "the older in-flight A write stays fenced after Save As B");
+        assert!(fence.covers("A.fcproj", 11, 8));
+        assert!(!fence.is_stale("A.fcproj", 12, 8));
+        assert!(!fence.covers("B.fcproj", 14, 10), "B is tracked independently from A");
+    }
+
+    #[test]
+    fn project_file_fence_uses_filesystem_identity_for_relative_paths() {
+        let mut fence = ProjectFileFence::default();
+        let relative = "crates/engine/../../Cargo.toml";
+        let absolute = std::env::current_dir().map_or_else(|_| PathBuf::from("Cargo.toml"), |cwd| cwd.join("Cargo.toml"));
+        fence.record_saved(relative, 12, 8);
+        assert!(fence.is_stale(&absolute.to_string_lossy(), 11, 8));
+        assert!(fence.covers(&absolute.to_string_lossy(), 11, 8));
+    }
+
+    #[test]
+    fn reusing_an_autosave_version_writes_the_latest_timeline_view() {
+        let dir = TestDir::new("autosave-view-refresh");
+        let (events, _received) = std::sync::mpsc::channel();
+        let mut project_view = filmcraft_project::ProjectView::default();
+        project_view.timeline_ui.show_whole_timeline = true;
+        let mut worker = Worker {
+            data_dir: dir.to_path_buf(),
+            session_dir: dir.join("session"),
+            local_offset: |_| 0,
+            debounce: Duration::ZERO,
+            prefs: AutoSavePrefs::default(),
+            events,
+            latest: Some(Snapshot {
+                project: Arc::new(Project::new("Autosave view refresh")),
+                view: project_view,
+                revision: 1,
+                view_epoch: 2,
+                content_dirty: true,
+                view_dirty: true,
+                path: None,
+            }),
+            journaled: 0,
+            journaled_view: 0,
+            journaled_content_dirty: false,
+            journaled_view_dirty: false,
+            autosaved: 0,
+            autosaved_view_epoch: 0,
+            autosaved_path: None,
+            first_pending: None,
+            last_change: Instant::now(),
+            next_autosave: Instant::now(),
+            meta: JournalMeta::default(),
+            project_file_fence: Arc::new(std::sync::Mutex::new(ProjectFileFence::default())),
+        };
+
+        let path = worker.auto_save().unwrap();
+        let old_bytes = fs::read(&path).unwrap();
+        let latest = worker.latest.as_mut().unwrap();
+        latest.view.timeline_ui.show_whole_timeline = false;
+        latest.view_epoch = 3;
+
+        let reused_path = worker.auto_save().unwrap();
+        let new_bytes = fs::read(&reused_path).unwrap();
+        assert_eq!(reused_path, path, "a view-only refresh updates the current version");
+        assert_ne!(new_bytes, old_bytes, "the reused version stores the latest view");
+        assert_eq!(worker.autosaved_view_epoch, 3);
+
+        let retry_path = worker.auto_save().unwrap();
+        assert_eq!(retry_path, path, "a project-file retry does not create another auto-save version");
+        assert_eq!(fs::read(retry_path).unwrap(), new_bytes, "a retry with no newer view leaves the version intact");
+        fs::remove_file(&path).unwrap();
+        let recreated = worker.auto_save().unwrap();
+        assert!(recreated.is_file(), "a cached auto-save path is recreated before success is reported");
+        assert_eq!(fs::read(recreated).unwrap(), new_bytes);
     }
 
     #[test]

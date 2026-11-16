@@ -77,7 +77,9 @@ pub(crate) fn clipboard_events_as_keys(events: &mut Vec<egui::Event>, modifiers:
 }
 #[cfg(test)]
 pub(crate) use scrollbars::controls_listen_key;
+pub(crate) use scrollbars::flush_pending_view_changes_for_close;
 pub(crate) use scrollbars::flush_pending_zoombar_view_change;
+pub(crate) use scrollbars::flush_track_slider_view_change;
 pub use scrollbars::{
     controls_listening, custom_control_shortcut_pending, custom_control_shortcut_pending_for_events, set_track_slider_hidden, set_zoombar_hidden,
     zoombar_cursor_watchdog,
@@ -792,10 +794,10 @@ fn animate_track_sliders(app: &mut FilmcraftApp, ctx: &egui::Context, seq_id: It
     if smooth {
         let dt = ctx.input(|i| i.stable_dt).min(0.05);
         let k = (1.0 - (-f64::from(dt) * 20.0).exp()) as f32;
-        v.video_track_h += (tg[0] - v.video_track_h) * k;
-        v.v_scroll += (tg[1] - v.v_scroll) * k;
-        v.audio_track_h += (tg[2] - v.audio_track_h) * k;
-        v.a_scroll += (tg[3] - v.a_scroll) * k;
+        v.video_track_h = ease_track_value(v.video_track_h, tg[0], k);
+        v.v_scroll = ease_track_value(v.v_scroll, tg[1], k);
+        v.audio_track_h = ease_track_value(v.audio_track_h, tg[2], k);
+        v.a_scroll = ease_track_value(v.a_scroll, tg[3], k);
     } else {
         v.video_track_h = tg[0];
         v.v_scroll = tg[1];
@@ -811,6 +813,11 @@ fn animate_track_sliders(app: &mut FilmcraftApp, ctx: &egui::Context, seq_id: It
     } else {
         ctx.request_repaint();
     }
+}
+
+fn ease_track_value(current: f32, target: f32, factor: f32) -> f32 {
+    let next = current + (target - current) * factor;
+    if next == current { target } else { next }
 }
 
 /// The timeline view's animated state: eases zoom and scroll toward their targets (or jumps
@@ -840,34 +847,38 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
             v.fit_empty = empty.then_some(v.target_pps);
             fit_completed = true;
         }
-        // however the zoom was set (wheel, keys, the bar, a script), zooming out stops at the
-        // extent and zooming in stops at the Maximum Zoom Level setting
-        let (floor, ceiling) = layout::zoom_pps_limits(seq.duration().seconds(), content.width(), min_zoom_view);
-        let requested_target_pps = v.target_pps;
-        let clamped_target_pps = requested_target_pps.clamp(floor.min(ceiling), ceiling);
-        if requested_target_pps.is_finite()
-            && requested_target_pps > 0.0
-            && clamped_target_pps.is_finite()
-            && clamped_target_pps > 0.0
-            && clamped_target_pps < requested_target_pps
-            && app.tl.zoom_anchor.is_none()
-        {
-            // Enforcing a newly lowered zoom ceiling should not make the visible Timeline jump.
-            v.target_scroll = layout::center_scroll_for_zoom(
-                v.target_scroll,
-                requested_target_pps,
-                clamped_target_pps,
-                content.width(),
-                timeline_extent(seq.duration().seconds()),
-            );
+        // A zero-width Timeline occurs while its dock pane is collapsed or a window is
+        // minimized. Its one-point fallback geometry must not lower the user's stored zoom.
+        if content.width() > 50.0 {
+            // however the zoom was set (wheel, keys, the bar, a script), zooming out stops at the
+            // extent and zooming in stops at the Maximum Zoom Level setting
+            let (floor, ceiling) = layout::zoom_pps_limits(seq.duration().seconds(), content.width(), min_zoom_view);
+            let requested_target_pps = v.target_pps;
+            let clamped_target_pps = requested_target_pps.clamp(floor.min(ceiling), ceiling);
+            if requested_target_pps.is_finite()
+                && requested_target_pps > 0.0
+                && clamped_target_pps.is_finite()
+                && clamped_target_pps > 0.0
+                && clamped_target_pps < requested_target_pps
+                && app.tl.zoom_anchor.is_none()
+            {
+                // Enforcing a newly lowered zoom ceiling should not make the visible Timeline jump.
+                v.target_scroll = layout::center_scroll_for_zoom(
+                    v.target_scroll,
+                    requested_target_pps,
+                    clamped_target_pps,
+                    content.width(),
+                    timeline_extent(seq.duration().seconds()),
+                );
+            }
+            v.target_pps = clamped_target_pps;
+            let old_pps = v.pps;
+            let clamped_pps = old_pps.clamp(floor.min(ceiling), ceiling);
+            if old_pps.is_finite() && old_pps > 0.0 && clamped_pps < old_pps && app.tl.zoom_anchor.is_none() {
+                v.scroll = layout::center_scroll_for_zoom(v.scroll, old_pps, clamped_pps, content.width(), timeline_extent(seq.duration().seconds()));
+            }
+            v.pps = clamped_pps;
         }
-        v.target_pps = clamped_target_pps;
-        let old_pps = v.pps;
-        let clamped_pps = old_pps.clamp(floor.min(ceiling), ceiling);
-        if old_pps.is_finite() && old_pps > 0.0 && clamped_pps < old_pps && app.tl.zoom_anchor.is_none() {
-            v.scroll = layout::center_scroll_for_zoom(v.scroll, old_pps, clamped_pps, content.width(), timeline_extent(seq.duration().seconds()));
-        }
-        v.pps = clamped_pps;
         // eased, or in one step with Settings ▸ Appearance ▸ animations off (#2325)
         let k = if app.session.prefs.appearance.animations { 1.0 - (-dt * 20.0).exp() } else { 1.0 };
         let zooming = (v.pps - v.target_pps).abs() / v.target_pps > 0.001;
@@ -1716,11 +1727,20 @@ mod new_track_tests {
         assert_eq!(target, [100.0, 60.0, 80.0, 90.0]);
         assert_eq!(clamp_track_scroll_target(5.0, f32::NAN), 0.0);
     }
+
+    #[test]
+    fn track_scroll_animation_snaps_when_f32_cannot_advance() {
+        let current = 599_999.94_f32;
+        let target = 600_000.0_f32;
+        let factor = 1.0e-4_f32;
+        assert_eq!(current + (target - current) * factor, current);
+        assert_eq!(ease_track_value(current, target, factor), target);
+    }
 }
 
 #[cfg(test)]
 mod ruler_tests {
-    use super::ruler_steps;
+    use super::{ruler::ruler_tick_count_within_budget, ruler_steps};
 
     /// Every combination keeps both minimums and has the tick stride divide the label stride.
     #[test]
@@ -1756,6 +1776,13 @@ mod ruler_tests {
         let (minor, label) = ruler_steps(1.0, i64::MAX);
         assert!(minor >= 1 && label >= 1 && label % minor == 0, "an unrepresentable rate: tick {minor}, label {label}");
     }
+
+    #[test]
+    fn ruler_skips_work_when_a_restored_view_would_exceed_its_budget() {
+        assert!(!ruler_tick_count_within_budget(0, 280_000, 1));
+        assert!(ruler_tick_count_within_budget(0, 512, 1));
+        assert!(!ruler_tick_count_within_budget(10, 9, 1));
+    }
 }
 
 #[cfg(test)]
@@ -1783,7 +1810,7 @@ mod zoom_ceiling_animation_tests {
     #[test]
     fn lowering_zoom_ceiling_preserves_current_center_with_animation() {
         let mut session = filmcraft_engine::Session::default();
-        session.execute("file.openDemoProject", json!({})).unwrap();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
         let id = session.state.active_sequence.unwrap();
         let project = session.project.clone();
         let seq = project.sequence(id).unwrap();
@@ -1881,7 +1908,8 @@ mod zoom_ceiling_animation_tests {
 
 #[cfg(test)]
 mod content_width_tests {
-    use super::content_right;
+    use super::{animate_view, content_right};
+    use crate::FilmcraftApp;
     use egui::{Rect, pos2};
 
     #[test]
@@ -1891,5 +1919,29 @@ mod content_width_tests {
         let right = content_right(panel, 36.0, 17.0, false);
         assert_eq!(right, left);
         assert!(right >= left, "the content rect cannot be horizontally inverted");
+    }
+
+    #[test]
+    fn collapsed_timeline_width_does_not_lower_the_saved_zoom_ceiling() {
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        session.state.timeline_ui.max_zoom_seconds = 0.05;
+        let id = session.state.active_sequence.unwrap();
+        let project = session.project.clone();
+        let sequence = project.sequence(id).unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.session.prefs.appearance.animations = false;
+        app.ui.timeline.fit_pending = false;
+        app.ui.timeline.pps = 10_000.0;
+        app.ui.timeline.target_pps = 10_000.0;
+        app.ui.timeline.scroll = 0.0;
+        app.ui.timeline.target_scroll = 0.0;
+        let ctx = egui::Context::default();
+
+        animate_view(&mut app, &ctx, Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(10.0, 400.0)), id, sequence);
+        assert_eq!(app.ui.timeline.target_pps, 10_000.0, "collapsed geometry does not clamp the stored zoom");
+
+        animate_view(&mut app, &ctx, Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(1000.0, 400.0)), id, sequence);
+        assert_eq!(app.ui.timeline.target_pps, 10_000.0, "widening the pane restores the same zoom");
     }
 }

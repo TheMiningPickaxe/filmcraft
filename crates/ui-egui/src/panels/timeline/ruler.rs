@@ -5,6 +5,12 @@ use super::{
 };
 use crate::panels::timeline_hit::marker_end_rect;
 
+const MAX_RULER_TICKS_PER_FRAME: i64 = 512;
+
+pub(super) fn ruler_tick_count_within_budget(first: i64, last: i64, step: i64) -> bool {
+    step > 0 && last >= first && last.saturating_sub(first) / step <= MAX_RULER_TICKS_PER_FRAME
+}
+
 /// The Ruler's two strides, in frames: `(tick, label)`.
 ///
 /// `label` is the first ladder step wide enough to keep timestamps apart (110 pt); `tick` is the
@@ -120,17 +126,20 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
     }
     let f0 = rate.frame_at(layout.tick_at(ruler.min.x)).max(0);
     let f1 = rate.frame_at(layout.tick_at(ruler.max.x)) + 1;
-    let mut f = (f0 / minor) * minor;
-    while f <= f1 {
-        let x = layout.x_of(rate.tick_of(f));
-        let major = f % label_step == 0;
-        let h = if major { 10.0 } else { 4.0 };
-        clip.line_segment([pos2(x, tick_base - h), pos2(x, tick_base)], Stroke::new(1.0, t.tl_ruler_tick));
-        if major {
-            let label = format_time(rate.tick_of(f), rate, seq.settings.drop_frame, seq.settings.display, 48000);
-            clip.text(pos2(x + 1.0, label_y), Align2::CENTER_CENTER, label, Tokens::ui(11.0), t.tl_ruler_text);
+    if ruler_tick_count_within_budget(f0, f1, minor) {
+        let mut f = (f0 / minor) * minor;
+        while f <= f1 {
+            let x = layout.x_of(rate.tick_of(f));
+            let major = f % label_step == 0;
+            let h = if major { 10.0 } else { 4.0 };
+            clip.line_segment([pos2(x, tick_base - h), pos2(x, tick_base)], Stroke::new(1.0, t.tl_ruler_tick));
+            if major {
+                let label = format_time(rate.tick_of(f), rate, seq.settings.drop_frame, seq.settings.display, 48000);
+                clip.text(pos2(x + 1.0, label_y), Align2::CENTER_CENTER, label, Tokens::ui(11.0), t.tl_ruler_text);
+            }
+            let Some(next) = f.checked_add(minor) else { break };
+            f = next;
         }
-        f += minor;
     }
     // render bar
     // Per segment (engine `previews`): green = rendered preview, yellow = should play in real time,

@@ -170,7 +170,7 @@ fn truncated_children_restore_audio_only_and_negative_lane_references() {
     assert!(report.mentions("deeper clips were skipped"), "{report}");
     let sequence = imported.project.sequences().find(|item| item.name == "A").and_then(|item| imported.project.sequence(item.id)).unwrap();
     let audio: Vec<_> = sequence.audio_tracks.iter().flat_map(|track| &track.items).collect();
-    assert_eq!(audio.len(), 2, "both deferred audio-only references must be restored");
+    assert_eq!(audio.len(), 2, "both deferred audio-only references must be restored: {:?}; {report}", audio.iter().map(|clip| &clip.name).collect::<Vec<_>>());
     assert!(audio.iter().any(|clip| clip.name == "Audio enabled" && clip.link.is_some()));
     assert!(audio.iter().any(|clip| clip.name == "Negative lane" && clip.link.is_some()));
     assert!(sequence.audio_tracks.get(1).is_some_and(|track| track.items.iter().any(|clip| clip.name == "Negative lane")));

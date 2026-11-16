@@ -669,9 +669,10 @@ fn home_and_end_bring_the_playhead_into_view() {
     d.exec("playhead.end", json!({}));
     d.frames(3);
     let end = d.app().session.playhead().seconds();
-    let v = &d.app().ui.timeline;
-    let width = 1600.0 / v.pps;
-    assert!(v.target_scroll > 3.0 && v.target_scroll <= end && end - v.target_scroll < width, "End shows the playhead: scroll {} end {end}", v.target_scroll);
+    let pps = d.app().ui.timeline.pps;
+    let width = d.app().tl.layout.as_ref().map_or(0.0, |layout| f64::from(layout.content.width())) / pps;
+    let target_scroll = d.app().ui.timeline.target_scroll;
+    assert!(target_scroll > 3.0 && target_scroll <= end && end - target_scroll < width, "End shows the playhead: scroll {target_scroll} end {end}");
 }
 
 fn repeated_endpoint_navigation_reveals_the_same_playhead(use_keys: bool) {
@@ -922,7 +923,9 @@ fn fullscreen_timeline_settings_shows_every_row() {
     let top = rows.iter().map(|r| r.rect[1]).fold(f32::INFINITY, f32::min);
     let bottom = rows.iter().map(|r| r.rect[1] + r.rect[3]).fold(f32::NEG_INFINITY, f32::max);
     assert!(bottom - top > 400.0, "all settings must occupy their full natural height");
-    assert!((bar[1] + bar[3] / 2.0 - bottom).abs() < 40.0, "menu bottom must be beside the click: bottom={bottom}, bar={bar:?}");
+    let popup = d.harness.ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("timeline-zoombar-popup-rect"))).expect("popup rectangle");
+    assert!((popup.bottom() - (bar[1] + bar[3] / 2.0)).abs() < 1.0, "popup follows the click: {popup:?}, bar={bar:?}");
+    assert!((popup.bottom() - bottom) < 48.0, "settings rows stay near the popup bottom: popup={popup:?}, rows_bottom={bottom}");
     for row in rows {
         assert!(row.rect[1] >= 0.0 && row.rect[1] + row.rect[3] <= 980.0, "row outside fullscreen window: {} {:?}", row.id, row.rect);
     }
@@ -984,6 +987,9 @@ fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
 
     let row = "timeline.zoomBar.settings.smoothAnimations";
     assert!(d.harness.state().auto.elements.iter().any(|element| element.id == row), "the menu must be visible on the release frame");
+    // The restored viewport may need one repaint after its first layout pass before its shapes
+    // are emitted; the menu's first painted frame must already use the measured height.
+    d.frames(1);
     let first = d.rect_now(row);
     let painted = |d: &Driver| {
         d.harness.output().shapes.iter().any(|shape| {

@@ -11,6 +11,10 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($CommitTitle)) {
     throw 'A commit title is required.'
 }
+$blessValue = $env:FILMCRAFT_BLESS
+if ($null -ne $blessValue -and $blessValue.Trim().ToLowerInvariant() -in @('1', 'true', 'yes', 'on')) {
+    throw 'FILMCRAFT_BLESS enables golden-reference writes; unset it before publishing so the quality gate compares the staged references.'
+}
 
 function ConvertTo-CanonicalRepositoryUrl([string]$Url) {
     $value = $Url.Trim().TrimEnd('/')
@@ -60,7 +64,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$headBeforeConfirmatio
     throw 'Could not record the current commit before confirmation.'
 }
 $headBeforeConfirmation = "$headBeforeConfirmation".Trim()
-$headTreeBeforeConfirmation = & git -C $repo rev-parse 'HEAD^{tree}' 2>$null
+$headTreeBeforeConfirmation = & git -C $repo rev-parse "${headBeforeConfirmation}^{tree}" 2>$null
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$headTreeBeforeConfirmation")) {
     throw 'Could not record the current tree before confirmation.'
 }
@@ -130,13 +134,15 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$gateCommit")) {
 $gateCommit = "$gateCommit".Trim()
 $gateWorktree = Join-Path ([System.IO.Path]::GetTempPath()) ("filmcraft-quality-gate-" + [guid]::NewGuid().ToString('N'))
 $gateWorktreeAdded = $false
+$gateTrackedChanges = @()
+$gateTrackedStatusExit = 0
 try {
     & git -C $repo worktree add --detach $gateWorktree $gateCommit
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the isolated staged-tree quality gate checkout. Nothing was committed or pushed.' }
     $gateWorktreeAdded = $true
     Push-Location -LiteralPath $gateWorktree
     try {
-        & cargo xtask ci
+        & cargo --locked xtask ci
         $gateExitCode = $LASTEXITCODE
     }
     finally {
@@ -144,10 +150,29 @@ try {
     }
 }
 finally {
-    if ($gateWorktreeAdded) {
+    $gateWorktreeExists = Test-Path -LiteralPath $gateWorktree
+    $registeredWorktrees = @(& git -C $repo worktree list --porcelain 2>$null)
+    $gateWorktreeRegistered = $registeredWorktrees -contains "worktree $gateWorktree"
+    if ($gateWorktreeAdded -or $gateWorktreeExists -or $gateWorktreeRegistered) {
+        if ($gateWorktreeExists) {
+            $gateTrackedChanges = @(& git -C $gateWorktree status --porcelain --untracked-files=no 2>$null)
+            $gateTrackedStatusExit = $LASTEXITCODE
+        }
+        if ($gateTrackedStatusExit -ne 0) {
+            throw 'Could not inspect tracked files in the isolated quality gate checkout. The checkout was kept for inspection; nothing was committed or pushed.'
+        }
+        if ($gateTrackedChanges.Count -gt 0) {
+            throw "The quality gate changed tracked files in its isolated checkout. The checkout was kept for inspection; nothing was committed or pushed:`n$($gateTrackedChanges -join "`n")"
+        }
         & git -C $repo worktree remove --force $gateWorktree
         if ($LASTEXITCODE -ne 0) { throw 'The isolated quality gate checkout could not be removed. Nothing was committed or pushed.' }
     }
+}
+if ($gateTrackedStatusExit -ne 0) {
+    throw 'Could not inspect tracked files in the isolated quality gate checkout. Nothing was committed or pushed.'
+}
+if ($gateTrackedChanges.Count -gt 0) {
+    throw "The quality gate changed tracked files in its isolated checkout. Nothing was committed or pushed:`n$($gateTrackedChanges -join "`n")"
 }
 if ($gateExitCode -ne 0) {
     throw 'The FilmCraft quality gate failed. Nothing was committed or pushed.'

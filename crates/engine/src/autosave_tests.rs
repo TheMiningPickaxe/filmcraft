@@ -600,6 +600,13 @@ fn explicit_auto_save_syncs_the_latest_view_with_unsaved_content() {
     let path = result["path"].as_str().expect("content-dirty auto-save has a path");
     let loaded = filmcraft_format::decode(&std::fs::read(path).unwrap()).unwrap();
     assert!(loaded.view.is_some_and(|view| view.timeline_ui.inverted_controls), "explicit save includes the latest view state");
+
+    s.state.timeline_ui.inverted_controls = false;
+    s.project_view_changed();
+    let repeated = s.execute("file.autoSaveNow", json!({})).unwrap();
+    assert_eq!(repeated["path"].as_str(), Some(path), "a view-only refresh reuses the existing content version");
+    let refreshed = filmcraft_format::decode(&std::fs::read(path).unwrap()).unwrap();
+    assert!(!refreshed.view.is_some_and(|view| view.timeline_ui.inverted_controls), "the reused version contains the latest view");
     s.shutdown();
 }
 

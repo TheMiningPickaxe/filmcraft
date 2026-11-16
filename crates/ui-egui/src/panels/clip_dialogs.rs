@@ -393,6 +393,7 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context) {
     let id = egui::Id::unique(("clip-dialog", pre));
     // Foreground is interactive; bring the dialog's window area to the top after showing it so
     // it remains above the zoom-bar settings popup.
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Foreground, id));
     egui::Window::new(title).id(id).collapsible(false).resizable(false).default_width(360.0).order(egui::Order::Foreground).centered(ctx).show(ctx, |ui| {
         let p = &mut d.params;
         let mut valid = true;

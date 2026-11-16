@@ -247,7 +247,7 @@ impl FilmcraftApp {
     fn logic_control(&mut self, ctx: &egui::Context) {
         // Quitting with unsaved changes asks to save them first.
         if ctx.input(|i| i.viewport().close_requested()) {
-            panels::timeline::flush_pending_zoombar_view_change(self, ctx);
+            panels::timeline::flush_pending_view_changes_for_close(self, ctx);
             self.sync_timeline_view();
             if panels::clip_dialogs::intercept_quit(self) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -413,6 +413,7 @@ impl FilmcraftApp {
             self.playback.playing = false;
         }
         panels::timeline::flush_pending_zoombar_view_change(self, &ctx);
+        panels::timeline::flush_track_slider_view_change(self, &ctx);
         if !ctx.will_discard() {
             self.cancel_value_drag(&ctx);
         }

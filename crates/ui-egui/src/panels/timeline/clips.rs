@@ -179,9 +179,19 @@ pub fn zoomed_thumbnail_tiles(
     tiles.into_iter().map(|(x, t)| (x0 + (x - x0) * r, tile_w * r, t)).collect()
 }
 
-fn zoomed_thumbnail_width_cap(width: f32, height: f32, aspect: f32, pps: f64, frozen: f64) -> f32 {
-    let frozen_scale = frozen as f32 / pps as f32;
-    (width * frozen_scale).min(height * aspect * frozen_scale)
+fn nominal_thumbnail_tile_width(height: f32, aspect: f32) -> f32 {
+    height * aspect
+}
+
+fn frozen_thumbnail_tile_width(_width: f32, height: f32, aspect: f32, _pps: f64, _frozen: f64) -> f32 {
+    // Tile spacing is chosen in frozen coordinates; live clip width and zoom affect only which
+    // part is visible, never which source frames are sampled.
+    nominal_thumbnail_tile_width(height, aspect)
+}
+
+fn thumbnail_tile_rect(x: f32, center_y: f32, width: f32, aspect: f32) -> Rect {
+    let height = width / aspect;
+    Rect::from_min_size(pos2(x, center_y - height / 2.0), vec2(width, height))
 }
 
 #[cfg(test)]
@@ -238,30 +248,29 @@ pub(super) fn draw_clip(
             _ => None,
         });
         if let Some(aspect) = aspect.filter(|a| a.is_finite() && *a > 0.0) {
-            // aspect-correct and never bigger than the clip's picture area: at tall track heights
-            // the tiles used to grow past the clip, cropping the frame at the bottom and to the
-            // right. The frame stops growing once its bottom meets the clip's bottom.
+            // Source tiles keep their aspect ratio; the picture area clips any part that extends
+            // beyond its edges. Continuous zoom uses the frozen layout width so frame sampling
+            // stays stable throughout the gesture.
             let mode = app.ui.timeline.thumbnail_mode;
-            let (pps, frozen) = (app.ui.timeline.pps, app.tl.thumb_pps);
-            // the width cap lives in the frozen coordinate space too, but only Continuous tiles
-            // run in that space: capped by the live width it changes under the tiles mid-gesture
-            // and reveals new frames, each one a thumbnail request
-            let cap_w = match (mode, frozen) {
-                (crate::state::ThumbnailMode::Continuous, Some(f)) if pps.is_finite() && pps > 0.0 && f.is_finite() && f > 0.0 => {
-                    zoomed_thumbnail_width_cap(th.width(), th.height(), aspect, pps, f)
-                }
-                _ => th.width(),
-            };
-            // a subpixel frozen cap is no cap at all: the tiler rejects widths under one point,
-            // so a short clip would lose its thumbnails mid-gesture. Fall back to live tiling
-            // entirely -- passing the live width with the frozen scale would scale it up.
-            let subpixel = cap_w < 1.0;
-            let cap_w = if subpixel { th.width() } else { cap_w };
-            let frozen = if subpixel { None } else { frozen };
+            let (pps, mut frozen) = (app.ui.timeline.pps, app.tl.thumb_pps);
             let fh = th.height();
-            let mut tw = fh * aspect;
-            if tw > cap_w {
-                tw = cap_w;
+            let mut tw = nominal_thumbnail_tile_width(fh, aspect);
+            // Keep the frozen sampling interval fixed throughout a zoom gesture. The image may
+            // extend beyond the picture area; `cp` crops it without requesting different frames.
+            let frozen_tiles =
+                mode == crate::state::ThumbnailMode::Continuous && pps.is_finite() && pps > 0.0 && frozen.is_some_and(|f| f.is_finite() && f > 0.0 && f != pps);
+            if frozen_tiles {
+                if let Some(frozen_pps) = frozen {
+                    tw = frozen_thumbnail_tile_width(th.width(), fh, aspect, pps, frozen_pps);
+                    // The tiler rejects sub-point widths. Fall back to live layout when the clip
+                    // is narrower than one frozen point, preserving thumbnails for short clips.
+                    if tw < 1.0 {
+                        frozen = None;
+                        tw = nominal_thumbnail_tile_width(fh, aspect).min(th.width());
+                    }
+                }
+            } else if tw > th.width() {
+                tw = th.width();
             }
             let cp = p.with_clip_rect(th.intersect(p.clip_rect()));
             let visible = (cp.clip_rect().min.x, cp.clip_rect().max.x);
@@ -279,11 +288,9 @@ pub(super) fn draw_clip(
                     })
                     .unwrap_or((it.item, mt));
                 if let Some((tex, _)) = app.thumbnail(ctx, thumb_item, mt, 160) {
-                    // Keep the zoomed tile's full width so neighboring tiles remain contiguous.
-                    // When preserving aspect ratio makes it taller than the track, center-crop
-                    // vertically through the clip rect instead of shrinking it and leaving gaps.
-                    let tile_h = (w / aspect).max(th.height());
-                    let r = Rect::from_min_size(pos2(x, th.center().y - tile_h / 2.0), vec2(w, tile_h));
+                    // Paint the full aspect-correct source tile; the clip rect crops it at the
+                    // picture area's edges while neighboring tiles stay contiguous.
+                    let r = thumbnail_tile_rect(x, th.center().y, w, aspect);
                     cp.image(tex, r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 }
             }
@@ -402,7 +409,7 @@ pub(super) fn draw_transition(p: &egui::Painter, r: Rect, trn: &filmcraft_projec
 
 #[cfg(test)]
 mod thumbnail_height_tests {
-    use super::{thumbnail_render_size, zoomed_thumbnail_tiles, zoomed_thumbnail_width_cap};
+    use super::{frozen_thumbnail_tile_width, thumbnail_render_size, thumbnail_tile_rect, zoomed_thumbnail_tiles};
     use filmcraft_time::Tick;
 
     #[test]
@@ -418,20 +425,38 @@ mod thumbnail_height_tests {
     fn continuous_tiles_stay_contiguous_when_the_picture_height_caps_the_frame() {
         let aspect = 16.0 / 9.0;
         let picture_height = 90.0;
-        let base = 1000.0f32.min(zoomed_thumbnail_width_cap(1000.0, picture_height, aspect, 2.0, 1.0));
+        let base = picture_height * aspect;
         let tiles = zoomed_thumbnail_tiles(crate::state::ThumbnailMode::Continuous, 0.0, 900.0, base, (0.0, 900.0), Tick(1000), Tick(1), 2.0, Some(1.0));
         assert!(tiles.len() > 1);
         let picture = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(900.0, picture_height));
-        let image_rects: Vec<_> = tiles
-            .iter()
-            .map(|(x, width, _)| {
-                let height = (*width / aspect).max(picture_height);
-                egui::Rect::from_min_size(egui::pos2(*x, picture_height / 2.0 - height / 2.0), egui::vec2(*width, height)).intersect(picture)
-            })
-            .collect();
+        let image_rects: Vec<_> = tiles.iter().map(|(x, width, _)| thumbnail_tile_rect(*x, picture_height / 2.0, *width, aspect).intersect(picture)).collect();
         for pair in image_rects.windows(2) {
             assert!((pair[0].max.x - pair[1].min.x).abs() < 0.001, "painted tile rectangles must touch: {pair:?}");
             assert!((pair[0].height() - picture_height).abs() < 0.001, "the cropped tile fills the picture area");
         }
+    }
+
+    #[test]
+    fn frozen_zoom_keeps_thumbnail_sample_offsets_stable() {
+        let mode = crate::state::ThumbnailMode::Continuous;
+        let frozen = Some(100.0);
+        let slow_width = frozen_thumbnail_tile_width(1000.0, 90.0, 16.0 / 9.0, 100.0, 100.0);
+        let fast_width = frozen_thumbnail_tile_width(1000.0, 90.0, 16.0 / 9.0, 200.0, 100.0);
+        assert!((slow_width - 160.0).abs() < 0.001);
+        assert!((fast_width - slow_width).abs() < 0.001, "the height-based tile width stays frozen");
+        assert!(
+            (frozen_thumbnail_tile_width(80.0, 90.0, 16.0 / 9.0, 200.0, 100.0) - 160.0).abs() < 0.001,
+            "a narrow live clip does not change frozen sample spacing"
+        );
+        let slow = zoomed_thumbnail_tiles(mode, 0.0, 900.0, slow_width, (0.0, 900.0), Tick(10_000), Tick(1), 100.0, frozen);
+        let fast = zoomed_thumbnail_tiles(mode, 0.0, 1800.0, fast_width, (0.0, 1800.0), Tick(10_000), Tick(1), 200.0, frozen);
+        assert_eq!(slow.iter().map(|(_, _, offset)| *offset).collect::<Vec<_>>(), fast.iter().map(|(_, _, offset)| *offset).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_narrow_picture_area_crops_an_aspect_correct_thumbnail() {
+        let image = thumbnail_tile_rect(0.0, 45.0, 50.0, 16.0 / 9.0);
+        assert!((image.width() - 50.0).abs() < 0.001);
+        assert!((image.height() - 28.125).abs() < 0.001);
     }
 }

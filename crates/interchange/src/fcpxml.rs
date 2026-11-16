@@ -242,9 +242,14 @@ mod deferred_audio_tests {
     }
 
     #[test]
-    fn xml_budget_improvement_allows_reimport_when_media_depth_worsens() {
-        assert!(super::nesting_budget_improved((1, 4), (0, 122)));
+    fn xml_budget_must_not_worsen_when_reimporting() {
+        assert!(!super::nesting_budget_improved((0, 6), (1, 4)));
+        assert!(super::nesting_budget_improved((0, 4), (1, 4)));
+        assert!(super::nesting_budget_improved((1, 3), (1, 4)));
         assert!(!super::nesting_budget_improved((1, 123), (0, 122)));
+        assert!(!super::nesting_budget_improved((1, 4), (0, 122)), "an incomparable earlier retry cannot replace the better media-depth version");
+        assert!(!super::nesting_budget_improved((0, 126), (1, 4)), "a later media improvement cannot erase a much better XML-depth version");
+        assert!(!super::nesting_budget_improved((0, 128), (1, 4)), "a shallower media path cannot erase a fuller sequence when XML depth worsens");
         assert!(!super::nesting_budget_improved((0, 122), (0, 122)));
     }
 
@@ -254,8 +259,18 @@ mod deferred_audio_tests {
         let mut report = Report::default();
         let mut builder = Builder::new("recursive cached media");
         let cached = builder.reserve_sequence("Cached", SequenceSettings::default(), None);
+        let doc = crate::xml::parse(
+            "<fcpxml><media id=\"m0\"><sequence><spine><ref-clip ref=\"m1\"/></spine></sequence></media><media id=\"m1\"><sequence><spine/></sequence></media></fcpxml>",
+        )
+        .unwrap();
+        let media_nodes = doc
+            .root_element()
+            .children()
+            .filter(|node| node.has_tag_name("media"))
+            .filter_map(|node| node.attribute("id").map(|id| (id.to_string(), node)))
+            .collect();
         let mut active = HashSet::new();
-        active.insert("m0".to_string());
+        active.insert("m1".to_string());
         let mut imp = Imp {
             b: builder,
             opts: &opts,
@@ -263,7 +278,7 @@ mod deferred_audio_tests {
             formats: HashMap::new(),
             asset_nodes: HashMap::new(),
             assets: HashMap::new(),
-            media_nodes: HashMap::new(),
+            media_nodes,
             media_items: HashMap::from([("m0".to_string(), cached)]),
             media_active: active,
             sequence_stack: Vec::new(),
@@ -275,7 +290,7 @@ mod deferred_audio_tests {
             depth: 4,
         };
         assert_eq!(imp.media("m0"), None);
-        assert!(imp.report.mentions("recursive FCPXML media"));
+        assert!(imp.report.mentions("recursive cached FCPXML media"));
     }
 
     #[test]
@@ -316,7 +331,7 @@ struct Asset {
 const MAX_REIMPORTS: usize = 4096;
 
 fn nesting_budget_improved(current: (usize, usize), previous: (usize, usize)) -> bool {
-    current.0 < previous.0 || current.1 < previous.1
+    current.0 <= previous.0 && current.1 <= previous.1 && (current.0 < previous.0 || current.1 < previous.1)
 }
 
 /// Deepest storyline/element nesting a hostile file may walk. The FCPXML structure can nest
@@ -536,6 +551,10 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         let depth = self.media_active.len();
         let mut again = None;
         if let Some(i) = self.media_items.get(id) {
+            if self.cached_media_reaches_active(id) {
+                self.report.warn(format!("recursive cached FCPXML media dependency from {id:?} ignored"));
+                return None;
+            }
             // Imported with a nested one cut off: import it again (into the same item) where that
             // one now fits.
             let shallower = self.media_truncated_at.get(id).is_some_and(|previous| nesting_budget_improved((depth, self.depth), *previous));
@@ -576,6 +595,33 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         Some(item)
     }
 
+    /// Do not attach a cached compound sequence when its XML dependency graph points back into
+    /// the active import chain. A prior truncated import can leave such a cached sequence that
+    /// would otherwise close a cycle during a later reimport.
+    fn cached_media_reaches_active(&self, start: &str) -> bool {
+        let mut pending = vec![start.to_string()];
+        let mut seen = HashSet::new();
+        while let Some(id) = pending.pop() {
+            if self.media_active.contains(&id) {
+                return true;
+            }
+            if !seen.insert(id.clone()) {
+                continue;
+            }
+            if seen.len() > crate::MAX_NESTING_DEPTH.saturating_mul(crate::MAX_NESTING_DEPTH) {
+                return true;
+            }
+            let Some(resource) = self.media_nodes.get(&id) else { continue };
+            let Some(sequence) = child(*resource, "sequence") else { continue };
+            for reference in sequence.descendants().filter(|node| node.has_tag_name("ref-clip")) {
+                if let Some(next) = reference.attribute("ref").filter(|next| self.media_nodes.contains_key(*next)) {
+                    pending.push(next.to_string());
+                }
+            }
+        }
+        false
+    }
+
     fn sequence(&mut self, s: Node<'a, 'i>, name: &str, bin: Option<BinId>, reuse: Option<ItemId>) -> ItemId {
         let (rate, w, h) = s.attribute("format").and_then(|f| self.formats.get(f)).copied().unwrap_or((FrameRate::default(), 1920, 1080));
         let df = s.attribute("tcFormat") == Some("DF");
@@ -612,14 +658,25 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
         loop {
             let mut retry = Vec::new();
             let mut repaired = false;
+            let mut parents = HashMap::new();
             for deferred in pending {
                 let DeferredAudioRef { parent: parent_id, child: child_id, video: video_id, link, lane: audio_lane, mut audio } = deferred;
+                // A later reference can have more nesting budget than the import which first
+                // recorded this deferred link. Reimport the child into its reserved identity so
+                // its newly reachable audio tracks are available before repairing the parent.
+                if let Some(resource_id) = self.media_items.iter().find_map(|(id, item)| (*item == child_id).then_some(id.clone())) {
+                    let _ = self.media(&resource_id);
+                }
                 let child_has_audio = self.b.p.sequence(child_id).is_some_and(|sequence| sequence.audio_tracks.iter().any(|track| !track.items.is_empty()));
                 if !child_has_audio {
                     retry.push(DeferredAudioRef { parent: parent_id, child: child_id, video: video_id, link, lane: audio_lane, audio });
                     continue;
                 }
-                let Some(mut parent) = self.b.p.sequence(parent_id).cloned() else { continue };
+                if let std::collections::hash_map::Entry::Vacant(entry) = parents.entry(parent_id) {
+                    let Some(parent) = self.b.p.sequence(parent_id).cloned() else { continue };
+                    entry.insert(parent);
+                }
+                let Some(parent) = parents.get_mut(&parent_id) else { continue };
                 if let Some(video_id) = video_id {
                     let Some(video) = parent.video_tracks.iter_mut().find_map(|track| track.items.iter_mut().find(|item| item.id == video_id)) else {
                         continue;
@@ -630,12 +687,14 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
                     continue;
                 }
                 audio.link = Some(link);
-                if self.b.place(&mut parent, TrackKind::Audio, audio_lane, audio).is_some() {
-                    self.b.put_sequence(parent_id, parent);
+                if self.b.place(parent, TrackKind::Audio, audio_lane, audio).is_some() {
                     repaired = true;
                 } else {
                     self.report.warn("FCPXML recovered nested audio could not be placed within the track limit");
                 }
+            }
+            for (parent, sequence) in parents {
+                self.b.put_sequence(parent, sequence);
             }
             if retry.is_empty() || !repaired {
                 self.deferred_audio_refs = retry;
@@ -779,7 +838,8 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
                 let item = self.media(r)?;
                 let tc = self.b.p.sequence(item).map(|s| s.settings.frame_rate.tick_of(s.start_timecode)).unwrap_or(Tick::ZERO);
                 let has_audio = self.b.p.sequence(item).is_some_and(|s| s.audio_tracks.iter().any(|t| !t.items.is_empty()));
-                if !has_audio && el.attribute("srcEnable") != Some("video") && self.media_truncated_at.contains_key(r) {
+                let deferred_compound_audio = el.attribute("srcEnable") == Some("audio") && self.media_nodes.contains_key(r);
+                if deferred_compound_audio || (!has_audio && el.attribute("srcEnable") != Some("video") && self.media_truncated_at.contains_key(r)) {
                     deferred_audio_reference = Some(item);
                 }
                 Some((item, tc, true, has_audio))

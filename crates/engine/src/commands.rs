@@ -5375,8 +5375,10 @@ fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
         }
     }
     s.services.write_file(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    // Save Copy can target the current project path too; fence every successful write even when
+    // the session keeps its original path and dirty baselines.
+    fence.record_saved(path, s.revision, s.view_epoch);
     if adopt {
-        fence.last_saved = Some((path.to_string(), s.revision, s.view_epoch));
         s.path = Some(path.to_string());
         s.previews_follow_path();
         s.note_recent_project();

@@ -29,14 +29,19 @@ writing them is `crates/format` (`filmcraft-format`); the engine's `file.*` comm
   numbers out of range are dropped or clamped (a playhead also snaps to a frame of its sequence), and a `view` that cannot be read is ignored (the
   project opens on its first sequence, as it does without one or with no open sequence in it).
 
+- A coordinate of an effect's point parameter may be `null`. Point parameters use NaN for "auto"
+  (the frame centre, or the source centre for `anchor`), and JSON writes NaN as `null`; it reads back
+  as "auto". Placing a clip resolves these points at once. An interchange import resolves them
+  too, except the `anchor` of a clip whose media file was not found. That one stays "auto", and
+  the renderer centres it, until Link Media (`media.relink`, `media.autoRelink`) reads the file
+  and with it the real picture size; a file that merely comes back at its old path does not
+  change it. `null` anywhere else is a damaged file.
+
 ### Timeline settings
 
 Project-scoped Timeline settings live in `view.timeline_ui`. Missing fields use the defaults below;
 malformed fields use their own default without discarding the sequence tabs or other settings.
-This table is the settings reference, including each field's default. Recovery journals without a
-snapshot fingerprint remain readable for compatibility; newer journals pair pending metadata with
-the exact snapshot generation so an interrupted replacement cannot attach an old view overlay to
-new project content.
+This table is the settings reference, including each field's default.
 Numeric values are finite and clamped when a project is opened: playhead range is 0.1–3600 s,
 zoom-bar and track-slider drag speed is 0.1–50× and 0.1–10× respectively, and Maximum Zoom Level
 is 0.05–3 s. Invalid minimap colours return to their listed defaults.
@@ -82,13 +87,7 @@ is 0.05–3 s. Invalid minimap colours return to their listed defaults.
 | `track_control_minimum_height` | `""` | Track-slider Controls binding for minimum track height. |
 | `track_control_alternate_drag_speed` | `""` | Track-slider Controls binding for alternate drag speed. |
 | `track_control_settings` | `""` | Track-slider Controls binding for opening slider settings. |
-- A coordinate of an effect's point parameter may be `null`. Point parameters use NaN for "auto"
-  (the frame centre, or the source centre for `anchor`), and JSON writes NaN as `null`; it reads back
-  as "auto". Placing a clip resolves these points at once. An interchange import resolves them
-  too, except the `anchor` of a clip whose media file was not found. That one stays "auto", and
-  the renderer centres it, until Link Media (`media.relink`, `media.autoRelink`) reads the file
-  and with it the real picture size; a file that merely comes back at its old path does not
-  change it. `null` anywhere else is a damaged file.
+
 
 ### Schema history
 

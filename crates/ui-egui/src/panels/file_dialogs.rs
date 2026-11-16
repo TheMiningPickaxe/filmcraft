@@ -7,7 +7,7 @@
 
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Ui, vec2};
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::theme::Tokens;
 use crate::{Dialog, FilmcraftApp};
@@ -18,10 +18,19 @@ pub struct FileDialogState {
     pub recovery_choice: usize,
     pub recovery_content_checked: HashSet<String>,
     pub recovery_content_changed: HashSet<String>,
+    pub recovery_content_pending: HashSet<String>,
+}
+
+fn recovery_check_results_key() -> egui::Id {
+    egui::Id::unique("recovery-content-check-results")
 }
 
 pub(crate) fn modal_frame(t: &Tokens) -> Frame {
     Frame::new().fill(t.panel_bg).stroke(Stroke::new(1.0, t.separator)).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(0))
+}
+
+fn is_view_only(item: &serde_json::Value) -> bool {
+    item["dirty"].as_bool() == Some(false) && item["viewDirty"].as_bool() == Some(true)
 }
 
 pub(crate) fn button(app: &mut FilmcraftApp, ui: &mut Ui, id: &str, label: &str, primary: bool) -> bool {
@@ -37,6 +46,30 @@ pub(crate) fn button(app: &mut FilmcraftApp, ui: &mut Ui, id: &str, label: &str,
     r.clicked()
 }
 
+fn recovery_content_changed(candidate: &filmcraft_engine::autosave::RecoveryCandidate) -> bool {
+    candidate.meta.project_path.as_deref().is_some_and(|path| {
+        !path.is_empty()
+            && filmcraft_engine::autosave::load_candidate(candidate)
+                .ok()
+                .is_none_or(|loaded| !filmcraft_engine::autosave::candidate_content_matches_project(candidate, &loaded.project))
+    })
+}
+
+fn recovery_cache_key(candidate: &filmcraft_engine::autosave::RecoveryCandidate) -> String {
+    let generation = candidate.meta.project_path.as_deref().and_then(|path| std::fs::metadata(path).ok()).map_or_else(
+        || "missing".to_string(),
+        |metadata| {
+            let modified = metadata.modified().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |time| time.as_nanos());
+            format!("{}:{modified}", metadata.len())
+        },
+    );
+    format!("{}:{}:{}:{generation}", candidate.id, candidate.meta.revision, candidate.meta.snapshot_fingerprint.unwrap_or_default())
+}
+
+fn recovery_requires_confirmation(candidate: &filmcraft_engine::autosave::RecoveryCandidate, view_only: bool) -> bool {
+    view_only && recovery_content_changed(candidate)
+}
+
 pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     let t = app.tokens;
     let list = app.session.execute("file.recoveryList", json!({})).unwrap_or_default();
@@ -46,26 +79,51 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     }
     let candidates = app.session.recovery_candidates().to_vec();
     for item in &mut items {
-        if item["dirty"].as_bool() != Some(false) || item["viewDirty"].as_bool() != Some(true) {
+        if !is_view_only(item) {
             continue;
         }
         let Some(id) = item["id"].as_str() else { continue };
         let Some(candidate) = candidates.iter().find(|candidate| candidate.id == id) else { continue };
-        let cache_key = format!("{}:{}:{}", candidate.id, candidate.meta.revision, candidate.meta.snapshot_fingerprint.unwrap_or_default());
-        if app.file_dialogs.recovery_content_checked.insert(cache_key.clone()) {
-            let changed = candidate.meta.project_path.as_deref().is_some_and(|path| {
-                filmcraft_engine::autosave::load_candidate(candidate)
-                    .ok()
-                    .is_none_or(|loaded| !filmcraft_engine::autosave::candidate_content_matches_project(candidate, &loaded.project))
-                    && !path.is_empty()
-            });
+        let cache_key = recovery_cache_key(candidate);
+        let completed = ctx.data_mut(|data| {
+            let key = recovery_check_results_key();
+            let mut results = data.get_temp::<HashMap<String, bool>>(key).unwrap_or_default();
+            let result = results.remove(&cache_key);
+            data.insert_temp(key, results);
+            result
+        });
+        if let Some(changed) = completed {
+            app.file_dialogs.recovery_content_pending.remove(&cache_key);
+            app.file_dialogs.recovery_content_checked.insert(cache_key.clone());
             if changed {
+                app.file_dialogs.recovery_content_changed.insert(cache_key.clone());
+            }
+        } else if !app.file_dialogs.recovery_content_checked.contains(&cache_key) && app.file_dialogs.recovery_content_pending.insert(cache_key.clone()) {
+            let candidate = candidate.clone();
+            let thread_ctx = ctx.clone();
+            let thread_key = cache_key.clone();
+            let task = std::thread::Builder::new().name("filmcraft-recovery-check".into()).spawn(move || {
+                let changed = recovery_content_changed(&candidate);
+                thread_ctx.data_mut(|data| {
+                    let key = recovery_check_results_key();
+                    let mut results = data.get_temp::<HashMap<String, bool>>(key).unwrap_or_default();
+                    results.insert(thread_key, changed);
+                    data.insert_temp(key, results);
+                });
+                thread_ctx.request_repaint();
+            });
+            if task.is_err() {
+                app.file_dialogs.recovery_content_pending.remove(&cache_key);
+                app.file_dialogs.recovery_content_checked.insert(cache_key.clone());
                 app.file_dialogs.recovery_content_changed.insert(cache_key.clone());
             }
         }
         if app.file_dialogs.recovery_content_changed.contains(&cache_key) {
             item["dirty"] = json!(true);
             item["contentChanged"] = json!(true);
+        }
+        if app.file_dialogs.recovery_content_pending.contains(&cache_key) {
+            item["contentCheckPending"] = json!(true);
         }
     }
     let mut choice = app.file_dialogs.recovery_choice.min(items.len() - 1);
@@ -74,7 +132,7 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
         ui.set_width(520.0);
         Frame::new().inner_margin(Margin { left: 28, right: 28, top: 24, bottom: 20 }).show(ui, |ui| {
             let c = &items[choice];
-            let view_only = c["dirty"].as_bool() == Some(false) && c["viewDirty"].as_bool() == Some(true);
+            let view_only = is_view_only(c);
             let title = if view_only { tl!("Recover Timeline View Settings") } else { tl!("Recover Unsaved Changes") };
             let title_response = ui.label(RichText::new(title).size(18.0).strong().color(t.text));
             app.auto.add("recovery.title", title_response.rect, title);
@@ -112,7 +170,7 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
             }
             if items.len() > 1 {
                 ui.add_space(8.0);
-                let view_only_count = items.iter().filter(|item| item["dirty"].as_bool() == Some(false) && item["viewDirty"].as_bool() == Some(true)).count();
+                let view_only_count = items.iter().filter(|item| is_view_only(item)).count();
                 let heading = if view_only_count == items.len() {
                     tlf!("{n} sessions have unsaved Timeline view settings:", n = view_only_count)
                 } else if view_only_count == 0 {
@@ -133,7 +191,7 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
             }
             ui.add_space(18.0);
             let id = items[choice]["id"].as_str().unwrap_or("").to_string();
-            let view_only = items[choice]["dirty"].as_bool() == Some(false) && items[choice]["viewDirty"].as_bool() == Some(true);
+            let view_only = is_view_only(&items[choice]);
             ui.horizontal(|ui| {
                 let discard_label = if view_only { tl!("Discard Timeline View Settings") } else { tl!("Discard") };
                 if button(app, ui, "recovery.discard", discard_label, false) {
@@ -143,10 +201,24 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
                     choice = 0;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if button(app, ui, "recovery.recover", tl!("Recover"), true) {
-                        match app.session.execute("file.recover", json!({ "id": id })) {
-                            Ok(_) => open = false,
-                            Err(e) => app.ui.status = e.to_string(),
+                    let check_pending = items[choice]["contentCheckPending"].as_bool() == Some(true);
+                    if button(app, ui, "recovery.recover", if check_pending { tl!("Checking…") } else { tl!("Recover") }, true) && !check_pending {
+                        let changed_now = candidates
+                            .iter()
+                            .find(|candidate| candidate.id == id)
+                            .is_some_and(|candidate| recovery_requires_confirmation(candidate, view_only));
+                        if changed_now {
+                            items[choice]["dirty"] = json!(true);
+                            items[choice]["contentChanged"] = json!(true);
+                            if let Some(candidate) = candidates.iter().find(|candidate| candidate.id == id) {
+                                let key = recovery_cache_key(candidate);
+                                app.file_dialogs.recovery_content_changed.insert(key);
+                            }
+                        } else {
+                            match app.session.execute("file.recover", json!({ "id": id })) {
+                                Ok(_) => open = false,
+                                Err(e) => app.ui.status = e.to_string(),
+                            }
                         }
                     }
                     if button(app, ui, "recovery.later", tl!("Not Now"), false) {
@@ -234,5 +306,37 @@ pub fn show(app: &mut FilmcraftApp, ctx: &egui::Context, d: Dialog) -> Option<bo
         Dialog::Recovery => Some(show_recovery(app, ctx)),
         Dialog::RevertConfirm => Some(show_revert(app, ctx)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod recovery_revalidation_tests {
+    use super::recovery_requires_confirmation;
+    use filmcraft_engine::autosave::{JournalMeta, RecoveryCandidate};
+    use filmcraft_project::Project;
+    use std::fs;
+
+    #[test]
+    fn view_only_recovery_rechecks_the_project_before_confirmation() {
+        let root = tempfile::tempdir().unwrap();
+        let recovery = root.path().join("recovery");
+        let project_path = root.path().join("current.fcproj");
+        fs::create_dir_all(&recovery).unwrap();
+        let snapshot = filmcraft_format::encode(&Project::new("Original"), false);
+        fs::write(recovery.join("snapshot.fcproj"), &snapshot).unwrap();
+        fs::write(&project_path, &snapshot).unwrap();
+        let candidate = RecoveryCandidate {
+            id: "candidate".into(),
+            dir: recovery,
+            meta: JournalMeta { project_path: Some(project_path.to_string_lossy().into_owned()), ..JournalMeta::default() },
+        };
+
+        let listed_generation = super::recovery_cache_key(&candidate);
+        assert!(!recovery_requires_confirmation(&candidate, true));
+        let changed = filmcraft_format::encode(&Project::new("Changed after listing"), false);
+        fs::write(&project_path, changed).unwrap();
+        assert_ne!(super::recovery_cache_key(&candidate), listed_generation, "a new project-file generation invalidates the cached verdict");
+        assert!(recovery_requires_confirmation(&candidate, true));
+        assert!(!recovery_requires_confirmation(&candidate, false), "a content recovery already confirms replacement");
     }
 }

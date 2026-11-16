@@ -38,23 +38,6 @@ fn minimap_column_count(width: f32) -> usize {
     if width.is_finite() { width.ceil().clamp(1.0, MINIMAP_MAX_COLUMNS as f32) as usize } else { 1 }
 }
 
-fn record_minimap_track_coverage(top: &mut [(u64, u8)], next: &mut [(u64, u8)], cell: usize, track: u64, class: u8) {
-    let (Some(best), Some(second)) = (top.get_mut(cell), next.get_mut(cell)) else { return };
-    if best.0 == track {
-        best.1 = best.1.max(class);
-    } else if second.0 == track {
-        second.1 = second.1.max(class);
-        if second.1 > best.1 {
-            std::mem::swap(best, second);
-        }
-    } else if class > best.1 {
-        *second = *best;
-        *best = (track, class);
-    } else if class > second.1 {
-        *second = (track, class);
-    }
-}
-
 #[cfg(test)]
 fn clip_crosses_cut(start: Tick, end: Tick, cut: Tick) -> bool {
     start < cut && cut < end
@@ -155,8 +138,6 @@ fn update_active_minimap_track(active: &mut HashMap<u64, [usize; 4]>, totals: &m
 
 fn minimap_coverage(seq: &Sequence, project: &filmcraft_project::Project, span: f64, width: f32, cols: usize, prioritise_audio: bool) -> (Vec<u8>, Vec<usize>) {
     let mut class = vec![0u8; cols];
-    let mut top_track = vec![(0u64, 0u8); cols];
-    let mut next_track = vec![(0u64, 0u8); cols];
     let x_of = |time: f64| {
         let time = if time.is_finite() { time.clamp(0.0, span) } else { 0.0 };
         (time / span * f64::from(width)) as f32
@@ -184,7 +165,6 @@ fn minimap_coverage(seq: &Sequence, project: &filmcraft_project::Project, span: 
                     if let Some(value) = class.get_mut(cell) {
                         *value = (*value).max(item_class);
                     }
-                    record_minimap_track_coverage(&mut top_track, &mut next_track, cell, track.id.0, item_class);
                 }
             }
             for pair in track.items.windows(2) {
@@ -300,14 +280,22 @@ pub(super) fn zoombar_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     // popup's own ui only offers the space left below its anchor, which forced a scrollbar and
     // cut the menu at a normal window size). On any window big enough for the menu nothing
     // changes and no scrollbar ever appears.
-    let max_h = ui.ctx().content_rect().height().max(320.0);
+    // Keep the scroll viewport tied to the live window size. A fixed minimum makes the area
+    // larger than the viewport in short windows, so egui cannot update the visible rows smoothly
+    // as the user resizes the window.
+    let max_h = settings_popup_max_height(ui.ctx().content_rect().height());
     let r = ui.available_rect_before_wrap();
     let r = Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + max_h));
     ui.scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
-        egui::ScrollArea::vertical().id_salt("timeline-zoombar-settings-scroll").max_height(max_h).show(ui, |ui| {
+        let output = egui::ScrollArea::vertical().id_salt("timeline-zoombar-settings-scroll").max_height(max_h).show(ui, |ui| {
             zoombar_settings_rows(app, ui);
         });
+        ui.ctx().data_mut(|data| data.insert_temp(zoombar_popup_content_height_key(), output.content_size.y));
     });
+}
+
+fn settings_popup_max_height(viewport_height: f32) -> f32 {
+    (viewport_height - 16.0).max(1.0)
 }
 
 fn zoombar_popup_content_height_key() -> egui::Id {
@@ -317,7 +305,6 @@ fn zoombar_popup_content_height_key() -> egui::Id {
 /// Draw the right-click popup at its natural height. Hide the scrollbar when the full content fits
 /// the window; only cap the content and allow scrolling when it cannot fit the window at all.
 fn zoombar_popup_content(app: &mut FilmcraftApp, ui: &mut egui::Ui, screen_height: f32, measuring: bool) {
-    ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
     let original_inactive = ui.visuals().widgets.inactive.bg_fill;
     ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_gray(100);
     let content_height = ui.ctx().data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
@@ -390,7 +377,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         let (r, _) = ui.allocate_exact_size(egui::vec2(row_w, 30.0), Sense::click());
         content_right = r.max.x;
         let hide_resp =
-            ui.interact(r, egui::Id::unique(if hidden { "timeline-zoombar-unhide-slider" } else { "timeline-zoombar-hide-slider" }), Sense::click());
+            ui.interact(r, ui.make_persistent_id(if hidden { "timeline-zoombar-unhide-slider" } else { "timeline-zoombar-hide-slider" }), Sense::click());
         if hide_resp.hovered() {
             ui.painter().rect_filled(r, 4.0, app.tokens.switch_border.gamma_multiply(0.35));
         }
@@ -422,7 +409,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     hover_flyout(
         app,
         ui,
-        egui::Id::unique("timeline-zoombar-advanced-flyout"),
+        ui.make_persistent_id("timeline-zoombar-advanced-flyout"),
         row,
         content_right,
         CONTROLS_FLYOUT_W,
@@ -448,7 +435,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let group_w = sw_w + 10.0 + galley.size().x;
     let x0 = row.min.x + ((content_w - group_w) / 2.0).max(0.0);
     let sw = Rect::from_min_size(pos2(x0, row.center().y - 8.0), egui::vec2(sw_w, 16.0));
-    let c = pill_switch(ui, sw, settings.smooth_animations, t, egui::Id::unique("timeline-zoombar-smooth"), label);
+    let c = pill_switch(ui, sw, settings.smooth_animations, t, ui.make_persistent_id("timeline-zoombar-smooth"), label);
     ui.painter().galley(pos2(x0 + sw_w + 10.0, row.center().y - galley.size().y / 2.0), galley, t.text);
     app.auto.add("timeline.zoomBar.settings.smoothAnimations", c.rect, "Smooth Animations");
     if c.clicked() {
@@ -463,7 +450,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let group_w = sw_w + 10.0 + galley.size().x;
     let x0 = row.min.x + ((content_w - group_w) / 2.0).max(0.0);
     let sw = Rect::from_min_size(pos2(x0, row.center().y - 8.0), egui::vec2(sw_w, 16.0));
-    let c = pill_switch(ui, sw, settings.inverted_controls, t, egui::Id::unique("timeline-zoombar-inverted"), label);
+    let c = pill_switch(ui, sw, settings.inverted_controls, t, ui.make_persistent_id("timeline-zoombar-inverted"), label);
     ui.painter().galley(pos2(x0 + sw_w + 10.0, row.center().y - galley.size().y / 2.0), galley, t.text);
     app.auto.add("timeline.zoomBar.settings.invertedControls", c.rect, "Invert Scrolling");
     if c.clicked() {
@@ -477,7 +464,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let group_w = sw_w + 10.0 + galley.size().x;
     let x0 = row.min.x + ((content_w - group_w) / 2.0).max(0.0);
     let sw = Rect::from_min_size(pos2(x0, row.center().y - 8.0), egui::vec2(sw_w, 16.0));
-    let c = pill_switch(ui, sw, settings.playhead_centering, t, egui::Id::unique("timeline-zoombar-center"), label);
+    let c = pill_switch(ui, sw, settings.playhead_centering, t, ui.make_persistent_id("timeline-zoombar-center"), label);
     ui.painter().galley(pos2(x0 + sw_w + 10.0, row.center().y - galley.size().y / 2.0), galley, t.text);
     app.auto.add("timeline.zoomBar.settings.playheadCentering", c.rect, "Playhead Centering");
     if c.clicked() {
@@ -495,7 +482,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let group_w = sw_w + 10.0 + galley.size().x;
     let x0 = row.min.x + ((content_w - group_w) / 2.0).max(0.0);
     let sw = Rect::from_min_size(pos2(x0, row.center().y - 8.0), egui::vec2(sw_w, 16.0));
-    let c = pill_switch(ui, sw, settings.alternate_slider_position, t, egui::Id::unique("timeline-zoombar-alternate"), label);
+    let c = pill_switch(ui, sw, settings.alternate_slider_position, t, ui.make_persistent_id("timeline-zoombar-alternate"), label);
     ui.painter().galley(pos2(x0 + sw_w + 10.0, row.center().y - galley.size().y / 2.0), galley, t.text);
     app.auto.add("timeline.zoomBar.settings.alternateSliderPosition", c.rect, "Alternate Slider Position");
     if c.clicked() {
@@ -527,7 +514,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         let (response, value) = hot_number_numeric(
             ui,
             tl!("Maximum zoom level in seconds"),
-            egui::Id::unique("timeline-zoombar-max-zoom"),
+            ui.make_persistent_id("timeline-zoombar-max-zoom"),
             settings.max_zoom_seconds,
             HotNumberOptions::new(0.05, (0.05, 3.0), 2, "s", &app.tokens),
         );
@@ -606,7 +593,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         let (response, value) = hot_number_numeric(
             ui,
             tl!("Alternate drag speed multiplier"),
-            egui::Id::unique("timeline-zoombar-shift-speed"),
+            ui.make_persistent_id("timeline-zoombar-shift-speed"),
             settings.shift_drag_speed,
             HotNumberOptions::new(0.1, (0.1, 50.0), 1, "x", &app.tokens),
         );
@@ -659,7 +646,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         let (response, value) = hot_number_numeric(
             ui,
             tl!("Playhead centering range in seconds"),
-            egui::Id::unique("timeline-zoombar-side"),
+            ui.make_persistent_id("timeline-zoombar-side"),
             settings.playhead_side_seconds,
             HotNumberOptions::new(0.1, (0.1, 3600.0), 1, "s", &app.tokens),
         );
@@ -687,7 +674,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let group_w = sw_w + 10.0 + galley.size().x;
     let x0 = row.min.x + ((content_w - group_w) / 2.0).max(0.0);
     let sw = Rect::from_min_size(pos2(x0, row.center().y - 8.0), egui::vec2(sw_w, 16.0));
-    let c = pill_switch(ui, sw, minimap_on, t, egui::Id::unique("timeline-zoombar-minimap"), label);
+    let c = pill_switch(ui, sw, minimap_on, t, ui.make_persistent_id("timeline-zoombar-minimap"), label);
     ui.painter().galley(pos2(x0 + sw_w + 10.0, row.center().y - galley.size().y / 2.0), galley, label_color);
     if minimap_on {
         // the same side-aware arrow as the Controls row, at the same distance from the wall
@@ -699,7 +686,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         if !settings.slider_minimap {
             // turning the minimap off kills its flyout in the SAME click -- no grace period,
             // nothing keeps ticking for a setting that is gone
-            let flyout_id = egui::Id::unique("timeline-zoombar-minimap-flyout");
+            let flyout_id = ui.make_persistent_id("timeline-zoombar-minimap-flyout");
             ui.data_mut(|d| {
                 d.insert_temp(flyout_id.with("open"), false);
                 d.insert_temp(grace_key(), -1e9f64);
@@ -716,7 +703,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     // the Timeline's layer) and for the flyout (its own Area, a different layer), which is exactly
     // why the flyout used to vanish the moment the pointer left the row. A 300 ms grace after the
     // last hit covers any one-frame hole in the geometry.
-    let flyout_id = egui::Id::unique("timeline-zoombar-minimap-flyout");
+    let flyout_id = ui.make_persistent_id("timeline-zoombar-minimap-flyout");
     let rect_key = flyout_id.with("rect");
     let height_key = flyout_id.with("height");
     let stamp_key = flyout_id.with("stamp");
@@ -796,7 +783,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                 let fgroup_w = fsw_w + 10.0 + fgalley.size().x;
                 let fx0 = frow.min.x + ((CONTENT_W - fgroup_w) / 2.0).max(0.0);
                 let fsw = Rect::from_min_size(pos2(fx0, frow.center().y - 8.0), egui::vec2(fsw_w, 16.0));
-                let c = pill_switch(ui, fsw, whole, t, egui::Id::unique("timeline-zoombar-minimap-whole"), flabel);
+                let c = pill_switch(ui, fsw, whole, t, ui.make_persistent_id("timeline-zoombar-minimap-whole"), flabel);
                 ui.painter().galley(pos2(fx0 + fsw_w + 10.0, frow.center().y - fgalley.size().y / 2.0), fgalley, t.text);
                 app.auto.add("timeline.zoomBar.settings.showWholeTimeline", c.rect, "Show Whole Timeline");
                 if c.clicked() {
@@ -810,14 +797,14 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                 let pgroup_w = fsw_w + 10.0 + pgalley.size().x;
                 let px0 = prow.min.x + ((CONTENT_W - pgroup_w) / 2.0).max(0.0);
                 let psw = Rect::from_min_size(pos2(px0, prow.center().y - 8.0), egui::vec2(fsw_w, 16.0));
-                let c = pill_switch(ui, psw, pri, t, egui::Id::unique("timeline-zoombar-minimap-pri-audio"), plabel);
+                let c = pill_switch(ui, psw, pri, t, ui.make_persistent_id("timeline-zoombar-minimap-pri-audio"), plabel);
                 ui.painter().galley(pos2(px0 + fsw_w + 10.0, prow.center().y - pgalley.size().y / 2.0), pgalley, t.text);
                 app.auto.add("timeline.zoomBar.settings.prioritiseAudio", c.rect, "Prioritise Audio");
                 if c.clicked() {
                     pri = !pri;
                 }
                 // Position Indicator: the "you are here" line on the slider. Off: hidden.
-                let c = settings_pill_row(ui, t, CONTENT_W, tl!("Position Indicator"), egui::Id::unique("timeline-zoombar-minimap-pos-ind"), pos_ind);
+                let c = settings_pill_row(ui, t, CONTENT_W, tl!("Position Indicator"), ui.make_persistent_id("timeline-zoombar-minimap-pos-ind"), pos_ind);
                 app.auto.add("timeline.zoomBar.settings.positionIndicator", c.rect, "Position Indicator");
                 if c.clicked() {
                     pos_ind = !pos_ind;
@@ -830,7 +817,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                 let ggroup_w = fsw_w + 10.0 + ggalley.size().x;
                 let gxp = grow.min.x + ((CONTENT_W - ggroup_w) / 2.0).max(0.0);
                 let gsw = Rect::from_min_size(pos2(gxp, grow.center().y - 8.0), egui::vec2(fsw_w, 16.0));
-                let c = pill_switch(ui, gsw, fill, t, egui::Id::unique("timeline-zoombar-minimap-fill"), glabel);
+                let c = pill_switch(ui, gsw, fill, t, ui.make_persistent_id("timeline-zoombar-minimap-fill"), glabel);
                 ui.painter().galley(pos2(gxp + fsw_w + 10.0, grow.center().y - ggalley.size().y / 2.0), ggalley, t.text);
                 app.auto.add("timeline.zoomBar.settings.fillClips", c.rect, "Fill Clips");
                 if c.clicked() {
@@ -842,7 +829,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                     ui,
                     t,
                     &mut ColorAutomation { registry: &mut app.auto, prefix: "timeline.zoomBar.settings.positionIndicatorColor" },
-                    egui::Id::unique("timeline-zoombar-minimap-color"),
+                    ui.make_persistent_id("timeline-zoombar-minimap-color"),
                     tl!("Position Indicator Color:"),
                     &mut settings.position_indicator_color,
                     "#5895ec",
@@ -851,7 +838,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                     ui,
                     t,
                     &mut ColorAutomation { registry: &mut app.auto, prefix: "timeline.zoomBar.settings.videoIndicatorColor" },
-                    egui::Id::unique("timeline-zoombar-minimap-video-color"),
+                    ui.make_persistent_id("timeline-zoombar-minimap-video-color"),
                     tl!("Video Indicator Color:"),
                     &mut settings.video_indicator_color,
                     "#64b5f6",
@@ -860,7 +847,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                     ui,
                     t,
                     &mut ColorAutomation { registry: &mut app.auto, prefix: "timeline.zoomBar.settings.audioIndicatorColor" },
-                    egui::Id::unique("timeline-zoombar-minimap-audio-color"),
+                    ui.make_persistent_id("timeline-zoombar-minimap-audio-color"),
                     tl!("Audio Indicator Color:"),
                     &mut settings.audio_indicator_color,
                     "#2e7d32",
@@ -869,7 +856,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
                     ui,
                     t,
                     &mut ColorAutomation { registry: &mut app.auto, prefix: "timeline.zoomBar.settings.offlineIndicatorColor" },
-                    egui::Id::unique("timeline-zoombar-minimap-offline-color"),
+                    ui.make_persistent_id("timeline-zoombar-minimap-offline-color"),
                     tl!("Offline Indicator Color:"),
                     &mut settings.offline_indicator_color,
                     "#d32f2f",
@@ -908,12 +895,9 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     if changed {
         // the colour wheel and the number fields report every frame of a drag: remember the
         // change, but bump the (cache-invalidating) revision only once the gesture ends
-        ui.data_mut(|d| d.insert_temp(egui::Id::unique("tl-zoombar-view-pending"), true));
+        ui.data_mut(|d| d.insert_temp(egui::Id::unique("tl-zoombar-view-pending"), app.session.document_epoch));
     }
-    if ui.data(|d| d.get_temp::<bool>(egui::Id::unique("tl-zoombar-view-pending"))).unwrap_or(false) && !ui.input(|i| i.pointer.any_down()) {
-        ui.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique("tl-zoombar-view-pending")));
-        app.session.project_view_changed();
-    }
+    flush_pending_zoombar_view_change(app, ui.ctx());
 }
 
 fn apply_max_zoom_choice(settings: &mut filmcraft_engine::project::TimelineUiSettings, choice: usize, presets: &[f64; 4]) {
@@ -1004,8 +988,12 @@ pub fn custom_control_shortcut_pending(app: &FilmcraftApp, ctx: &egui::Context) 
     custom_control_shortcut_pending_for_events(app, ctx, &events, modifiers)
 }
 
+fn timeline_consumer_available(app: &FilmcraftApp) -> bool {
+    !app.ui.fullscreen_program && app.ui.mode == crate::state::Mode::Edit && crate::dock::LayoutExt::is_visible(&app.ui.dock, crate::dock::PanelKind::Timeline)
+}
+
 pub fn custom_control_shortcut_pending_for_events(app: &FilmcraftApp, ctx: &egui::Context, events: &[egui::Event], modifiers: egui::Modifiers) -> bool {
-    if controls_listening(app, ctx) || app.session.active_sequence().is_none() {
+    if controls_listening(app, ctx) || app.session.active_sequence().is_none() || !timeline_consumer_available(app) {
         return false;
     }
     let mut normalized = events.to_vec();
@@ -1037,22 +1025,18 @@ pub fn custom_control_shortcut_pending_for_events(app: &FilmcraftApp, ctx: &egui
     let matches = |binding: &str| !binding.is_empty() && !binding.ends_with("Click") && binding == chord;
     let pointer = ctx.input(|input| input.pointer.hover_pos());
     let zoom_over_bar = pointer.is_some_and(|pos| automation_contains(app, "timeline.zoomBar.track", pos));
+    let zoom_drag = matches!(app.tl.drag, Some(super::Drag::ZoomBar { .. }));
     let zoom_action = !settings.zoom_bar_hidden
-        && [settings.control_center_on_playhead.as_str(), settings.control_explode_slider.as_str(), settings.control_alternate_drag_speed.as_str()]
-            .into_iter()
-            .any(matches)
+        && [settings.control_center_on_playhead.as_str(), settings.control_explode_slider.as_str()].into_iter().any(matches)
+        || !settings.zoom_bar_hidden && zoom_drag && matches(&settings.control_alternate_drag_speed)
         || !settings.zoom_bar_hidden && zoom_over_bar && matches(&settings.control_settings);
     let track_action = !settings.track_slider_hidden
         && pointer
             .is_some_and(|pos| ["timeline.trackSlider.video.bar", "timeline.trackSlider.audio.bar"].into_iter().any(|id| automation_contains(app, id, pos)))
-        && [
-            settings.track_control_copy_slider.as_str(),
-            settings.track_control_minimum_height.as_str(),
-            settings.track_control_alternate_drag_speed.as_str(),
-            settings.track_control_settings.as_str(),
-        ]
-        .into_iter()
-        .any(matches);
+        && ([settings.track_control_copy_slider.as_str(), settings.track_control_minimum_height.as_str(), settings.track_control_settings.as_str()]
+            .into_iter()
+            .any(matches)
+            || app.tl.track_slider_dragging && matches(&settings.track_control_alternate_drag_speed));
     zoom_action || track_action
 }
 
@@ -1205,11 +1189,17 @@ fn suppress_captured_chord(ui: &egui::Ui, chord: &str) {
             text.push_str(&format!("{key:?}"));
             text
         };
-        let clipboard_chord = chord == "Ctrl + V" && (input.modifiers.ctrl || input.modifiers.command || input.modifiers.mac_cmd);
-        input.events.retain(|event| match event {
-            egui::Event::Key { key, modifiers, .. } => chord_of(*key, *modifiers) != chord,
-            egui::Event::Paste(_) | egui::Event::PasteImage(_) if clipboard_chord => false,
-            _ => true,
+        let modifiers = input.modifiers;
+        input.events.retain(|event| {
+            if let egui::Event::Key { key, modifiers, .. } = event {
+                return chord_of(*key, *modifiers) != chord;
+            }
+            if matches!(event, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) | egui::Event::PasteImage(_)) {
+                let mut normalized = vec![event.clone()];
+                crate::panels::timeline::clipboard_events_as_keys(&mut normalized, modifiers, false);
+                return !normalized.iter().any(|candidate| matches!(candidate, egui::Event::Key { key, modifiers, .. } if chord_of(*key, *modifiers) == chord));
+            }
+            true
         });
     });
 }
@@ -1690,35 +1680,66 @@ fn color_setting(ui: &mut egui::Ui, t: &Tokens, automation: &mut ColorAutomation
 /// the bar itself.
 pub(super) fn zoombar_settings_popup(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let Some(pos) = app.tl.zoombar_settings_pos else {
+        ui.ctx().data_mut(|data| data.remove::<bool>(zoombar_settings_top_anchor_key()));
         return;
     };
     let screen = ui.ctx().content_rect();
-    let pos = if pos.y + 430.0 > screen.bottom() { pos2(pos.x, (pos.y - 430.0).max(screen.top())) } else { pos };
-    let panel = egui::Area::new(egui::Id::unique("tl-zoombar-settings-from-menu"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(pos)
-        .fade_in(false)
-        .interactable(true)
-        .show(ui.ctx(), |ui| {
+    let content_height = ui.ctx().data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(430.0);
+    let needs_scroll = content_height + 16.0 > screen.height();
+    let top_anchor_key = zoombar_settings_top_anchor_key();
+    let anchored_at_top = ui.ctx().data(|data| data.get_temp::<bool>(top_anchor_key)).unwrap_or(false) || needs_scroll;
+    ui.ctx().data_mut(|data| data.insert_temp(top_anchor_key, anchored_at_top));
+    // Once a resize forces the popup to the viewport top, keep that anchor until it closes. This
+    // lets the visible area grow continuously with the window instead of snapping back to the
+    // menu-button position when the scroll bar disappears.
+    let pos = if anchored_at_top {
+        pos2(pos.x, screen.top() + 8.0)
+    } else if pos.y + content_height + 16.0 > screen.bottom() {
+        pos2(pos.x, (pos.y - content_height - 16.0).max(screen.top() + 8.0))
+    } else {
+        pos
+    };
+    let panel = egui::Area::new(egui::Id::unique("tl-zoombar-settings-from-menu")).order(egui::Order::Foreground).fixed_pos(pos).interactable(true).show(
+        ui.ctx(),
+        |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 zoombar_settings(app, ui);
             });
-        });
+        },
+    );
     if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
         && let Some(p) = ui.input(|i| i.pointer.interact_pos())
         && !panel.response.rect.contains(p)
         && !family_contains(ui, p)
     {
         app.tl.zoombar_settings_pos = None;
+        ui.ctx().data_mut(|data| data.remove::<bool>(top_anchor_key));
     }
 }
 
+fn zoombar_settings_top_anchor_key() -> egui::Id {
+    egui::Id::unique("tl-zoombar-settings-top-anchor")
+}
+
 pub(crate) fn flush_pending_zoombar_view_change(app: &mut FilmcraftApp, ctx: &egui::Context) {
+    flush_pending_zoombar_view_change_with_force(app, ctx, false);
+}
+
+fn flush_pending_zoombar_view_change_with_force(app: &mut FilmcraftApp, ctx: &egui::Context, force: bool) {
     let id = egui::Id::unique("tl-zoombar-view-pending");
-    if ctx.data(|data| data.get_temp::<bool>(id)).unwrap_or(false) && !ctx.input(|input| input.pointer.any_down()) {
-        ctx.data_mut(|data| data.remove_temp::<bool>(id));
-        app.session.project_view_changed();
+    if let Some(document_epoch) = ctx.data(|data| data.get_temp::<u64>(id)) {
+        if document_epoch != app.session.document_epoch {
+            ctx.data_mut(|data| data.remove_temp::<u64>(id));
+        } else if force || !ctx.input(|input| input.pointer.any_down()) {
+            ctx.data_mut(|data| data.remove_temp::<u64>(id));
+            app.session.project_view_changed();
+        }
     }
+}
+
+pub(crate) fn flush_pending_view_changes_for_close(app: &mut FilmcraftApp, ctx: &egui::Context) {
+    flush_pending_zoombar_view_change_with_force(app, ctx, true);
+    flush_track_slider_view_change_with_force(app, ctx, true);
 }
 
 /// The value to fall back to when Custom is picked again and no custom value was stored yet.
@@ -2111,6 +2132,50 @@ mod controls_tests {
     }
 
     #[test]
+    fn clipboard_only_paste_dispatches_zoom_binding() {
+        use egui::{Context, Event, Modifiers, RawInput, Rect, pos2, vec2};
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let id = session.state.active_sequence.unwrap();
+        let project = session.project.clone();
+        let seq = project.sequence(id).unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.session.state.timeline_ui.control_center_on_playhead = "Ctrl + V".into();
+        app.ui.timeline.pps = 1.0;
+        app.ui.timeline.target_pps = 1.0;
+        let tokens = app.tokens;
+        let ctx = Context::default();
+        let mut output = ctx.run_ui(
+            RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+                events: vec![Event::ModifiersChanged(Modifiers::CTRL), Event::Paste("x".into())],
+                ..RawInput::default()
+            },
+            |ui| zoom_scrollbar(&mut app, ui, Rect::from_min_size(pos2(50.0, 100.0), vec2(500.0, 16.0)), 500.0, seq, 0, 1.0 / 24.0, &tokens),
+        );
+        output.textures_delta.clear();
+        assert_ne!(app.ui.timeline.target_pps, 1.0, "clipboard-only Ctrl+V dispatches the configured center action");
+    }
+
+    #[test]
+    fn captured_copy_and_cut_clipboard_events_are_suppressed() {
+        use egui::{Context, Event, Modifiers, RawInput};
+        let ctx = Context::default();
+        for (event, modifiers, chord) in [
+            (Event::Copy, Modifiers::CTRL, "Ctrl + C"),
+            (Event::Cut, Modifiers::CTRL, "Ctrl + X"),
+            (Event::Copy, Modifiers::CTRL | Modifiers::SHIFT, "Ctrl + Shift + C"),
+        ] {
+            let mut output = ctx.run_ui(RawInput { events: vec![Event::ModifiersChanged(modifiers), event], ..RawInput::default() }, |ui| {
+                ui.input_mut(|input| input.modifiers = modifiers);
+                super::suppress_captured_chord(ui, chord);
+                assert!(!ui.input(|input| input.events.iter().any(|event| matches!(event, Event::Copy | Event::Cut))));
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
     fn zoom_popup_preset_action_updates_the_configured_ceiling() {
         let mut settings = filmcraft_engine::project::TimelineUiSettings::default();
         super::apply_max_zoom_choice(&mut settings, 3, &[0.1, 0.2, 0.4, 0.8]);
@@ -2121,13 +2186,22 @@ mod controls_tests {
     #[test]
     fn zoom_popup_preset_widget_updates_the_configured_ceiling() {
         use egui::{Context, Event, PointerButton, RawInput, Rect, pos2, vec2};
-        let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let mut app = FilmcraftApp::new(session);
         app.session.state.timeline_ui.max_zoom_seconds = 0.4;
+        app.last_timeline_width = 500.0;
+        app.ui.timeline.pps = 2000.0;
+        app.ui.timeline.target_pps = 3000.0;
+        app.ui.timeline.scroll = 100.0;
+        app.ui.timeline.target_scroll = 200.0;
         let ctx = Context::default();
         app.auto.begin_frame();
         let screen = Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0)));
         let mut output = ctx.run_ui(RawInput { screen_rect: screen, ..RawInput::default() }, |ui| super::zoombar_settings(&mut app, ui));
         output.textures_delta.clear();
+        let current_center = app.ui.timeline.scroll + 250.0 / app.ui.timeline.pps;
+        let target_center = app.ui.timeline.target_scroll + 250.0 / app.ui.timeline.target_pps;
         let [x, y, width, height] = app.auto.find_current("timeline.zoomBar.settings.maxZoomLevel.slider").unwrap().rect;
         let point = pos2(x + width * 0.75, y + height * 0.5);
         let mut output = ctx.run_ui(
@@ -2156,6 +2230,11 @@ mod controls_tests {
         output.textures_delta.clear();
         assert_eq!(app.session.state.timeline_ui.max_zoom_seconds, 0.8);
         assert!(!app.session.state.timeline_ui.max_zoom_custom);
+        assert!((app.ui.timeline.scroll + 250.0 / app.ui.timeline.pps - current_center).abs() < 1e-6, "the popup change preserves the current viewport center");
+        assert!(
+            (app.ui.timeline.target_scroll + 250.0 / app.ui.timeline.target_pps - target_center).abs() < 1e-6,
+            "the popup change preserves the target viewport center"
+        );
     }
 
     #[test]
@@ -2170,11 +2249,49 @@ mod controls_tests {
         let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
         let ctx = egui::Context::default();
         let id = egui::Id::unique("tl-zoombar-view-pending");
-        ctx.data_mut(|data| data.insert_temp(id, true));
+        ctx.data_mut(|data| data.insert_temp(id, app.session.document_epoch));
         let old_epoch = app.session.view_epoch;
         super::flush_pending_zoombar_view_change(&mut app, &ctx);
         assert!(app.session.view_epoch > old_epoch, "the setting change reaches the persisted view");
-        assert!(!ctx.data(|data| data.get_temp::<bool>(id)).unwrap_or(false), "the pending flag is consumed once");
+        assert!(ctx.data(|data| data.get_temp::<u64>(id)).is_none(), "the pending flag is consumed once");
+    }
+
+    #[test]
+    fn pending_track_slider_setting_flushes_from_app_context() {
+        let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique("timeline-track-slider-view-pending");
+        ctx.data_mut(|data| data.insert_temp(id, app.session.document_epoch));
+        let old_epoch = app.session.view_epoch;
+        super::flush_track_slider_view_change(&mut app, &ctx);
+        assert!(app.session.view_epoch > old_epoch, "the app-level context flush persists the hidden popup's pending setting");
+        assert!(ctx.data(|data| data.get_temp::<u64>(id)).is_none());
+    }
+
+    #[test]
+    fn close_flushes_pending_view_changes_even_while_a_pointer_is_held() {
+        use egui::{Event, PointerButton, RawInput, pos2};
+        let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        let zoom_id = egui::Id::unique("tl-zoombar-view-pending");
+        let track_id = egui::Id::unique("timeline-track-slider-view-pending");
+        ctx.data_mut(|data| {
+            data.insert_temp(zoom_id, app.session.document_epoch);
+            data.insert_temp(track_id, app.session.document_epoch);
+        });
+        let mut output = ctx.run_ui(
+            RawInput {
+                events: vec![Event::PointerButton { pos: pos2(5.0, 5.0), button: PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }],
+                ..RawInput::default()
+            },
+            |_| {},
+        );
+        output.textures_delta.clear();
+        let old_epoch = app.session.view_epoch;
+        super::flush_pending_view_changes_for_close(&mut app, &ctx);
+        assert!(app.session.view_epoch > old_epoch);
+        assert!(ctx.data(|data| data.get_temp::<u64>(zoom_id)).is_none());
+        assert!(ctx.data(|data| data.get_temp::<u64>(track_id)).is_none());
     }
 
     #[test]
@@ -2205,6 +2322,22 @@ mod controls_tests {
         output.textures_delta.clear();
         let mut output = ctx.run_ui(frame(pos2(110.0, 25.0), Key::S), |_| assert!(super::custom_control_shortcut_pending(&app, &ctx)));
         output.textures_delta.clear();
+
+        app.session.state.timeline_ui.control_alternate_drag_speed = "Shift + K".into();
+        let alternate = vec![
+            Event::PointerMoved(pos2(200.0, 30.0)),
+            Event::Key { key: Key::K, physical_key: Some(Key::K), pressed: true, repeat: false, modifiers: Modifiers::SHIFT },
+        ];
+        let mut output = ctx.run_ui(RawInput { events: alternate.clone(), ..RawInput::default() }, |_| {
+            assert!(!super::custom_control_shortcut_pending_for_events(&app, &ctx, &alternate, Modifiers::SHIFT));
+        });
+        output.textures_delta.clear();
+        app.tl.drag = Some(super::Drag::ZoomBar { grab: 0.0, start: 0.0, start_pps: 1.0, mode: 0 });
+        let mut output = ctx.run_ui(RawInput { events: alternate.clone(), ..RawInput::default() }, |_| {
+            assert!(super::custom_control_shortcut_pending_for_events(&app, &ctx, &alternate, Modifiers::SHIFT));
+        });
+        output.textures_delta.clear();
+        app.tl.drag = None;
 
         app.session.state.timeline_ui.control_center_on_playhead = "Ctrl + V".into();
         app.session.state.timeline_ui.zoom_bar_hidden = false;
@@ -2239,6 +2372,30 @@ mod controls_tests {
     }
 
     #[test]
+    fn alternate_speed_binding_is_reserved_only_during_the_track_slider_drag() {
+        use egui::{Event, Key, Modifiers, RawInput, Rect, pos2, vec2};
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.session.state.timeline_ui.track_control_alternate_drag_speed = "Ctrl + K".into();
+        app.auto.add("timeline.trackSlider.video.bar", Rect::from_min_size(pos2(10.0, 20.0), vec2(40.0, 80.0)), "video slider");
+        let ctx = egui::Context::default();
+        let events = vec![
+            Event::PointerMoved(pos2(20.0, 30.0)),
+            Event::Key { key: Key::K, physical_key: Some(Key::K), pressed: true, repeat: false, modifiers: Modifiers::CTRL },
+        ];
+        let mut output = ctx.run_ui(RawInput { events: events.clone(), ..RawInput::default() }, |_| {
+            assert!(!super::custom_control_shortcut_pending_for_events(&app, &ctx, &events, Modifiers::CTRL));
+        });
+        output.textures_delta.clear();
+        app.tl.track_slider_dragging = true;
+        let mut output = ctx.run_ui(RawInput { events: events.clone(), ..RawInput::default() }, |_| {
+            assert!(super::custom_control_shortcut_pending_for_events(&app, &ctx, &events, Modifiers::CTRL));
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
     fn custom_zoom_binding_does_not_reserve_save_without_an_active_sequence() {
         use egui::{Context, Event, Key, Modifiers, RawInput, Rect, pos2, vec2};
         let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
@@ -2256,6 +2413,19 @@ mod controls_tests {
             assert!(!super::custom_control_shortcut_pending_for_events(&app, &ctx, &input.events, Modifiers::CTRL));
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn custom_timeline_binding_is_not_reserved_outside_edit_mode() {
+        let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        assert!(super::timeline_consumer_available(&app));
+        app.ui.mode = crate::state::Mode::Import;
+        assert!(!super::timeline_consumer_available(&app));
+        app.ui.mode = crate::state::Mode::Export;
+        assert!(!super::timeline_consumer_available(&app));
+        app.ui.mode = crate::state::Mode::Edit;
+        app.ui.fullscreen_program = true;
+        assert!(!super::timeline_consumer_available(&app), "fullscreen Program mode does not draw the Timeline control");
     }
 
     #[test]
@@ -2281,18 +2451,37 @@ mod controls_tests {
     }
 
     #[test]
+    fn stale_pending_settings_do_not_change_a_replacement_document() {
+        let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        let zoom_id = egui::Id::unique("tl-zoombar-view-pending");
+        let track_id = egui::Id::unique("timeline-track-slider-view-pending");
+        let previous_document = app.session.document_epoch;
+        ctx.data_mut(|data| {
+            data.insert_temp(zoom_id, previous_document);
+            data.insert_temp(track_id, previous_document);
+        });
+        app.session.document_epoch = previous_document.wrapping_add(1);
+        let old_epoch = app.session.view_epoch;
+        super::flush_pending_view_changes_for_close(&mut app, &ctx);
+        assert_eq!(app.session.view_epoch, old_epoch);
+        assert!(ctx.data(|data| data.get_temp::<u64>(zoom_id)).is_none());
+        assert!(ctx.data(|data| data.get_temp::<u64>(track_id)).is_none());
+    }
+
+    #[test]
     fn closed_zoom_popup_flushes_a_pending_view_change() {
         use egui::{Context, RawInput, Rect, pos2, vec2};
         let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
         let ctx = Context::default();
         let id = egui::Id::unique("tl-zoombar-view-pending");
-        ctx.data_mut(|data| data.insert_temp(id, true));
+        ctx.data_mut(|data| data.insert_temp(id, app.session.document_epoch));
         let before = app.session.view_epoch;
         let mut output = ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..RawInput::default() }, |_| {});
         output.textures_delta.clear();
         super::flush_pending_zoombar_view_change(&mut app, &ctx);
         assert!(app.session.view_epoch > before);
-        assert!(!ctx.data(|data| data.get_temp::<bool>(id)).unwrap_or(false));
+        assert!(ctx.data(|data| data.get_temp::<u64>(id)).is_none());
     }
 
     #[test]
@@ -2782,7 +2971,11 @@ pub(super) fn zoom_scrollbar(
     // with Ctrl/Alt fires even in a text field (it is a shortcut, not typing); a plain key only
     // when no text field has focus (`egui_wants_keyboard_input` is not enough: any clicked widget
     // counts there, including the box itself).
-    let key_pressed = ui.input(|i| i.events.iter().any(|event| matches!(event, egui::Event::Key { pressed: true, .. })));
+    let key_pressed = ui.input(|i| {
+        let mut normalized = i.events.clone();
+        crate::panels::timeline::clipboard_events_as_keys(&mut normalized, i.modifiers, false);
+        normalized.iter().any(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
+    });
     let chord_ok = key_pressed
         && !controls_listening(app, ui.ctx())
         && chord_text.is_some_and(|c| c.contains("Ctrl") || c.contains("Alt") || !ui.ctx().text_edit_focused());
@@ -2808,22 +3001,26 @@ pub(super) fn zoom_scrollbar(
         .flatten();
     let open_at = right_click.or_else(|| settings_bound.then(|| ui.input(|i| i.pointer.hover_pos().unwrap_or_else(|| bar.center()))));
     let screen = ui.ctx().content_rect();
-    let fallback_popup_width = 283.4;
+    let popup_width = 274.0;
     let ctx = ui.ctx().clone();
+    let top_anchor_key = popup_id.with("top-anchor");
     if let Some(pos) = open_at {
         let space_above = pos.y - screen.top();
         let space_below = screen.bottom() - pos.y;
         let above = space_above > space_below;
         ui.data_mut(|data| data.insert_temp(anchor_id, (pos, above)));
         ui.data_mut(|data| data.insert_temp(zoombar_popup_open_key(), true));
+        ui.data_mut(|data| data.remove::<bool>(top_anchor_key));
         // the menu opens in its default state, never with a flyout or colour picker left over
         zoombar_state_reset(ui.ctx());
         // work on the Timeline's sliders: the keys bound here must fire afterwards
         app.ui.focused = crate::dock::PanelKind::Timeline;
         // the two settings menus are mutually exclusive: this one takes the sliders' with it
         app.tl.track_slider_settings_pos = None;
-    } else if resp.clicked() || resp.drag_started() {
+    }
+    if resp.clicked() || resp.drag_started() {
         ui.data_mut(|data| data.insert_temp(zoombar_popup_open_key(), false));
+        ui.data_mut(|data| data.remove::<bool>(top_anchor_key));
     }
     let escape_pressed = ui.input(|input| input.key_pressed(egui::Key::Escape));
     let capture_was_active = controls_listening(app, &ctx);
@@ -2834,56 +3031,86 @@ pub(super) fn zoom_scrollbar(
     }
     let (requested_pos, above) =
         ui.data(|data| data.get_temp::<(Pos2, bool)>(anchor_id)).unwrap_or_else(|| (resp.interact_pointer_pos().unwrap_or(bar.min), false));
-    let area_size = egui::containers::AreaState::load(&ctx, popup_id).and_then(|state| state.size);
-    let popup_width = area_size.map_or(fallback_popup_width, |size| size.x);
-    let popup_pos = pos2(
+    let anchor_pos = pos2(
         (if requested_pos.x + popup_width <= screen.right() { requested_pos.x } else { requested_pos.x - popup_width })
             .clamp(screen.left(), (screen.right() - popup_width).max(screen.left())),
         requested_pos.y.clamp(screen.top(), screen.bottom()),
     );
     if open_at.is_some() {
         let auto_count = app.auto.elements.len();
-        let measurement = egui::Area::new(popup_id)
+        let measurement_id = popup_id.with("measurement");
+        let measurement = egui::Area::new(measurement_id)
             .order(egui::Order::Foreground)
             .default_size(egui::vec2(popup_width, screen.height()))
             .fixed_pos(screen.min)
             .fade_in(false)
             .interactable(false)
             .sizing_pass(true)
-            .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true)).response.rect.height());
+            .show(&ctx, |ui| {
+                ui.push_id("measurement", |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true)).response.rect.height()
+                })
+            });
         let _ = measurement;
         // Egui's sizing pass can produce different widget heights from a normal layout. Run a
         // hidden normal layout too, so the visible area's bottom pivot has its real size immediately.
-        let measured = egui::Area::new(popup_id).order(egui::Order::Foreground).fixed_pos(screen.min).fade_in(false).interactable(false).show(&ctx, |ui| {
-            ui.set_invisible();
-            egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true));
-        });
+        let measured =
+            egui::Area::new(measurement_id).order(egui::Order::Foreground).fixed_pos(screen.min).fade_in(false).interactable(false).show(&ctx, |ui| {
+                ui.set_invisible();
+                ui.push_id("measurement", |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), true)));
+            });
         ctx.data_mut(|data| data.insert_temp(egui::Id::unique("timeline-zoombar-popup-frame-height"), measured.response.rect.height()));
         app.auto.elements.truncate(auto_count);
     }
-    let popup_response = {
-        let is_open = ctx.data(|data| data.get_temp::<bool>(zoombar_popup_open_key())).unwrap_or(false);
-        if is_open {
-            let content_height = ctx.data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
-            let measured_height =
-                ctx.data(|data| data.get_temp::<f32>(egui::Id::unique("timeline-zoombar-popup-frame-height"))).unwrap_or(content_height + 16.0);
-            let popup_height = measured_height.min((screen.height() - 12.0).max(1.0)).max(1.0);
-            let x = popup_pos.x;
-            let y = if above { popup_pos.y.max(screen.top() + popup_height) } else { popup_pos.y.min(screen.bottom() - popup_height) };
-            let panel = egui::Area::new(popup_id)
-                .order(egui::Order::Foreground)
-                .pivot(if above { egui::Align2::LEFT_BOTTOM } else { egui::Align2::LEFT_TOP })
-                .default_size(egui::vec2(popup_width, popup_height))
-                .fixed_pos(pos2(x, y))
-                .constrain_to(screen)
-                .fade_in(false)
-                .interactable(true)
-                .show(&ctx, |ui| egui::Frame::popup(ui.style()).show(ui, |ui| zoombar_popup_content(app, ui, screen.height(), false)).inner);
-            ctx.data_mut(|data| data.insert_temp(egui::Id::unique("timeline-zoombar-popup-rect"), panel.response.rect));
-            Some(panel)
+    let content_height = ctx.data(|data| data.get_temp::<f32>(zoombar_popup_content_height_key())).unwrap_or(0.0);
+    let needs_scroll = content_height + 16.0 > screen.height();
+    let was_top_anchored = ctx.data(|data| data.get_temp::<bool>(top_anchor_key)).unwrap_or(false);
+    let top_anchored = (was_top_anchored || needs_scroll) && (popup_was_open || open_at.is_some());
+    if top_anchored {
+        ctx.data_mut(|data| data.insert_temp(top_anchor_key, true));
+    }
+    let mut popup_open = ctx.data(|data| data.get_temp::<bool>(zoombar_popup_open_key())).unwrap_or(false);
+    if open_at.is_some() {
+        popup_open = true;
+    }
+    let popup_response = if popup_open {
+        let measured_popup_height =
+            ctx.data(|data| data.get_temp::<f32>(egui::Id::unique("timeline-zoombar-popup-frame-height"))).unwrap_or(content_height + 16.0);
+        // The hidden layout can under-measure the visible popup on the first frame after a
+        // minimized viewport is restored. Reserve a little extra frame space so the first
+        // painted menu uses its final position instead of jumping on the next repaint.
+        let popup_height = (measured_popup_height + 32.0).max(content_height + 16.0).min(screen.height()).max(1.0);
+        let (pivot, area_pos) = if top_anchored {
+            (egui::Align2::LEFT_TOP, pos2(anchor_pos.x, screen.top()))
+        } else if above {
+            (egui::Align2::LEFT_BOTTOM, pos2(anchor_pos.x, anchor_pos.y.max(screen.top() + popup_height)))
         } else {
-            None
-        }
+            (egui::Align2::LEFT_TOP, pos2(anchor_pos.x, anchor_pos.y.min(screen.bottom() - popup_height)))
+        };
+        let panel = egui::Area::new(popup_id)
+            .order(egui::Order::Foreground)
+            .pivot(pivot)
+            .default_size(vec2(popup_width, popup_height))
+            .fixed_pos(area_pos)
+            .constrain_to(screen)
+            .fade_in(true)
+            .interactable(true)
+            .show(&ctx, |ui| {
+                ui.set_min_size(vec2(popup_width, popup_height));
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    if content_height + 16.0 > screen.height() {
+                        zoombar_popup_content(app, ui, screen.height(), false);
+                    } else {
+                        zoombar_settings_rows(app, ui);
+                    }
+                })
+            });
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("timeline-zoombar-popup-rect"), panel.response.rect));
+        Some(panel)
+    } else {
+        ctx.data_mut(|data| data.remove::<egui::Rect>(egui::Id::unique("timeline-zoombar-popup-rect")));
+        ctx.data_mut(|data| data.remove::<bool>(top_anchor_key));
+        None
     };
     if let Some(click_pos) = ui.input(|input| input.pointer.button_clicked(egui::PointerButton::Primary).then(|| input.pointer.interact_pos()).flatten())
         && popup_response.as_ref().is_some_and(|popup| !popup.response.rect.contains(click_pos))
@@ -3727,7 +3954,7 @@ pub(super) fn vertical_scrollbar(
 /// is too small to show it whole.
 pub(super) fn track_slider_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     // the same emergency-only scrolling as the zoom bar's menu
-    let max_h = ui.ctx().content_rect().height().max(320.0);
+    let max_h = settings_popup_max_height(ui.ctx().content_rect().height());
     let r = ui.available_rect_before_wrap();
     let r = Rect::from_min_max(r.min, pos2(r.max.x, r.min.y + max_h));
     ui.scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
@@ -3885,16 +4112,24 @@ fn track_slider_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
             app.session.state.timeline_ui.track_slider_shift_drag_speed = value.clamp(0.1, 10.0);
             app.session.state.timeline_ui.track_slider_shift_drag_last_custom = value.clamp(0.1, 10.0);
             app.session.state.timeline_ui.track_slider_shift_drag_custom = true;
-            ui.data_mut(|d| d.insert_temp(egui::Id::unique("timeline-track-slider-view-pending"), true));
+            ui.data_mut(|d| d.insert_temp(egui::Id::unique("timeline-track-slider-view-pending"), app.session.document_epoch));
         }
     });
 }
 
-fn flush_track_slider_view_change(app: &mut FilmcraftApp, ui: &egui::Ui) {
+pub(crate) fn flush_track_slider_view_change(app: &mut FilmcraftApp, ctx: &egui::Context) {
+    flush_track_slider_view_change_with_force(app, ctx, false);
+}
+
+fn flush_track_slider_view_change_with_force(app: &mut FilmcraftApp, ctx: &egui::Context, force: bool) {
     let id = egui::Id::unique("timeline-track-slider-view-pending");
-    if ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false) && !ui.input(|i| i.pointer.any_down()) {
-        ui.data_mut(|d| d.remove_temp::<bool>(id));
-        app.session.project_view_changed();
+    if let Some(document_epoch) = ctx.data(|d| d.get_temp::<u64>(id)) {
+        if document_epoch != app.session.document_epoch {
+            ctx.data_mut(|d| d.remove_temp::<u64>(id));
+        } else if force || !ctx.input(|i| i.pointer.any_down()) {
+            ctx.data_mut(|d| d.remove_temp::<u64>(id));
+            app.session.project_view_changed();
+        }
     }
 }
 
@@ -3903,7 +4138,7 @@ fn flush_track_slider_view_change(app: &mut FilmcraftApp, ui: &egui::Ui) {
 /// slider.
 pub(super) fn track_slider_settings_popup(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let Some(pos) = app.tl.track_slider_settings_pos else {
-        flush_track_slider_view_change(app, ui);
+        flush_track_slider_view_change(app, ui.ctx());
         return;
     };
     let screen = ui.ctx().content_rect();
@@ -3917,7 +4152,7 @@ pub(super) fn track_slider_settings_popup(app: &mut FilmcraftApp, ui: &mut egui:
                 });
             },
         );
-    flush_track_slider_view_change(app, ui);
+    flush_track_slider_view_change(app, ui.ctx());
     if ui.input(|i| i.pointer.any_pressed())
         && let Some(p) = ui.input(|i| i.pointer.interact_pos())
         && !panel.response.rect.contains(p)

@@ -256,7 +256,8 @@ fn a_damaged_view_in_a_project_file_is_cleaned_up_or_ignored() {
     assert_eq!(t.state.active_sequence, Some(c), "an active tab that is not open: the first tab");
     assert_eq!(t.state.timeline_views.len(), 1);
     let v = t.state.timeline_views[&b];
-    assert!(v.pps <= 1e5 && v.scroll == 0.0 && v.v_scroll <= 1e6 && v.a_scroll == 0.0);
+    assert_eq!(v.pps, 20_000_000.0, "hostile zoom is clamped to the supported geometry bound");
+    assert!(v.scroll == 0.0 && v.v_scroll <= 1e6 && v.a_scroll == 0.0);
     assert!(v.video_track_h >= 8.0 && v.audio_track_h <= 600.0);
     // playheads: only sequences keep one, never before zero or past the bound, always on a frame
     let rate = |seq: ItemId| t.project.sequence(seq).unwrap().settings.frame_rate;

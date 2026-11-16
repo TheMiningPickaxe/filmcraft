@@ -76,7 +76,8 @@ snake_case. The `ui.set.timeline` camelCase preference keys map to these readbac
 `track_slider_shift_drag_speed`, `smoothAnimations` → `smooth_animations`,
 `trackSliderSmoothAnimations` → `track_slider_smooth`, `trackSliderDecoupleEdges` →
 `track_slider_decouple`, and `trackSliderAlternatePosition` →
-`track_slider_alternate_position`. Boolean preference names otherwise use their corresponding
+`track_slider_alternate_position`, and `positionIndicator` maps to `show_position_indicator`.
+Boolean preference names otherwise use their corresponding
 snake_case field names (for example, `showWholeTimeline` → `show_whole_timeline`).
 
 For `ui.click` and `ui.drag`, omitted or null counts/steps use the defaults. Out-of-range or
