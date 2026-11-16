@@ -414,9 +414,8 @@ mod tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn file_reader_reads_ranges_in_place() {
-        let dir = std::env::temp_dir().join(format!("filmcraft-file-reader-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("bytes.bin");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bytes.bin");
         std::fs::write(&path, b"0123456789").unwrap();
         let r = FileReader::open(&path).unwrap();
         assert_eq!(r.len(), 10);
@@ -428,10 +427,9 @@ mod tests {
         assert_eq!(&b, b"012");
         assert_eq!(r.read_at(8, &mut b).unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
         assert_eq!(read_range(&r, 8, 100).unwrap(), b"89");
-        assert!(FileReader::open(&dir).is_err(), "a directory is not a media file");
-        assert_eq!(FileReader::open(&dir.join("missing")).unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert!(FileReader::open(dir.path()).is_err(), "a directory is not a media file");
+        assert_eq!(FileReader::open(&dir.path().join("missing")).unwrap_err().kind(), io::ErrorKind::NotFound);
         drop(r);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// #67: more readers than the pool keeps open stay readable; past the cap the least recently
@@ -439,10 +437,9 @@ mod tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn more_file_readers_than_the_pool_holds_stay_readable() {
-        let dir = std::env::temp_dir().join(format!("filmcraft-file-pool-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::tempdir().unwrap();
         let pool = Arc::new(FilePool::new(2));
-        let paths: Vec<_> = (0..5).map(|i| dir.join(format!("{i}.bin"))).collect();
+        let paths: Vec<_> = (0..5).map(|i| dir.path().join(format!("{i}.bin"))).collect();
         for (i, p) in paths.iter().enumerate() {
             std::fs::write(p, format!("file{i}-0123456789")).unwrap();
         }
@@ -462,7 +459,6 @@ mod tests {
         assert!(readers[0].read_at(0, &mut b).is_err());
         drop(readers);
         assert_eq!(pool.open_count(), 0, "dropped readers close their files");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A reader that counts the bytes read from it.
