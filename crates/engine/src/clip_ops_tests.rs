@@ -293,12 +293,11 @@ fn new_sequence_from_clip_bin_from_selection_and_offline_file() {
     let a = item_named(&s, "Desert_Dunes.mp4");
     let b = item_named(&s, "Misty_Forest.mp4");
     s.execute("project.select", json!({"items": [a.0, b.0]})).unwrap();
-    let _ = s.persistence_project_view();
     let undo0 = s.history.undo.len();
     let r = s.execute("file.newSequenceFromClip", json!({})).unwrap();
     let seq = ItemId(r["sequence"].as_u64().unwrap());
     assert_eq!(s.state.active_sequence, Some(seq));
-    assert_eq!(s.persistence_project_view().active_sequence, Some(seq), "the cached view must reflect the sequence created by the edit");
+    assert_eq!(s.project_view().active_sequence, Some(seq), "the project view reflects the sequence created by the edit");
     assert_eq!(s.project.item(seq).unwrap().name, "Desert_Dunes.mp4");
     let q = s.project.sequence(seq).unwrap();
     assert_eq!(q.video_tracks[0].items.len(), 2, "both clips, one after the other");

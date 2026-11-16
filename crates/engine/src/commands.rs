@@ -5385,7 +5385,6 @@ fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
         s.saved_revision = s.revision;
         // the file now holds this view: a later zoom or scroll is new unsaved state again
         s.saved_view_epoch = s.view_epoch;
-        s.persistence_view_cache = None;
         s.loaded_schema = filmcraft_format::SCHEMA_VERSION;
     }
     Ok(json!({"path": path, "bytes": bytes.len(), "ms": t0.elapsed().as_secs_f64() * 1000.0, "backup": backup}))
@@ -5434,6 +5433,9 @@ fn open_project(s: &mut Session, path: &str) -> Result<Value> {
     let bytes = s.services.read_file_bounded(path, filmcraft_format::MAX_PROJECT_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let loaded = filmcraft_format::decode(&bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let (from, migrated) = (loaded.schema_version, loaded.migrated());
+    // Fence snapshots captured before this disk replacement. A queued autosave must not
+    // restore the in-memory project over the file that was just opened/reverted.
+    s.project_file_fence.lock().unwrap_or_else(std::sync::PoisonError::into_inner).record_saved(path, s.revision, s.view_epoch);
     crate::masks::discard_jobs(s);
     install_project(s, loaded.project, Some(path.to_string()), true);
     if let Some(view) = loaded.view {

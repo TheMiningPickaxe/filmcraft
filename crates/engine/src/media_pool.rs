@@ -862,19 +862,17 @@ mod tests {
     #[cfg(any(unix, windows))]
     #[test]
     fn fs_services_open_media_through_a_file_reader() {
-        let dir = std::env::temp_dir().join(format!("filmcraft-pool-reader-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("a.wav");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.wav");
         let wav = filmcraft_media::wav::write_wav16(&[0.0, 0.5, -0.5, 0.25], 2, 48_000);
         std::fs::write(&path, &wav).unwrap();
         let p = path.to_string_lossy().to_string();
         let r = crate::FsServices.reader(&p).expect("a reader").unwrap();
         assert_eq!(r.len(), wav.len() as u64);
         assert!(MediaPool::default().open_file(&p, &crate::FsServices).unwrap().info().has_audio());
-        let missing = dir.join("missing.wav").to_string_lossy().to_string();
+        let missing = dir.path().join("missing.wav").to_string_lossy().to_string();
         assert!(matches!(MediaPool::default().open_file(&missing, &crate::FsServices), Err(MediaError::Offline(_))));
         drop(r);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A file whose first frame decodes and whose later frames need a decoder FilmCraft lacks.

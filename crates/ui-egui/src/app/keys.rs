@@ -34,9 +34,6 @@ impl FilmcraftApp {
             return;
         }
         let custom_control_pending = panels::timeline::custom_control_shortcut_pending(self, ctx);
-        if custom_control_pending {
-            ctx.input(|input| self.sync_v_down(&input.events, input.modifiers));
-        }
         // A focused text field takes every unmodified key, including the ones our shortest
         // shortcuts use, so an input method can compose there (Vietnamese Telex, Korean, …; #243).
         // `egui_wants_keyboard_input` above is not enough: it is read before this pass lays the UI
@@ -124,16 +121,6 @@ impl FilmcraftApp {
         let focused = self.ui.focused.title();
         let mut fire = Vec::new();
         let modifiers = i.modifiers;
-        let custom_control_event = custom_control_pending
-            .then(|| {
-                let mut normalized = i.events.clone();
-                panels::timeline::clipboard_events_as_keys(&mut normalized, modifiers, false);
-                normalized.iter().rev().find_map(|event| match event {
-                    egui::Event::Key { key, modifiers, pressed: true, .. } => Some((*key, *modifiers)),
-                    _ => None,
-                })
-            })
-            .flatten();
         // With no text on the system clipboard, egui-winit drops the Ctrl+V press but still
         // passes its release: put the press back, so Paste can paste files or an image (#611).
         let mut swallowed = None;
@@ -167,6 +154,14 @@ impl FilmcraftApp {
             });
         }
         panels::timeline::clipboard_events_as_keys(&mut i.events, modifiers, label_selected);
+        let custom_control_event = custom_control_pending
+            .then(|| {
+                i.events.iter().rev().find_map(|event| match event {
+                    egui::Event::Key { key, modifiers, pressed: true, .. } => Some((*key, *modifiers)),
+                    _ => None,
+                })
+            })
+            .flatten();
         let panel = self.bindings.iter().filter(|b| b.3.as_deref() == Some(focused));
         let app_wide = self.bindings.iter().filter(|b| b.3.is_none());
         let mut candidates: Vec<&menus::KeyBinding> = panel.chain(app_wide).collect();
@@ -556,6 +551,23 @@ mod key_repeat_tests {
     }
 
     #[test]
+    fn release_only_ctrl_v_prefers_the_custom_control_over_recovered_paste() {
+        let mut app = super::FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.bindings = super::menus::bindings(&app);
+        app.session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        app.session.state.timeline_ui.control_center_on_playhead = "Ctrl + V".into();
+        let ctx = egui::Context::default();
+        let events = vec![Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND }];
+        let pending = crate::panels::timeline::custom_control_shortcut_pending_for_events(&app, &ctx, &events, Modifiers::COMMAND);
+        assert!(pending, "the shortcut router will synthesize the missing V press");
+        let mut input = egui::InputState::default();
+        input.modifiers = Modifiers::COMMAND;
+        input.events = events;
+        let fired = app.match_shortcuts(&mut input, false, false, false, pending);
+        assert!(!fired.iter().any(|id| id.contains("paste")), "the recovered event belongs to the custom control");
+    }
+
+    #[test]
     fn custom_control_press_does_not_suppress_an_unrelated_shortcut() {
         let mut app = super::FilmcraftApp::new(filmcraft_engine::Session::default());
         app.bindings = super::menus::bindings(&app);
@@ -570,6 +582,24 @@ mod key_repeat_tests {
         let mut output = ctx.run_ui(egui::RawInput { events, ..egui::RawInput::default() }, |_| app.handle_shortcuts(&ctx));
         output.textures_delta.clear();
         assert!(app.playback.playing, "the unrelated Space shortcut still reaches application dispatch");
+    }
+
+    #[test]
+    fn pending_custom_control_does_not_replay_ctrl_v_from_same_pass_release() {
+        let mut app = super::FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.bindings = super::menus::bindings(&app);
+        app.session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        app.session.state.timeline_ui.control_center_on_playhead = "K".into();
+        app.v_down = true;
+        let mut input = egui::InputState::default();
+        input.modifiers = Modifiers::COMMAND;
+        input.events = vec![
+            Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND },
+            Event::Key { key: Key::K, physical_key: Some(Key::K), pressed: true, repeat: false, modifiers: Modifiers::COMMAND },
+        ];
+        let fired = app.match_shortcuts(&mut input, false, false, false, true);
+        assert!(!fired.iter().any(|id| id.contains("paste")), "the V release must not synthesize Ctrl+V Paste");
+        assert!(!app.v_down, "match_shortcuts consumes the release exactly once");
     }
 
     #[test]

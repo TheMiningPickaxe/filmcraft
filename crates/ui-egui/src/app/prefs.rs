@@ -205,7 +205,7 @@ impl FilmcraftApp {
     /// - and takes over a view that was changed in the session (by a command or the control
     ///   channel).
     pub(crate) fn sync_timeline_view(&mut self) {
-        let playback_scroll_target = self.timeline_auto_scroll_pending.take();
+        let playback_scroll_target = self.timeline_auto_scroll_pending;
         if self.timeline_view_document != self.session.document_epoch {
             self.tl.zoombar_settings_pos = None;
             self.tl.track_slider_settings_pos = None;
@@ -260,6 +260,7 @@ impl FilmcraftApp {
                 self.timeline_view_last.is_some_and(|last| playback_scroll_is_auto(last, shown, playback_scroll_target, active, self.session.document_epoch));
             self.session.state.timeline_views.insert(active, shown);
             self.timeline_view_last = Some(shown);
+            self.timeline_auto_scroll_pending = None;
             if !playback_scroll_only {
                 self.session.view_changed();
             }
@@ -267,6 +268,7 @@ impl FilmcraftApp {
             self.tl.track_anim = None;
             show(v, s);
             self.timeline_view_last = Some(s);
+            self.timeline_auto_scroll_pending = None;
             self.session.state.timeline_views.insert(active, s);
         }
     }

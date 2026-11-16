@@ -560,6 +560,15 @@ fn deletable_media(s: &Session, id: ItemId, path: &str) -> bool {
     recorded.is_some_and(|want| identity_of(&*s.services, path).is_ok_and(|have| have == want))
 }
 
+fn media_references_resolved_file(s: &Session, id: ItemId, path: &str) -> bool {
+    s.project.item(id).and_then(|item| item.as_media()).is_some_and(|media| {
+        [Some(&media.media), media.proxy.as_ref()].into_iter().flatten().any(|reference| match reference {
+            MediaRef::File { path: reference } => s.media.follow(reference).is_ok_and(|resolved| resolved == path),
+            MediaRef::Generator(_) => false,
+        })
+    })
+}
+
 /// `media.makeOffline {items?, deleteFiles?}`.
 pub fn make_offline(s: &mut Session, p: &Value) -> Result<Value> {
     let items: Vec<ItemId> = match p.get("items").and_then(Value::as_array) {
@@ -594,12 +603,15 @@ pub fn make_offline(s: &mut Session, p: &Value) -> Result<Value> {
             if let Ok(path) = s.media.follow(path)
                 && deletable_media(s, *id, &path)
             {
-                // Drop the cached FileReader first so its pooled Windows handle is released
-                // before remove_file attempts to unlink the media.
-                s.media.remove_cached(*id);
+                // Another Project-panel item or proxy can keep the same file open. Drop every
+                // cached reader that resolves to this path before unlinking it on Windows.
+                let cached_items = s.project.items.keys().copied().filter(|candidate| media_references_resolved_file(s, *candidate, &path)).collect::<Vec<_>>();
+                for candidate in cached_items {
+                    s.media.remove_cached(candidate);
+                }
                 match std::fs::remove_file(&path) {
                     Ok(()) => deleted.push(path.clone()),
-                    Err(error) => log::warn!("make offline: couldn't delete {path}: {error}"),
+                    Err(error) => log::warn!("make offline: couldn't delete media item {} ({:?})", id.0, error.kind()),
                 }
             }
         }

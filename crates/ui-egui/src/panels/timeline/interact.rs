@@ -252,13 +252,12 @@ fn drag_pointer_position(response: Option<egui::Pos2>, interact: Option<egui::Po
     response.or(interact).or(latest)
 }
 
-fn slip_drag_delta(rate: filmcraft_time::FrameRate, current: Tick, press_origin: Option<egui::Pos2>, layout: &Layout) -> Tick {
-    let origin = press_origin.map(|point| layout.tick_at(point.x)).unwrap_or(current);
-    -(rate.snap_nearest(current - origin))
+fn slip_drag_delta(rate: filmcraft_time::FrameRate, current: Tick, press_origin: Option<egui::Pos2>, layout: &Layout) -> Option<Tick> {
+    press_origin.map(|point| -(rate.snap_nearest(current - layout.tick_at(point.x))))
 }
 
-fn drag_tick_delta_on_release(released: bool, stored: Tick, updated: Tick) -> Tick {
-    if released { stored } else { updated }
+fn drag_tick_delta_on_release(stored: Tick, updated: Option<Tick>) -> Tick {
+    updated.unwrap_or(stored)
 }
 
 fn drag_copy_for_frame(alt_held: bool, released: bool, previously_copying: bool) -> bool {
@@ -446,15 +445,17 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
                 // lowest video track is at the bottom, so wheeling up brings higher ones in).
                 // Inverted controls turns both around too.
                 None if p.y < layout.split_y => {
-                    if w.delta.y != 0.0 {
+                    let track_delta = wheel_vertical_component(&w);
+                    if track_delta != 0.0 {
                         app.tl.track_anim = None;
-                        app.ui.timeline.v_scroll += if inv { -w.delta.y } else { w.delta.y };
+                        app.ui.timeline.v_scroll += if inv { -track_delta } else { track_delta };
                     }
                 }
                 None => {
-                    if w.delta.y != 0.0 {
+                    let track_delta = wheel_vertical_component(&w);
+                    if track_delta != 0.0 {
                         app.tl.track_anim = None;
-                        app.ui.timeline.a_scroll -= if inv { -w.delta.y } else { w.delta.y };
+                        app.ui.timeline.a_scroll -= if inv { -track_delta } else { track_delta };
                     }
                 }
             }
@@ -893,11 +894,11 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
             }),
             Drag::Slip { clip, delta } => Some(Drag::Slip {
                 clip,
-                delta: drag_tick_delta_on_release(resp.drag_stopped(), delta, slip_drag_delta(rate, t_here, ctx.input(|i| i.pointer.press_origin()), layout)),
+                delta: drag_tick_delta_on_release(delta, slip_drag_delta(rate, t_here, ctx.input(|i| i.pointer.press_origin()), layout)),
             }),
             Drag::Slide { clip, delta } => {
-                let origin = ctx.input(|i| i.pointer.press_origin()).map(|o| layout.tick_at(o.x)).unwrap_or(t_here);
-                Some(Drag::Slide { clip, delta: drag_tick_delta_on_release(resp.drag_stopped(), delta, rate.snap_nearest(t_here - origin)) })
+                let updated = ctx.input(|i| i.pointer.press_origin()).map(|origin| rate.snap_nearest(t_here - layout.tick_at(origin.x)));
+                Some(Drag::Slide { clip, delta: drag_tick_delta_on_release(delta, updated) })
             }
             Drag::Transition { id, edge, from, start, duration } => {
                 let delta = rate.snap_nearest(t_here - from);
@@ -1051,13 +1052,14 @@ mod visible_row_fallback_tests {
         };
         let rate = filmcraft_time::FrameRate::new(24, 1);
         let release = layout.tick_at(20.0);
-        let delta = slip_drag_delta(rate, release, Some(pos2(10.0, 10.0)), &layout);
+        let delta = slip_drag_delta(rate, release, Some(pos2(10.0, 10.0)), &layout).unwrap();
         assert_eq!(delta, -rate.snap_nearest(release - layout.tick_at(10.0)));
         assert_ne!(delta, Tick::ZERO, "the consumed drag keeps its slip movement");
-        assert_eq!(drag_tick_delta_on_release(true, delta, Tick::ZERO), delta, "release preserves the stored slip/slide delta");
+        assert_eq!(drag_tick_delta_on_release(delta, Some(Tick(123))), Tick(123), "release uses a newly available final displacement");
+        assert_eq!(drag_tick_delta_on_release(delta, None), delta, "release falls back to stored displacement when its origin is unavailable");
         let slide_delta = rate.snap_nearest(release - layout.tick_at(5.0));
-        assert_eq!(drag_tick_delta_on_release(true, slide_delta, Tick::ZERO), slide_delta, "release preserves the stored slide delta");
-        assert_eq!(drag_tick_delta_on_release(false, delta, Tick(1)), Tick(1), "an active drag still uses its updated displacement");
+        assert_eq!(drag_tick_delta_on_release(slide_delta, Some(Tick(-321))), Tick(-321), "slide release uses the final pointer displacement");
+        assert_eq!(drag_tick_delta_on_release(delta, Some(Tick(1))), Tick(1), "an active drag still uses its updated displacement");
     }
 
     #[test]
@@ -1911,6 +1913,13 @@ mod wheel_axis_tests {
             Some(-1000.0),
             "Shift accelerates the horizontal delta despite the zoom-suppressed vertical component"
         );
+    }
+
+    #[test]
+    fn ctrl_horizontal_wheel_uses_the_selected_track_axis() {
+        let wheel = WheelInput { delta: egui::vec2(100.0, 0.0), pinch: 1.0, command: true, alt: false, shift: false };
+        assert_eq!(wheel_vertical_component(&wheel), 100.0);
+        assert_eq!(wheel_time_delta(&wheel, false, true, false), None, "Ctrl reserves the gesture for track scrolling");
     }
 
     #[test]

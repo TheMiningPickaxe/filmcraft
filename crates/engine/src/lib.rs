@@ -543,9 +543,6 @@ pub struct Session {
     /// Most recent view snapshot sent to autosave. Drags update every frame; spacing these sends
     /// bounds project-view cloning and queued channel work without delaying the final close flush.
     last_view_snapshot_sent: Option<web_time::Instant>,
-    /// A project view is unchanged while only project content revisions advance. Reuse it for
-    /// those recovery snapshots; document and view epochs invalidate it when the view can differ.
-    persistence_view_cache: Option<(u64, u64, filmcraft_project::ProjectView)>,
     pub path: Option<String>,
     pub state: EditorState,
     pub media: Arc<MediaPool>,
@@ -675,7 +672,6 @@ impl Session {
             saved_view_epoch: 0,
             transient_playheads: HashMap::new(),
             last_view_snapshot_sent: None,
-            persistence_view_cache: None,
             path: None,
             state: EditorState {
                 snapping: true,
@@ -816,7 +812,7 @@ impl Session {
         }
         // Journal either unsaved content or an unsaved project view. The worker keeps those kinds
         // of changes distinct so a view-only recovery does not mark project content dirty.
-        let view = if dirty || view_dirty { Some(self.persistence_project_view()) } else { None };
+        let view = if dirty || view_dirty { Some(self.project_view()) } else { None };
         let Some(p) = self.persistence.as_mut() else { return };
         if let Some(view) = view {
             p.send_dirty(autosave::Snapshot {
@@ -1074,18 +1070,6 @@ impl Session {
         }
     }
 
-    fn persistence_project_view(&mut self) -> filmcraft_project::ProjectView {
-        if let Some((document_epoch, view_epoch, view)) = &self.persistence_view_cache
-            && *document_epoch == self.document_epoch
-            && *view_epoch == self.view_epoch
-        {
-            return view.clone();
-        }
-        let view = self.project_view();
-        self.persistence_view_cache = Some((self.document_epoch, self.view_epoch, view.clone()));
-        view
-    }
-
     /// Open what was open when the project was saved. Nothing in `view` is trusted: ids that are
     /// not sequences of this project are dropped (also a second mention of the same sequence),
     /// and numbers are brought into range (a playhead also lands on a frame of its sequence). A
@@ -1158,7 +1142,6 @@ impl Session {
         self.history.redo.clear();
         self.history.merge_key = None;
         self.state = st;
-        self.persistence_view_cache = None;
         self.drop_stale_gap();
         self.bump();
         Ok(r)
@@ -1180,7 +1163,6 @@ impl Session {
         self.drop_orphan_transitions(&mut p);
         self.project = Arc::new(p);
         self.state = st;
-        self.persistence_view_cache = None;
         self.drop_stale_gap();
         self.bump();
         Ok(r)
@@ -1205,7 +1187,6 @@ impl Session {
             s.project = project.clone();
             s.state = state.clone();
             s.transient_playheads = transient_playheads.clone();
-            s.persistence_view_cache = None;
             s.bump();
         };
         match (r, first) {
@@ -1343,7 +1324,6 @@ impl Session {
         }
         self.state.open_sequences.retain(|s| p.sequence(*s).is_some());
         self.state.timeline_views.retain(|s, _| p.sequence(*s).is_some());
-        self.persistence_view_cache = None;
         if let Some(s) = self.state.source_item
             && p.item(s).is_none()
         {
@@ -1424,7 +1404,6 @@ impl Session {
         let Some(sequence) = self.state.active_sequence else { return };
         let rate = self.active_sequence().map(|sequence| sequence.settings.frame_rate).unwrap_or_default();
         self.transient_playheads.insert(sequence, rate.snap(t.max(Tick::ZERO)));
-        self.persistence_view_cache = None;
         if self.state.selection_follows_playhead {
             sequence_tools::select_under_playhead(self);
         }

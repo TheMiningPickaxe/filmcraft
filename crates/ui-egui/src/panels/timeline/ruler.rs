@@ -11,6 +11,15 @@ pub(super) fn ruler_tick_count_within_budget(first: i64, last: i64, step: i64) -
     step > 0 && last >= first && last.saturating_sub(first) / step <= MAX_RULER_TICKS_PER_FRAME
 }
 
+fn ruler_step_within_budget(first: i64, last: i64, step: i64) -> i64 {
+    if step <= 0 || last < first {
+        return 1;
+    }
+    let count = last.saturating_sub(first) / step;
+    let multiplier = count.saturating_add(MAX_RULER_TICKS_PER_FRAME - 1) / MAX_RULER_TICKS_PER_FRAME;
+    step.saturating_mul(multiplier.max(1))
+}
+
 /// The Ruler's two strides, in frames: `(tick, label)`.
 ///
 /// `label` is the first ladder step wide enough to keep timestamps apart (110 pt); `tick` is the
@@ -126,8 +135,9 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
     }
     let f0 = rate.frame_at(layout.tick_at(ruler.min.x)).max(0);
     let f1 = rate.frame_at(layout.tick_at(ruler.max.x)) + 1;
-    if ruler_tick_count_within_budget(f0, f1, minor) {
-        let mut f = (f0 / minor) * minor;
+    let tick_step = if ruler_tick_count_within_budget(f0, f1, minor) { minor } else { ruler_step_within_budget(f0, f1, label_step) };
+    if ruler_tick_count_within_budget(f0, f1, tick_step) {
+        let mut f = (f0 / tick_step) * tick_step;
         while f <= f1 {
             let x = layout.x_of(rate.tick_of(f));
             let major = f % label_step == 0;
@@ -137,7 +147,7 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
                 let label = format_time(rate.tick_of(f), rate, seq.settings.drop_frame, seq.settings.display, 48000);
                 clip.text(pos2(x + 1.0, label_y), Align2::CENTER_CENTER, label, Tokens::ui(11.0), t.tl_ruler_text);
             }
-            let Some(next) = f.checked_add(minor) else { break };
+            let Some(next) = f.checked_add(tick_step) else { break };
             f = next;
         }
     }
@@ -274,5 +284,18 @@ fn timeline_settings(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
         app.ui.timeline.video_track_h = 26.0;
         app.ui.timeline.audio_track_h = 26.0;
         ui.close();
+    }
+}
+
+#[cfg(test)]
+mod ruler_budget_tests {
+    use super::{ruler_step_within_budget, ruler_tick_count_within_budget};
+
+    #[test]
+    fn over_budget_rulers_keep_a_bounded_major_tick_stride() {
+        let stride = ruler_step_within_budget(0, 7_000, 1);
+        assert!(stride > 1);
+        assert!(ruler_tick_count_within_budget(0, 7_000, stride));
+        assert!(7_000 / stride <= 512);
     }
 }

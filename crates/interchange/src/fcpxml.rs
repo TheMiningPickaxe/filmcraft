@@ -205,6 +205,74 @@ mod deferred_audio_tests {
     }
 
     #[test]
+    fn reimported_parent_content_survives_an_earlier_audio_repair() {
+        let opts = ImportOptions::default();
+        let mut report = Report::default();
+        let mut builder = Builder::new("deferred audio parent reimport");
+        let parent = builder.reserve_sequence("Parent", SequenceSettings::default(), None);
+        let other_parent = builder.reserve_sequence("Other parent", SequenceSettings::default(), None);
+        let child = builder.reserve_sequence("Child", SequenceSettings::default(), None);
+        let mut child_sequence = empty_sequence(SequenceSettings::default());
+        let child_audio = builder.clip(child, TrackKind::Audio, "Child audio", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        assert!(builder.place(&mut child_sequence, TrackKind::Audio, 0, child_audio).is_some());
+        builder.put_sequence(child, child_sequence);
+        builder.put_sequence(parent, empty_sequence(SequenceSettings::default()));
+        builder.put_sequence(other_parent, empty_sequence(SequenceSettings::default()));
+
+        let xml = crate::xml::parse(
+            r#"<fcpxml><resources>
+              <media id="p"><sequence><spine>
+                <asset-clip ref="v0" name="Recovered picture" offset="0s" start="0s" duration="1s"/>
+                <asset-clip ref="a0" name="Parent sound" offset="0s" start="0s" duration="1s"/>
+              </spine></sequence></media>
+              <asset id="v0" name="Picture" start="0s" duration="5s" hasVideo="1" src="picture.mov"/>
+              <asset id="a0" name="Sound" start="0s" duration="5s" hasAudio="1" src="sound.wav"/>
+            </resources></fcpxml>"#,
+        )
+        .unwrap();
+        let media_nodes = xml
+            .root_element()
+            .descendants()
+            .filter(|node| node.has_tag_name("media"))
+            .filter_map(|node| node.attribute("id").map(|id| (id.to_string(), node)))
+            .collect();
+        let asset_nodes = xml
+            .root_element()
+            .descendants()
+            .filter(|node| node.has_tag_name("asset"))
+            .filter_map(|node| node.attribute("id").map(|id| (id.to_string(), node)))
+            .collect();
+        let parent_audio = builder.clip(child, TrackKind::Audio, "Restored parent audio", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        let other_audio = builder.clip(parent, TrackKind::Audio, "Restored other audio", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        let mut imp = Imp {
+            b: builder,
+            opts: &opts,
+            report: &mut report,
+            formats: HashMap::new(),
+            asset_nodes,
+            assets: HashMap::new(),
+            media_nodes,
+            media_items: HashMap::from([("c".to_string(), child), ("p".to_string(), parent)]),
+            media_active: HashSet::new(),
+            sequence_stack: Vec::new(),
+            deferred_audio_refs: vec![
+                DeferredAudioRef { parent, child, video: None, link: 31, lane: 0, audio: parent_audio },
+                DeferredAudioRef { parent: other_parent, child: parent, video: None, link: 32, lane: 0, audio: other_audio },
+            ],
+            truncation_hits: 0,
+            media_truncated_at: HashMap::from([("p".to_string(), (1, 1))]),
+            reimports_left: 1,
+            effects: HashMap::new(),
+            depth: 0,
+        };
+        imp.restore_deferred_audio_refs();
+
+        let rebuilt = imp.b.p.sequence(parent).unwrap();
+        assert!(rebuilt.video_tracks.iter().flat_map(|track| &track.items).any(|clip| clip.name == "Recovered picture"));
+        assert!(rebuilt.audio_tracks.iter().flat_map(|track| &track.items).any(|clip| clip.link == Some(31)));
+    }
+
+    #[test]
     fn rebuilding_a_parent_drops_its_old_deferred_audio_entries() {
         let opts = ImportOptions::default();
         let mut report = Report::default();
@@ -608,9 +676,6 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
             if !seen.insert(id.clone()) {
                 continue;
             }
-            if seen.len() > crate::MAX_NESTING_DEPTH.saturating_mul(crate::MAX_NESTING_DEPTH) {
-                return true;
-            }
             let Some(resource) = self.media_nodes.get(&id) else { continue };
             let Some(sequence) = child(*resource, "sequence") else { continue };
             for reference in sequence.descendants().filter(|node| node.has_tag_name("ref-clip")) {
@@ -656,11 +721,13 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
     fn restore_deferred_audio_refs(&mut self) {
         let mut pending = std::mem::take(&mut self.deferred_audio_refs);
         loop {
+            let reimports_before = self.reimports_left;
+            let generated_before = self.deferred_audio_refs.len();
             let mut retry = Vec::new();
             let mut repaired = false;
-            let mut parents = HashMap::new();
+            let mut repairs = Vec::new();
             for deferred in pending {
-                let DeferredAudioRef { parent: parent_id, child: child_id, video: video_id, link, lane: audio_lane, mut audio } = deferred;
+                let DeferredAudioRef { parent: parent_id, child: child_id, video: video_id, link, lane: audio_lane, audio } = deferred;
                 // A later reference can have more nesting budget than the import which first
                 // recorded this deferred link. Reimport the child into its reserved identity so
                 // its newly reachable audio tracks are available before repairing the parent.
@@ -672,11 +739,12 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
                     retry.push(DeferredAudioRef { parent: parent_id, child: child_id, video: video_id, link, lane: audio_lane, audio });
                     continue;
                 }
-                if let std::collections::hash_map::Entry::Vacant(entry) = parents.entry(parent_id) {
-                    let Some(parent) = self.b.p.sequence(parent_id).cloned() else { continue };
-                    entry.insert(parent);
-                }
-                let Some(parent) = parents.get_mut(&parent_id) else { continue };
+                repairs.push((parent_id, video_id, link, audio_lane, audio));
+            }
+            // Reimports above may have replaced a parent's sequence. Apply repairs to
+            // the latest sequence only after every child has finished rebuilding.
+            for (parent_id, video_id, link, audio_lane, mut audio) in repairs {
+                let Some(mut parent) = self.b.p.sequence(parent_id).cloned() else { continue };
                 if let Some(video_id) = video_id {
                     let Some(video) = parent.video_tracks.iter_mut().find_map(|track| track.items.iter_mut().find(|item| item.id == video_id)) else {
                         continue;
@@ -687,16 +755,18 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
                     continue;
                 }
                 audio.link = Some(link);
-                if self.b.place(parent, TrackKind::Audio, audio_lane, audio).is_some() {
+                if self.b.place(&mut parent, TrackKind::Audio, audio_lane, audio).is_some() {
                     repaired = true;
+                    self.b.put_sequence(parent_id, parent);
                 } else {
                     self.report.warn("FCPXML recovered nested audio could not be placed within the track limit");
                 }
             }
-            for (parent, sequence) in parents {
-                self.b.put_sequence(parent, sequence);
-            }
-            if retry.is_empty() || !repaired {
+            // Child reimports can themselves append new deferrals. Merge them into
+            // this bounded recovery queue rather than replacing them with `retry`.
+            retry.append(&mut self.deferred_audio_refs);
+            let made_reimport_progress = self.reimports_left < reimports_before || self.deferred_audio_refs.len() > generated_before;
+            if retry.is_empty() || (!repaired && !made_reimport_progress) {
                 self.deferred_audio_refs = retry;
                 break;
             }
@@ -1656,6 +1726,46 @@ fn marker_xml(m: &Marker, local: Tick, rate: FrameRate) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_acyclic_cached_media_graph_is_not_treated_as_recursive() {
+        let mut xml = String::from("<fcpxml><resources>");
+        for index in 0..=crate::MAX_NESTING_DEPTH * crate::MAX_NESTING_DEPTH {
+            xml.push_str(&format!(
+                "<media id=\"m{index}\"><sequence><spine>{}</spine></sequence></media>",
+                if index == crate::MAX_NESTING_DEPTH * crate::MAX_NESTING_DEPTH { String::new() } else { format!("<ref-clip ref=\"m{}\"/>", index + 1) }
+            ));
+        }
+        xml.push_str("</resources></fcpxml>");
+        let doc = crate::xml::parse(&xml).unwrap();
+        let media_nodes = doc
+            .root_element()
+            .descendants()
+            .filter(|node| node.has_tag_name("media"))
+            .filter_map(|node| node.attribute("id").map(|id| (id.to_string(), node)))
+            .collect();
+        let opts = ImportOptions::default();
+        let mut report = Report::default();
+        let imp = Imp {
+            b: Builder::new("large acyclic media graph"),
+            opts: &opts,
+            report: &mut report,
+            formats: HashMap::new(),
+            asset_nodes: HashMap::new(),
+            assets: HashMap::new(),
+            media_nodes,
+            media_items: HashMap::new(),
+            media_active: HashSet::new(),
+            sequence_stack: Vec::new(),
+            deferred_audio_refs: Vec::new(),
+            truncation_hits: 0,
+            media_truncated_at: HashMap::new(),
+            reimports_left: 0,
+            effects: HashMap::new(),
+            depth: 0,
+        };
+        assert!(!imp.cached_media_reaches_active("m0"));
+    }
 
     #[test]
     fn rational_times_are_exact() {

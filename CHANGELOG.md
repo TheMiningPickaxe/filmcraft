@@ -9,6 +9,7 @@ All notable user-facing changes to FilmCraft are recorded here.
 - Timeline slider settings are saved with project views and restored with projects and recovery sessions.
 - Audio and offline clips in the Timeline minimap use small shape cues as well as colour.
 - Track sliders support configurable positioning, animation, and edge behavior.
+- Timeline and track-slider controls are translated into eight languages.
 
 ### Changed
 

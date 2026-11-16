@@ -786,10 +786,14 @@ fn hiding_the_slider_frees_its_space_and_only_then_offers_unhide() {
     assert_eq!(d.app().ui.timeline.target_scroll, 0.0, "Home scrolls back to the start without the bar");
     d.ok("ui.key", json!({"key": "End"}));
     d.frames(3);
-    let end = d.app().session.playhead().seconds();
-    let v = &d.app().ui.timeline;
-    let width = 1600.0 / v.pps;
-    assert!(v.target_scroll > 0.0 && v.target_scroll <= end && end - v.target_scroll < width, "End shows the playhead without the bar");
+    let (end, target_scroll, width) = {
+        let app = d.app();
+        let end = app.session.playhead().seconds();
+        let view = &app.ui.timeline;
+        let width = app.tl.layout.as_ref().map_or(0.0, |layout| f64::from(layout.content.width())) / view.pps;
+        (end, view.target_scroll, width)
+    };
+    assert!(target_scroll > 0.0 && target_scroll <= end && end - target_scroll < width, "End shows the playhead without the bar");
     // Unhide Timeline Slider brings it back (its menu behaviour has its own test)
     d.ok("ui.set", json!({"timeline": {"zoomBarHidden": false}}));
     d.frames(3);
@@ -925,7 +929,7 @@ fn fullscreen_timeline_settings_shows_every_row() {
     assert!(bottom - top > 400.0, "all settings must occupy their full natural height");
     let popup = d.harness.ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("timeline-zoombar-popup-rect"))).expect("popup rectangle");
     assert!((popup.bottom() - (bar[1] + bar[3] / 2.0)).abs() < 1.0, "popup follows the click: {popup:?}, bar={bar:?}");
-    assert!((popup.bottom() - bottom) < 48.0, "settings rows stay near the popup bottom: popup={popup:?}, rows_bottom={bottom}");
+    assert!((popup.bottom() - bottom).abs() < 48.0, "settings rows stay near the popup bottom: popup={popup:?}, rows_bottom={bottom}");
     for row in rows {
         assert!(row.rect[1] >= 0.0 && row.rect[1] + row.rect[3] <= 980.0, "row outside fullscreen window: {} {:?}", row.id, row.rect);
     }
@@ -987,10 +991,11 @@ fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
 
     let row = "timeline.zoomBar.settings.smoothAnimations";
     assert!(d.harness.state().auto.elements.iter().any(|element| element.id == row), "the menu must be visible on the release frame");
-    // The restored viewport may need one repaint after its first layout pass before its shapes
-    // are emitted; the menu's first painted frame must already use the measured height.
-    d.frames(1);
-    let first = d.rect_now(row);
+    // Capture the actual release-frame position before advancing the harness. The menu may be
+    // registered before its text shapes paint, so painted content gets a separate next-frame check.
+    let release = d.rect_now(row);
+    let popup = d.harness.ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("timeline-zoombar-popup-rect"))).expect("popup rectangle");
+    let last = d.rect_now("timeline.zoomBar.settings.hideSlider");
     let painted = |d: &Driver| {
         d.harness.output().shapes.iter().any(|shape| {
             if let egui::Shape::Text(text) = &shape.shape {
@@ -1000,16 +1005,16 @@ fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
             }
         })
     };
-    assert!(painted(&d), "menu must be painted on the release frame");
-    let popup = d.harness.ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("timeline-zoombar-popup-rect"))).expect("popup rectangle");
     assert!((popup.bottom() - point.1).abs() < 1.0, "popup must touch the click: {popup:?}, {point:?}");
-    assert!(first[1] + first[3] <= point.1 + 1.0, "the menu opens above the clicked slider: {first:?}, pointer={point:?}");
-    let last = d.rect_now("timeline.zoomBar.settings.hideSlider");
+    assert!(release[1] + release[3] <= point.1 + 1.0, "the menu opens above the clicked slider: {release:?}, pointer={point:?}");
     assert!(last[1] + last[3] <= 980.0, "the full menu fits without a default scrollbar: {last:?}");
 
+    // Compare the actual release-frame position with the next frame; otherwise a
+    // one-frame jump could be hidden by observing only after the repaint.
     d.frames(1);
-    let next = d.rect_now(row);
-    assert!((next[1] - first[1]).abs() < 1.0, "the menu stays in place after its first visible frame: {first:?} -> {next:?}");
+    let first_painted = d.rect_now(row);
+    assert!(painted(&d), "menu content paints on the first repaint after release");
+    assert!((first_painted[1] - release[1]).abs() < 1.0, "the menu stays in place after its first visible frame: {release:?} -> {first_painted:?}");
     d.click_at(bar[0] + 5.0, point.1, "left");
     d.frames(2);
     assert!(!d.harness.state().auto.elements.iter().any(|element| element.id == row), "outside click closed the menu");
@@ -1019,9 +1024,9 @@ fn zoom_bar_settings_menu_opens_above_on_its_first_frame_without_jumping() {
     d.frames(1);
     d.right_click_first_visible_frame(point.0, point.1);
     let reopened = d.rect_now(row);
-    assert!(painted(&d), "reopened menu must be painted on the release frame");
     d.frames(1);
     let reopened_next = d.rect_now(row);
+    assert!(painted(&d), "reopened menu paints on its first repaint");
     assert!((reopened_next[1] - reopened[1]).abs() < 1.0, "reopened menu jumped: {reopened:?} -> {reopened_next:?}");
 }
 /// "Timeline Slider Settings": the Timeline menu's row above Unhide Timeline Slider, only while
@@ -1067,10 +1072,16 @@ fn lowering_the_popup_zoom_ceiling_keeps_the_visible_center_in_place() {
     d.app().ui.timeline.target_pps = old_pps;
     d.app().ui.timeline.scroll = scroll;
     d.app().ui.timeline.target_scroll = scroll;
-    d.app().session.state.timeline_ui.max_zoom_seconds = 1.5;
+    let field = d.rect("timeline.zoomBar.settings.maxZoomLevel");
+    d.click_at(field[0] + field[2] / 2.0, field[1] + field[3] / 2.0, "left");
+    d.frames(2);
+    d.ok("ui.key", json!({"key": "Ctrl+A"}));
+    d.ok("ui.type", json!({"text": "1.5"}));
+    d.ok("ui.key", json!({"key": "Enter"}));
 
     d.frames(3);
 
+    assert_eq!(d.app().session.state.timeline_ui.max_zoom_seconds, 1.5, "the popup field commits the new ceiling");
     let view = &d.app().ui.timeline;
     assert!(view.pps < old_pps && view.target_pps < old_pps, "both zoom values obey the lower ceiling");
     let current_center = view.scroll + width * 0.5 / view.pps;

@@ -329,6 +329,7 @@ impl FilmcraftApp {
             }
         } else if t <= Tick::ZERO && self.playback.speed < 0.0 {
             self.session.set_playhead_during_playback(Tick::ZERO);
+            self.preserve_playback_end_reveal();
             self.stop();
         } else {
             self.session.set_playhead_during_playback(t);
@@ -463,6 +464,7 @@ mod playback_restart_tests {
         assert!(!app.playback.playing);
         let epoch = app.session.view_epoch;
 
+        app.sync_timeline_view();
         let mut output = ctx.run_ui(input(), |ui| {
             let rect = ui.max_rect();
             crate::panels::timeline::show(&mut app, ui, rect);
@@ -472,6 +474,33 @@ mod playback_restart_tests {
 
         assert!(app.session.state.timeline_views.get(&sequence).is_some_and(|view| view.scroll > 0.0), "the final playhead was revealed");
         assert_eq!(app.session.view_epoch, epoch, "the automatic reveal does not make playback appear as a manual edit");
+
+        let midpoint = Tick(end.0 / 2);
+        let midpoint_scroll = midpoint.seconds();
+        let reverse_view = filmcraft_engine::project::SequenceView { scroll: midpoint_scroll, ..view };
+        app.ui.timeline.scroll = midpoint_scroll;
+        app.ui.timeline.target_scroll = midpoint_scroll;
+        app.session.state.timeline_views.insert(sequence, reverse_view);
+        app.timeline_view_last = Some(reverse_view);
+        app.session.set_playhead_during_playback(midpoint);
+        app.playback.playing = true;
+        app.playback.speed = -1.0;
+        app.playback.anchor_tick = midpoint;
+        app.playback.anchor_time = 0.0;
+        app.set_now_for_test(midpoint.seconds() + 1.0);
+        app.advance_playback(&ctx);
+        assert!(!app.playback.playing, "reverse playback stops at zero");
+        let reverse_epoch = app.session.view_epoch;
+
+        app.sync_timeline_view();
+        let mut output = ctx.run_ui(input(), |ui| {
+            let rect = ui.max_rect();
+            crate::panels::timeline::show(&mut app, ui, rect);
+        });
+        output.textures_delta.clear();
+        app.sync_timeline_view();
+        assert_eq!(app.session.view_epoch, reverse_epoch, "the automatic reverse-zero reveal is not a manual view edit");
+        assert_eq!(app.session.state.timeline_views.get(&sequence).map(|view| view.scroll), Some(0.0));
     }
 }
 

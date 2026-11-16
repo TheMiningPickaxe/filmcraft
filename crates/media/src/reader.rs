@@ -33,6 +33,11 @@ pub type SharedReader = Arc<dyn ByteReader>;
 fn open_nonblocking(path: &std::path::Path) -> io::Result<std::fs::File> {
     let mut o = std::fs::OpenOptions::new();
     o.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        o.share_mode(0x1 | 0x2 | 0x4);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -317,6 +322,24 @@ pub fn open_reader_within(name: &str, reader: SharedReader, reader_openers: &[Re
 #[cfg(test)]
 mod regular_file_tests {
     use super::read_regular_file;
+
+    /// Open media handles must not prevent replacement or deletion on Windows.
+    #[cfg(windows)]
+    #[test]
+    fn open_reader_allows_deleting_its_file() {
+        let dir = std::env::temp_dir().join(format!("fc-delete-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("media.bin");
+        std::fs::write(&path, [1u8, 2, 3]).unwrap();
+        let reader = std::sync::Arc::new(super::FileReader::open(&path).unwrap());
+        let retained = std::sync::Arc::clone(&reader);
+        std::fs::remove_file(&path).unwrap();
+        assert!(!path.exists());
+        drop(retained);
+        drop(reader);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn reads_a_file_and_refuses_a_folder() {

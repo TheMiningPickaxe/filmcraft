@@ -183,24 +183,9 @@ fn nominal_thumbnail_tile_width(height: f32, aspect: f32) -> f32 {
     height * aspect
 }
 
-fn frozen_thumbnail_tile_width(_width: f32, height: f32, aspect: f32, _pps: f64, _frozen: f64) -> f32 {
-    // Tile spacing is chosen in frozen coordinates; live clip width and zoom affect only which
-    // part is visible, never which source frames are sampled.
-    nominal_thumbnail_tile_width(height, aspect)
-}
-
 fn thumbnail_tile_rect(x: f32, center_y: f32, width: f32, aspect: f32) -> Rect {
     let height = width / aspect;
     Rect::from_min_size(pos2(x, center_y - height / 2.0), vec2(width, height))
-}
-
-#[cfg(test)]
-fn thumbnail_render_size(width: f32, aspect: f32, max_height: f32) -> egui::Vec2 {
-    if !width.is_finite() || !aspect.is_finite() || aspect <= 0.0 || !max_height.is_finite() {
-        return egui::Vec2::ZERO;
-    }
-    let height = width / aspect;
-    if height > max_height.max(0.0) { egui::vec2(max_height.max(0.0) * aspect, max_height.max(0.0)) } else { egui::vec2(width.max(0.0), height.max(0.0)) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -260,8 +245,8 @@ pub(super) fn draw_clip(
             let frozen_tiles =
                 mode == crate::state::ThumbnailMode::Continuous && pps.is_finite() && pps > 0.0 && frozen.is_some_and(|f| f.is_finite() && f > 0.0 && f != pps);
             if frozen_tiles {
-                if let Some(frozen_pps) = frozen {
-                    tw = frozen_thumbnail_tile_width(th.width(), fh, aspect, pps, frozen_pps);
+                if frozen.is_some() {
+                    tw = nominal_thumbnail_tile_width(fh, aspect);
                     // The tiler rejects sub-point widths. Fall back to live layout when the clip
                     // is narrower than one frozen point, preserving thumbnails for short clips.
                     if tw < 1.0 {
@@ -409,17 +394,8 @@ pub(super) fn draw_transition(p: &egui::Painter, r: Rect, trn: &filmcraft_projec
 
 #[cfg(test)]
 mod thumbnail_height_tests {
-    use super::{frozen_thumbnail_tile_width, thumbnail_render_size, thumbnail_tile_rect, zoomed_thumbnail_tiles};
+    use super::{nominal_thumbnail_tile_width, thumbnail_tile_rect, zoomed_thumbnail_tiles};
     use filmcraft_time::Tick;
-
-    #[test]
-    fn rendered_thumbnail_height_tracks_live_width_and_stays_in_clip() {
-        assert_eq!(thumbnail_render_size(160.0, 16.0 / 9.0, 120.0), egui::vec2(160.0, 90.0));
-        let fitted = thumbnail_render_size(320.0, 16.0 / 9.0, 100.0);
-        assert!((fitted.x - 100.0 * 16.0 / 9.0).abs() < 0.001);
-        assert_eq!(fitted.y, 100.0);
-        assert_eq!(thumbnail_render_size(100.0, 0.0, 100.0), egui::Vec2::ZERO);
-    }
 
     #[test]
     fn continuous_tiles_stay_contiguous_when_the_picture_height_caps_the_frame() {
@@ -440,14 +416,10 @@ mod thumbnail_height_tests {
     fn frozen_zoom_keeps_thumbnail_sample_offsets_stable() {
         let mode = crate::state::ThumbnailMode::Continuous;
         let frozen = Some(100.0);
-        let slow_width = frozen_thumbnail_tile_width(1000.0, 90.0, 16.0 / 9.0, 100.0, 100.0);
-        let fast_width = frozen_thumbnail_tile_width(1000.0, 90.0, 16.0 / 9.0, 200.0, 100.0);
+        let slow_width = nominal_thumbnail_tile_width(90.0, 16.0 / 9.0);
+        let fast_width = nominal_thumbnail_tile_width(90.0, 16.0 / 9.0);
         assert!((slow_width - 160.0).abs() < 0.001);
         assert!((fast_width - slow_width).abs() < 0.001, "the height-based tile width stays frozen");
-        assert!(
-            (frozen_thumbnail_tile_width(80.0, 90.0, 16.0 / 9.0, 200.0, 100.0) - 160.0).abs() < 0.001,
-            "a narrow live clip does not change frozen sample spacing"
-        );
         let slow = zoomed_thumbnail_tiles(mode, 0.0, 900.0, slow_width, (0.0, 900.0), Tick(10_000), Tick(1), 100.0, frozen);
         let fast = zoomed_thumbnail_tiles(mode, 0.0, 1800.0, fast_width, (0.0, 1800.0), Tick(10_000), Tick(1), 200.0, frozen);
         assert_eq!(slow.iter().map(|(_, _, offset)| *offset).collect::<Vec<_>>(), fast.iter().map(|(_, _, offset)| *offset).collect::<Vec<_>>());

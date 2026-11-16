@@ -586,6 +586,18 @@ pub fn recovery_root(data_dir: &Path) -> PathBuf {
     data_dir.join("Recovery")
 }
 
+fn acquire_session_lock(lock: &File) -> io::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            Err(fs::TryLockError::WouldBlock) => return Err(io::Error::new(io::ErrorKind::WouldBlock, "recovery session lock remained busy")),
+            Err(fs::TryLockError::Error(_)) => return Ok(()),
+        }
+    }
+}
+
 /// Is the session directory's lock free (owner gone)?
 fn stale_session_lock(dir: &Path) -> (Option<File>, bool) {
     let Ok(f) = File::options().read(true).write(true).open(dir.join(LOCK)) else { return (None, false) };
@@ -905,9 +917,9 @@ fn project_file_identity(path: &str) -> PathBuf {
 
 impl ProjectFileFence {
     pub(crate) fn is_stale(&self, path: &str, revision: u64, view_epoch: u64) -> bool {
-        self.saved_paths
-            .get(&project_file_identity(path))
-            .is_some_and(|(saved_revision, saved_view_epoch)| revision < *saved_revision || view_epoch < *saved_view_epoch)
+        self.saved_paths.get(&project_file_identity(path)).is_some_and(|(saved_revision, saved_view_epoch)| {
+            revision < *saved_revision || view_epoch < *saved_view_epoch || (revision == *saved_revision && view_epoch == *saved_view_epoch)
+        })
     }
 
     fn covers(&self, path: &str, revision: u64, view_epoch: u64) -> bool {
@@ -946,11 +958,9 @@ impl Persistence {
         let lock = File::options().create(true).truncate(false).read(true).write(true).open(session_dir.join(LOCK))?;
         // Do not start a worker without owning its lock: cleanup may otherwise mistake this
         // session for a stale empty directory. Unsupported locking remains a usable fallback.
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(fs::TryLockError::WouldBlock) => return Err(io::Error::new(io::ErrorKind::WouldBlock, "recovery session lock is already held")),
-            Err(fs::TryLockError::Error(_)) => {}
-        }
+        // A concurrent candidate scan may briefly hold this lock while probing the new
+        // directory. Retry that transient contention before treating it as a real failure.
+        acquire_session_lock(&lock)?;
         let candidates = scan_candidates(&cfg.data_dir, Some(&session_dir));
         let (tx, rx) = channel();
         let (etx, events) = channel();
@@ -970,6 +980,7 @@ impl Persistence {
             autosaved: 0,
             autosaved_view_epoch: 0,
             autosaved_path: None,
+            autosaved_dir: None,
             first_pending: None,
             last_change: Instant::now(),
             next_autosave: Instant::now(),
@@ -1155,6 +1166,7 @@ struct Worker {
     autosaved: u64,
     autosaved_view_epoch: u64,
     autosaved_path: Option<PathBuf>,
+    autosaved_dir: Option<PathBuf>,
     first_pending: Option<Instant>,
     last_change: Instant,
     next_autosave: Instant,
@@ -1227,7 +1239,17 @@ impl Worker {
                     }
                 }
                 Some(Msg::AutoSaveNow(reply)) => {
-                    let r = if self.latest.as_ref().is_some_and(|snapshot| snapshot.content_dirty) { self.auto_save() } else { Err(String::new()) };
+                    let (content_dirty, view_dirty) = self.latest.as_ref().map_or((false, false), |snapshot| (snapshot.content_dirty, snapshot.view_dirty));
+                    let r = if content_dirty {
+                        self.auto_save()
+                    } else if view_dirty && self.prefs.recovery_journal {
+                        match self.write_journal() {
+                            Ok(_) => Err(String::new()),
+                            Err(error) => Err(error),
+                        }
+                    } else {
+                        Err(String::new())
+                    };
                     let _ = reply.send(r);
                 }
                 Some(Msg::Flush(ack)) => {
@@ -1366,12 +1388,14 @@ impl Worker {
         let t1 = Instant::now();
         let unix = unix_now();
         let cached_version_missing = self.autosaved_path.as_ref().is_none_or(|path| !path.is_file());
-        let r = if s.revision != self.autosaved || cached_version_missing {
+        let destination_changed = self.autosaved_dir.as_ref() != Some(&dir);
+        let r = if s.revision != self.autosaved || cached_version_missing || destination_changed {
             names::write_auto_save(&dir, &name, unix, (self.local_offset)(unix), &bytes, self.prefs.max_versions as usize)
                 .inspect(|path| {
                     self.autosaved = s.revision;
                     self.autosaved_view_epoch = s.view_epoch;
                     self.autosaved_path = Some(path.clone());
+                    self.autosaved_dir = Some(dir.clone());
                 })
                 .map_err(|error| error.to_string())
         } else if s.view_epoch != self.autosaved_view_epoch {
@@ -1585,8 +1609,33 @@ mod durability_tests {
         let fence = ProjectFileFence { saved_paths: HashMap::from([(project_file_identity("project.fcproj"), (12, 8))]) };
         assert!(fence.is_stale("project.fcproj", 11, 8));
         assert!(fence.is_stale("project.fcproj", 12, 7));
-        assert!(!fence.is_stale("project.fcproj", 12, 8));
+        assert!(fence.is_stale("project.fcproj", 12, 8), "an equal-version queued snapshot must not overwrite the explicit save");
+        assert!(!fence.is_stale("project.fcproj", 12, 9), "a newer view-only snapshot remains eligible");
         assert!(!fence.is_stale("another.fcproj", 1, 0));
+    }
+
+    #[test]
+    fn a_disk_replacement_fences_a_snapshot_captured_before_revert() {
+        let mut fence = ProjectFileFence::default();
+        let queued_snapshot = (10, 4);
+        fence.record_saved("reverted.fcproj", 10, 4);
+
+        assert!(fence.is_stale("reverted.fcproj", queued_snapshot.0, queued_snapshot.1));
+    }
+
+    #[test]
+    fn session_start_retries_a_transient_lock_probe() {
+        let dir = TestDir::new("session-lock-retry");
+        let path = dir.0.join("lock");
+        let probe = File::options().create(true).truncate(false).read(true).write(true).open(&path).unwrap();
+        probe.try_lock().unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(40));
+            drop(probe);
+        });
+        let session = File::options().read(true).write(true).open(&path).unwrap();
+        assert!(acquire_session_lock(&session).is_ok());
+        release.join().unwrap();
     }
 
     #[test]
@@ -1597,7 +1646,7 @@ mod durability_tests {
 
         assert!(fence.is_stale("A.fcproj", 11, 8), "the older in-flight A write stays fenced after Save As B");
         assert!(fence.covers("A.fcproj", 11, 8));
-        assert!(!fence.is_stale("A.fcproj", 12, 8));
+        assert!(fence.is_stale("A.fcproj", 12, 8), "equal-version writes stay fenced after Save As");
         assert!(!fence.covers("B.fcproj", 14, 10), "B is tracked independently from A");
     }
 
@@ -1640,6 +1689,7 @@ mod durability_tests {
             autosaved: 0,
             autosaved_view_epoch: 0,
             autosaved_path: None,
+            autosaved_dir: None,
             first_pending: None,
             last_change: Instant::now(),
             next_autosave: Instant::now(),
@@ -1666,6 +1716,52 @@ mod durability_tests {
         let recreated = worker.auto_save().unwrap();
         assert!(recreated.is_file(), "a cached auto-save path is recreated before success is reported");
         assert_eq!(fs::read(recreated).unwrap(), new_bytes);
+    }
+
+    #[test]
+    fn approving_a_scratch_destination_invalidates_the_cached_autosave() {
+        let dir = TestDir::new("autosave-destination-change");
+        let (events, _received) = std::sync::mpsc::channel();
+        let project_path = dir.join("project").join("Project.fcproj");
+        let scratch = dir.join("approved-scratch");
+        let mut project = Project::new("Destination change");
+        project.settings.scratch.auto_save = Some(scratch.to_string_lossy().into_owned());
+        let mut worker = Worker {
+            data_dir: dir.to_path_buf(),
+            session_dir: dir.join("session"),
+            local_offset: |_| 0,
+            debounce: Duration::ZERO,
+            prefs: AutoSavePrefs::default(),
+            events,
+            latest: Some(Snapshot {
+                project: Arc::new(project),
+                view: filmcraft_project::ProjectView::default(),
+                revision: 5,
+                view_epoch: 2,
+                content_dirty: true,
+                view_dirty: false,
+                path: Some(project_path.to_string_lossy().into_owned()),
+            }),
+            journaled: 0,
+            journaled_view: 0,
+            journaled_content_dirty: false,
+            journaled_view_dirty: false,
+            autosaved: 0,
+            autosaved_view_epoch: 0,
+            autosaved_path: None,
+            autosaved_dir: None,
+            first_pending: None,
+            last_change: Instant::now(),
+            next_autosave: Instant::now(),
+            meta: JournalMeta::default(),
+            project_file_fence: Arc::new(std::sync::Mutex::new(ProjectFileFence::default())),
+        };
+
+        let fallback = worker.auto_save().unwrap();
+        assert_ne!(fallback.parent(), Some(scratch.as_path()), "unapproved scratch uses the project default");
+        worker.prefs.scratch_folders.push(scratch.to_string_lossy().into_owned());
+        let approved = worker.auto_save().unwrap();
+        assert_eq!(approved.parent(), Some(scratch.as_path()), "approval sends the cached revision to the selected destination");
     }
 
     #[test]

@@ -87,28 +87,23 @@ fn clean_project_view_changes_are_recovered_without_dirtying_content() {
 }
 
 #[test]
-fn recovery_snapshot_reuses_the_view_cache_after_content_only_edits() {
+fn recovery_snapshot_keeps_view_settings_after_a_content_edit() {
     let d = temp_dir("view-cache");
     let mut s = demo();
     start(&mut s, &d);
     s.state.timeline_ui.inverted_controls = true;
     s.project_view_changed();
-    let cached = s.persistence_view_cache.clone();
     let view_epoch = s.view_epoch;
 
     s.execute("sequence.addEdit", json!({"seconds": 1.5})).unwrap();
 
     assert_eq!(s.view_epoch, view_epoch, "content edits do not invalidate the project view");
-    let Some((cached_document, cached_view_epoch, cached_view)) = &cached else {
-        panic!("the view snapshot should have been cached");
-    };
-    let Some((document, cached_view_epoch_after_edit, view)) = &s.persistence_view_cache else {
-        panic!("the content edit should retain the view cache");
-    };
-    assert_eq!(document, cached_document);
-    assert_eq!(s.persistence_view_cache, cached, "content-only revisions reuse the same cached view");
-    assert_eq!(cached_view_epoch_after_edit, cached_view_epoch);
-    assert_eq!(view, cached_view, "the projected view itself remains unchanged");
+    let revision = s.revision;
+    let persistence = s.persistence.as_ref().unwrap();
+    assert_eq!(persistence.flush().unwrap(), Some(revision));
+    let loaded = filmcraft_format::decode(&std::fs::read(persistence.session_dir.join("snapshot.fcproj")).unwrap()).unwrap();
+    let view = loaded.view.expect("the content recovery includes its persisted project view");
+    assert!(view.timeline_ui.inverted_controls, "the snapshot retains the view setting changed before the content edit");
     s.shutdown();
 }
 
@@ -152,12 +147,10 @@ fn view_only_autosave_snapshots_are_coalesced_during_drags() {
     s.sync_persistence();
     let first = s.persistence.as_ref().unwrap().last_sent.clone().unwrap();
 
-    let sent_at = s.last_view_snapshot_sent;
+    s.last_view_snapshot_sent = Some(web_time::Instant::now());
     s.project_view_changed();
     assert_ne!(s.view_epoch, first.view_epoch);
-    if sent_at.is_some_and(|sent| sent.elapsed() < std::time::Duration::from_millis(250)) {
-        assert_eq!(s.persistence.as_ref().unwrap().last_sent.as_ref(), Some(&first), "a frame inside the throttle window is coalesced");
-    }
+    assert_eq!(s.persistence.as_ref().unwrap().last_sent.as_ref(), Some(&first), "a frame inside the throttle window is coalesced");
 
     s.last_view_snapshot_sent = Some(web_time::Instant::now() - std::time::Duration::from_secs(1));
     s.poll_persistence();
@@ -583,6 +576,9 @@ fn auto_save_now_skips_clean_project_view_only_changes() {
 
     assert!(result["path"].is_null(), "a view-only change is not an auto-save of project content");
     assert!(!d.join("Auto-Save").exists(), "no auto-save file is created for clean content");
+    let persistence = s.persistence.as_ref().unwrap();
+    let journal = filmcraft_format::decode(&std::fs::read(persistence.session_dir.join("snapshot.fcproj")).unwrap()).unwrap();
+    assert!(journal.view.is_some_and(|view| view.timeline_ui.inverted_controls), "explicit Auto Save flushes the pending view journal before replying");
     s.shutdown();
 }
 
@@ -606,19 +602,19 @@ fn explicit_auto_save_syncs_the_latest_view_with_unsaved_content() {
     let repeated = s.execute("file.autoSaveNow", json!({})).unwrap();
     assert_eq!(repeated["path"].as_str(), Some(path), "a view-only refresh reuses the existing content version");
     let refreshed = filmcraft_format::decode(&std::fs::read(path).unwrap()).unwrap();
-    assert!(!refreshed.view.is_some_and(|view| view.timeline_ui.inverted_controls), "the reused version contains the latest view");
+    let refreshed_view = refreshed.view.expect("the refreshed auto-save retains its project view");
+    assert!(!refreshed_view.timeline_ui.inverted_controls, "the reused version contains the latest view");
     s.shutdown();
 }
 
 #[test]
-fn timeline_view_change_invalidates_the_persistence_view_cache() {
+fn view_snapshot_after_new_sequence_uses_updated_active_sequence() {
     let mut s = demo();
-    let _cached = s.persistence_project_view();
     let view_epoch = s.view_epoch;
     s.execute("file.newSequence", json!({"name": "New sequence"})).unwrap();
     assert_ne!(s.view_epoch, view_epoch, "opening the new sequence changes the project view");
-    let view = s.persistence_project_view();
-    assert_eq!(view.active_sequence, s.state.active_sequence, "the cache reflects sequence state changed by a content edit");
+    let view = s.project_view();
+    assert_eq!(view.active_sequence, s.state.active_sequence, "the projection reflects sequence state changed by a content edit");
 }
 
 #[test]
@@ -664,16 +660,14 @@ fn adopted_save_after_playback_keeps_the_saved_view_in_later_recovery() {
     let sequence = s.state.active_sequence.unwrap();
     let saved_playhead = s.sequence_rate().tick_of(24);
     s.set_playhead(saved_playhead);
-    let cached = s.persistence_project_view();
+    let cached = s.project_view();
     assert_eq!(cached.playheads.get(&sequence), Some(&saved_playhead));
 
     let moving = saved_playhead + Tick(s.sequence_rate().frame_duration().0.saturating_mul(24));
     s.set_playhead_during_playback(moving);
     assert_eq!(s.playhead(), moving);
-    assert!(s.persistence_view_cache.is_none(), "playback invalidates a cached project view without dirtying it");
     s.execute("file.save", json!({})).unwrap();
     let saved_view = filmcraft_format::decode(&std::fs::read(&path).unwrap()).unwrap().view.unwrap();
-    assert!(s.persistence_view_cache.is_none(), "an adopted save leaves no pre-save view cached");
 
     s.execute("sequence.addEdit", json!({"seconds": 0.5})).unwrap();
     let revision = s.revision;

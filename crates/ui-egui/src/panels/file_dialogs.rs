@@ -70,6 +70,20 @@ fn recovery_requires_confirmation(candidate: &filmcraft_engine::autosave::Recove
     view_only && recovery_content_changed(candidate)
 }
 
+fn recovery_check_can_start(cache_key: &str, selected_key: Option<&str>, selected_waiting: bool, pending: &HashSet<String>) -> bool {
+    pending.is_empty() && (!selected_waiting || selected_key == Some(cache_key))
+}
+
+fn recovery_check_result(check: impl FnOnce() -> bool) -> bool {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(check)) {
+        Ok(changed) => changed,
+        Err(_) => {
+            log::error!("recovery project content comparison panicked; requiring confirmation");
+            true
+        }
+    }
+}
+
 pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     let t = app.tokens;
     let list = app.session.execute("file.recoveryList", json!({})).unwrap_or_default();
@@ -78,6 +92,14 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
         return false;
     }
     let candidates = app.session.recovery_candidates().to_vec();
+    let selected_id = items.get(app.file_dialogs.recovery_choice.min(items.len() - 1)).and_then(|item| item["id"].as_str());
+    let selected_key = selected_id
+        .and_then(|id| candidates.iter().find(|candidate| candidate.id == id))
+        .filter(|candidate| items.iter().any(|item| item["id"].as_str() == Some(candidate.id.as_str()) && is_view_only(item)))
+        .map(recovery_cache_key);
+    let selected_waiting = selected_key
+        .as_ref()
+        .is_some_and(|key| !app.file_dialogs.recovery_content_checked.contains(key) && !app.file_dialogs.recovery_content_pending.contains(key));
     for item in &mut items {
         if !is_view_only(item) {
             continue;
@@ -98,12 +120,15 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
             if changed {
                 app.file_dialogs.recovery_content_changed.insert(cache_key.clone());
             }
-        } else if !app.file_dialogs.recovery_content_checked.contains(&cache_key) && app.file_dialogs.recovery_content_pending.insert(cache_key.clone()) {
+        } else if !app.file_dialogs.recovery_content_checked.contains(&cache_key)
+            && recovery_check_can_start(&cache_key, selected_key.as_deref(), selected_waiting, &app.file_dialogs.recovery_content_pending)
+            && app.file_dialogs.recovery_content_pending.insert(cache_key.clone())
+        {
             let candidate = candidate.clone();
             let thread_ctx = ctx.clone();
             let thread_key = cache_key.clone();
             let task = std::thread::Builder::new().name("filmcraft-recovery-check".into()).spawn(move || {
-                let changed = recovery_content_changed(&candidate);
+                let changed = recovery_check_result(|| recovery_content_changed(&candidate));
                 thread_ctx.data_mut(|data| {
                     let key = recovery_check_results_key();
                     let mut results = data.get_temp::<HashMap<String, bool>>(key).unwrap_or_default();
@@ -338,5 +363,22 @@ mod recovery_revalidation_tests {
         assert_ne!(super::recovery_cache_key(&candidate), listed_generation, "a new project-file generation invalidates the cached verdict");
         assert!(recovery_requires_confirmation(&candidate, true));
         assert!(!recovery_requires_confirmation(&candidate, false), "a content recovery already confirms replacement");
+    }
+
+    #[test]
+    fn recovery_content_checks_are_serial_and_selected_candidate_goes_first() {
+        let mut pending = std::collections::HashSet::new();
+        assert!(!super::recovery_check_can_start("other", Some("selected"), true, &pending));
+        assert!(super::recovery_check_can_start("selected", Some("selected"), true, &pending));
+        pending.insert("selected".to_string());
+        assert!(!super::recovery_check_can_start("other", Some("selected"), false, &pending));
+        pending.clear();
+        assert!(super::recovery_check_can_start("other", Some("selected"), false, &pending));
+    }
+
+    #[test]
+    fn recovery_content_check_panic_requires_confirmation_instead_of_sticking_pending() {
+        assert!(super::recovery_check_result(|| panic!("synthetic comparison failure")));
+        assert!(!super::recovery_check_result(|| false));
     }
 }

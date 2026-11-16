@@ -177,6 +177,33 @@ fn truncated_children_restore_audio_only_and_negative_lane_references() {
 }
 
 #[test]
+fn restoration_retries_deferred_references_created_by_its_own_reimports() {
+    let mut media = String::new();
+    for i in 0..130 {
+        media.push_str(&format!(
+            r#"<media id="m{i}" name="M{i}"><sequence format="r1"><spine><ref-clip ref="m{}" offset="0s" start="0s" duration="1s"/></spine></sequence></media>"#,
+            i + 1
+        ));
+    }
+    media.push_str(
+        r#"<media id="m130" name="M130"><sequence format="r1"><spine>
+          <asset-clip ref="a0" name="Deep audio" offset="0s" start="0s" duration="1s" srcEnable="audio"/>
+        </spine></sequence></media><asset id="a0" name="Tone" start="0s" duration="10s" hasAudio="1" src="tone.wav"/>"#,
+    );
+    let xml = format!(
+        r#"<fcpxml version="1.10"><resources><format id="r1" frameDuration="1/24s" width="1920" height="1080"/>{media}</resources>
+        <library><event><project name="Deep recovery"><sequence format="r1"><spine>
+          <ref-clip ref="m0" name="Deep compound" offset="0s" start="0s" duration="1s"/>
+        </spine></sequence></project></event></library></fcpxml>"#
+    );
+    let (imported, report) = import(xml.as_bytes(), Format::Fcpxml, None).unwrap();
+    assert!(report.mentions("deeper clips were skipped"), "the initial import must hit its nesting boundary: {report}");
+    let root = imported.project.sequences().find(|item| item.name == "Deep recovery").and_then(|item| imported.project.sequence(item.id)).unwrap();
+    let audio: Vec<_> = root.audio_tracks.iter().flat_map(|track| &track.items).collect();
+    assert!(audio.iter().any(|clip| clip.name == "Deep compound"), "nested audio recovery must continue through newly deferred boundaries: {report}");
+}
+
+#[test]
 fn reimporting_a_deferred_parent_does_not_duplicate_its_audio_reference() {
     let mut media = String::new();
     for index in 0..8 {

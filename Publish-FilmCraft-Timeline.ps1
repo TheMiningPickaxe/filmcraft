@@ -1,10 +1,12 @@
-﻿param(
+param(
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string]$CommitTitle,
 
     [string]$CommitBody = '',
-    [string]$ExpectedRemote = 'https://github.com/TheMiningPickaxe/filmcraft'
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$ExpectedRemote
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +14,7 @@ if ([string]::IsNullOrWhiteSpace($CommitTitle)) {
     throw 'A commit title is required.'
 }
 $blessValue = $env:FILMCRAFT_BLESS
-if ($null -ne $blessValue -and $blessValue.Trim().ToLowerInvariant() -in @('1', 'true', 'yes', 'on')) {
+if ($null -ne $blessValue) {
     throw 'FILMCRAFT_BLESS enables golden-reference writes; unset it before publishing so the quality gate compares the staged references.'
 }
 
@@ -47,6 +49,27 @@ function Assert-PushDestinationsUnchanged {
         if ($currentUrls[$i] -cne $pushUrls[$i] -or (ConvertTo-CanonicalRepositoryUrl $currentUrls[$i]) -ne (ConvertTo-CanonicalRepositoryUrl $ExpectedRemote)) {
             throw 'Origin push destinations changed after confirmation.'
         }
+    }
+}
+
+function Assert-RepositoryStateUnchanged([string]$Phase) {
+    $currentBranch = & git -C $repo branch --show-current 2>$null
+    $branchExit = $LASTEXITCODE
+    $currentHead = & git -C $repo rev-parse HEAD 2>$null
+    $headExit = $LASTEXITCODE
+    $currentStagedTree = & git -C $repo write-tree 2>$null
+    $treeExit = $LASTEXITCODE
+    if ($branchExit -ne 0 -or $headExit -ne 0 -or $treeExit -ne 0 -or "$currentBranch".Trim() -cne $branch -or "$currentHead".Trim() -cne $headBeforeConfirmation -or "$currentStagedTree".Trim() -cne $stagedTreeBeforeConfirmation) {
+        throw "The branch, HEAD, or staged changes changed $Phase; review and confirm again. Nothing was committed or pushed."
+    }
+    Assert-PushDestinationsUnchanged
+    $unstagedChanges = @(& git -C $repo diff --name-only 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect unstaged changes $Phase. Nothing was committed or pushed." }
+    $untrackedChanges = @(& git -C $repo ls-files --others --exclude-standard 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect untracked changes $Phase. Nothing was committed or pushed." }
+    $workingTreeChanges = @($unstagedChanges + $untrackedChanges | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+    if ($workingTreeChanges.Count -gt 0) {
+        throw "Unstaged or untracked changes exist $Phase. Nothing was committed or pushed:`n$($workingTreeChanges -join "`n")"
     }
 }
 
@@ -102,30 +125,7 @@ if ($confirmation -cne 'YES') {
     exit 0
 }
 
-$currentBranch = & git -C $repo branch --show-current 2>$null
-$branchExit = $LASTEXITCODE
-$currentHead = & git -C $repo rev-parse HEAD 2>$null
-$headExit = $LASTEXITCODE
-$currentStagedTree = & git -C $repo write-tree 2>$null
-$treeExit = $LASTEXITCODE
-if ($branchExit -ne 0 -or $headExit -ne 0 -or $treeExit -ne 0 -or "$currentBranch".Trim() -cne $branch -or "$currentHead".Trim() -cne $headBeforeConfirmation -or "$currentStagedTree".Trim() -cne $stagedTreeBeforeConfirmation) {
-    throw 'The branch, HEAD, or staged changes changed after confirmation. Nothing was committed or pushed; review and confirm again.'
-}
-Assert-PushDestinationsUnchanged
-$unstagedChanges = @(& git -C $repo diff --name-only 2>$null)
-$unstagedExit = $LASTEXITCODE
-if ($unstagedExit -ne 0) {
-    throw 'Could not inspect unstaged changes. Nothing was committed or pushed.'
-}
-$untrackedChanges = @(& git -C $repo ls-files --others --exclude-standard 2>$null)
-$untrackedExit = $LASTEXITCODE
-if ($untrackedExit -ne 0) {
-    throw 'Could not inspect untracked changes. Nothing was committed or pushed.'
-}
-$workingTreeChanges = @($unstagedChanges + $untrackedChanges | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
-if ($workingTreeChanges.Count -gt 0) {
-    throw "Unstaged or untracked changes exist. Stage or discard these paths before publishing; the quality gate runs on the working tree. Nothing was committed or pushed:`n$($workingTreeChanges -join "`n")"
-}
+Assert-RepositoryStateUnchanged 'after confirmation'
 $gateExitCode = 1
 $gateCommit = & git -C $repo commit-tree $stagedTreeBeforeConfirmation -p $headBeforeConfirmation -m 'FilmCraft staged-tree quality gate'
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$gateCommit")) {
@@ -164,8 +164,10 @@ finally {
         if ($gateTrackedChanges.Count -gt 0) {
             throw "The quality gate changed tracked files in its isolated checkout. The checkout was kept for inspection; nothing was committed or pushed:`n$($gateTrackedChanges -join "`n")"
         }
-        & git -C $repo worktree remove --force $gateWorktree
-        if ($LASTEXITCODE -ne 0) { throw 'The isolated quality gate checkout could not be removed. Nothing was committed or pushed.' }
+        if ($gateExitCode -eq 0) {
+            & git -C $repo worktree remove --force $gateWorktree
+            if ($LASTEXITCODE -ne 0) { throw 'The isolated quality gate checkout could not be removed. Nothing was committed or pushed.' }
+        }
     }
 }
 if ($gateTrackedStatusExit -ne 0) {
@@ -175,32 +177,10 @@ if ($gateTrackedChanges.Count -gt 0) {
     throw "The quality gate changed tracked files in its isolated checkout. Nothing was committed or pushed:`n$($gateTrackedChanges -join "`n")"
 }
 if ($gateExitCode -ne 0) {
+    Write-Host "The failed quality-gate checkout and diagnostics were retained at: $gateWorktree"
     throw 'The FilmCraft quality gate failed. Nothing was committed or pushed.'
 }
-$currentBranch = & git -C $repo branch --show-current 2>$null
-$branchExit = $LASTEXITCODE
-$currentHead = & git -C $repo rev-parse HEAD 2>$null
-$headExit = $LASTEXITCODE
-$currentStagedTree = & git -C $repo write-tree 2>$null
-$treeExit = $LASTEXITCODE
-if ($branchExit -ne 0 -or $headExit -ne 0 -or $treeExit -ne 0 -or "$currentBranch".Trim() -cne $branch -or "$currentHead".Trim() -cne $headBeforeConfirmation -or "$currentStagedTree".Trim() -cne $stagedTreeBeforeConfirmation) {
-    throw 'The branch, HEAD, or staged changes changed while the quality gate ran. Nothing was committed or pushed; review and confirm again.'
-}
-Assert-PushDestinationsUnchanged
-$unstagedChanges = @(& git -C $repo diff --name-only 2>$null)
-$unstagedExit = $LASTEXITCODE
-if ($unstagedExit -ne 0) {
-    throw 'Could not inspect unstaged changes after the quality gate. Nothing was committed or pushed.'
-}
-$untrackedChanges = @(& git -C $repo ls-files --others --exclude-standard 2>$null)
-$untrackedExit = $LASTEXITCODE
-if ($untrackedExit -ne 0) {
-    throw 'Could not inspect untracked changes after the quality gate. Nothing was committed or pushed.'
-}
-$workingTreeChanges = @($unstagedChanges + $untrackedChanges | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
-if ($workingTreeChanges.Count -gt 0) {
-    throw "Unstaged or untracked changes appeared while the quality gate ran. Nothing was committed or pushed:`n$($workingTreeChanges -join "`n")"
-}
+Assert-RepositoryStateUnchanged 'while the quality gate ran'
 if ([string]::IsNullOrWhiteSpace($CommitBody)) {
     & git -C $repo commit -m $CommitTitle
 } else {
@@ -221,8 +201,10 @@ if ($treeExit -ne 0 -or $parentExit -ne 0 -or $committedTree -cne $stagedTreeBef
 }
 
 Assert-PushDestinationsUnchanged
-& git -C $repo push --no-follow-tags --no-recurse-submodules origin "${verifiedCommit}:refs/heads/${branch}"
-if ($LASTEXITCODE -ne 0) { throw 'Commit succeeded, but pushing failed. The commit is still local or only partially published.' }
+foreach ($pushUrl in $pushUrls) {
+    & git -C $repo push --no-follow-tags --no-recurse-submodules $pushUrl "${verifiedCommit}:refs/heads/${branch}"
+    if ($LASTEXITCODE -ne 0) { throw 'Commit succeeded, but pushing failed. The commit is still local or only partially published.' }
+}
 
 Write-Host ''
 Write-Host "Published branch '$branch' to the configured FilmCraft fork."

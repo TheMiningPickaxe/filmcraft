@@ -24,7 +24,7 @@ const KEEP_MAX: f64 = 4.0 * 1024.0 * 1024.0 * 1024.0;
 
 /// A finished OPFS write, reported back to the next [`Autosave::tick`].
 enum Outcome {
-    Snapshot { revision: u64, ok: bool },
+    Snapshot { revision: u64, view_epoch: u64, ok: bool },
     Clean { ok: bool },
 }
 
@@ -51,14 +51,14 @@ impl Autosave {
         let now = self.clock.elapsed().as_secs_f64();
         for o in self.outcomes.borrow_mut().drain(..) {
             match o {
-                Outcome::Snapshot { revision, ok } => self.policy.written(revision, ok, now),
+                Outcome::Snapshot { revision, view_epoch, ok } => self.policy.written(revision, view_epoch, ok, now),
                 Outcome::Clean { ok } => self.policy.cleaned(ok, now),
             }
         }
-        match self.policy.tick(now, s.revision, s.saved_revision) {
+        match self.policy.tick(now, s.revision, s.saved_revision, s.view_epoch, s.saved_view_epoch) {
             Action::Nothing => {}
             Action::WakeAfter(secs) => ctx.request_repaint_after(std::time::Duration::from_secs_f64(secs)),
-            Action::WriteSnapshot(revision) => {
+            Action::WriteSnapshot(revision, view_epoch) => {
                 // Snapshot and meta both have to land; either failing retries the pair.
                 let failed = Rc::new(Cell::new(false));
                 let left = Rc::new(Cell::new(2u8));
@@ -67,17 +67,18 @@ impl Autosave {
                         failed.set(failed.get() || !ok);
                         left.set(left.get().saturating_sub(1));
                         if left.get() == 0 {
-                            out.borrow_mut().push(Outcome::Snapshot { revision, ok: !failed.get() });
+                            out.borrow_mut().push(Outcome::Snapshot { revision, view_epoch, ok: !failed.get() });
                             ctx.request_repaint();
                         }
                     })
                 };
                 // No wall-clock timestamp: recovery policy scheduling uses the monotonic clock
                 // above, and the snapshot schema needs no display time.
-                let meta = json!({"dirty": true, "name": s.project.name, "revision": s.revision});
+                let meta = json!({"dirty": true, "name": s.project.name, "revision": s.revision, "viewEpoch": s.view_epoch});
                 let d1 = done(self.outcomes.clone(), failed.clone(), left.clone(), ctx.clone());
                 let d2 = done(self.outcomes.clone(), failed, left, ctx.clone());
-                opfs::write_then(SNAPSHOT.into(), filmcraft_format::encode(&s.project, false), Some(d1));
+                let view = s.project_view();
+                opfs::write_then(SNAPSHOT.into(), filmcraft_format::encode_with_view(&s.project, Some(&view), false), Some(d1));
                 opfs::write_then(META.into(), meta.to_string().into_bytes(), Some(d2));
             }
             Action::WriteClean => {

@@ -49,6 +49,7 @@ use interact::{interact, move_transition_preview, preview_drag};
 use layout::new_track_at;
 pub(crate) use layout::reveal_playhead;
 use layout::video_row_tops;
+pub(crate) use layout::zoom_pps_limits;
 pub use layout::{Layout, Row, max_pps, max_scroll, min_pps, scroll_to_reveal, timeline_extent, zoom_about};
 #[cfg(test)]
 pub(crate) use menus::{CLIP_MENU, EDIT_POINT_TYPES};
@@ -720,7 +721,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 // the thumb's length is the track-height meter, so copying the length copies
                 // the height itself; the position is copied as the raw scroll fraction (the
                 // other slider is the mirror image: this one at the bottom sends it to the top)
-                let raw = if max_s > 0.5 { (val_s / max_s).clamp(0.0, 1.0) } else { 0.0 };
+                let raw = normalized_scroll_fraction(val_s, max_s);
                 let win_o = if video { audio_area.height() } else { video_area.height() };
                 let slots = if video { na as f32 + 1.0 / 3.0 } else { nv as f32 + 1.0 / 3.0 };
                 let h_new = if video { app.ui.timeline.video_track_h } else { app.ui.timeline.audio_track_h };
@@ -771,6 +772,17 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         super::timeline_captions::interact(app, ui, seq, caption_area, &layout);
     }
     let _ = TICKS_PER_SECOND;
+}
+
+fn normalized_scroll_fraction(value: f32, max_scroll: f32) -> f32 {
+    if max_scroll.is_finite() && max_scroll > 0.0 && value.is_finite() { (value / max_scroll).clamp(0.0, 1.0) } else { 0.0 }
+}
+
+#[cfg(test)]
+#[test]
+fn track_scroll_fraction_preserves_small_positive_ranges() {
+    assert_eq!(normalized_scroll_fraction(0.25, 0.25), 1.0);
+    assert_eq!(normalized_scroll_fraction(0.0, 0.0), 0.0);
 }
 
 /// Smooth Animations for the track sliders: ease the heights and scrolls toward the targets a
@@ -889,9 +901,12 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
             app.tl.thumb_pps = None;
         }
         v.pps += (v.target_pps - v.pps) * k;
-        if let Some((anchor_t, anchor_x)) = app.tl.zoom_anchor.filter(|_| zooming) {
+        if let Some((anchor_t, anchor_x)) = app.tl.zoom_anchor {
             v.scroll = (anchor_t - (anchor_x - content.min.x) as f64 / v.pps).max(0.0);
             v.target_scroll = (anchor_t - (anchor_x - content.min.x) as f64 / v.target_pps).max(0.0);
+            if !zooming {
+                app.tl.zoom_anchor = None;
+            }
         } else {
             v.scroll += (v.target_scroll - v.scroll) * k;
             app.tl.zoom_anchor = None;
@@ -1831,6 +1846,31 @@ mod zoom_ceiling_animation_tests {
         assert!(v.pps < 2500.0);
         assert!((v.scroll + width * 0.5 / v.pps - before).abs() < 1e-9);
         assert!((v.target_scroll + width * 0.5 / v.target_pps - target_before).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lowering_zoom_ceiling_keeps_the_active_anchor_when_both_values_clamp_equal() {
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let id = session.state.active_sequence.unwrap();
+        let project = session.project.clone();
+        let seq = project.sequence(id).unwrap();
+        session.state.timeline_ui.max_zoom_seconds = 3.0;
+        let mut app = FilmcraftApp::new(session);
+        app.session.prefs.appearance.animations = false;
+        app.ui.timeline.fit_pending = false;
+        app.ui.timeline.pps = 2500.0;
+        app.ui.timeline.target_pps = 5000.0;
+        app.ui.timeline.scroll = 10.0;
+        app.ui.timeline.target_scroll = 10.1;
+        app.tl.zoom_anchor = Some((10.2, 500.0));
+        let width = 1000.0;
+        animate_view(&mut app, &egui::Context::default(), Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 400.0)), id, seq);
+        let view = &app.ui.timeline;
+        assert_eq!(view.pps, view.target_pps, "the ceiling clamps both values together");
+        assert!((view.scroll + 500.0 / view.pps - 10.2).abs() < 1e-9, "current view stays under the anchor");
+        assert!((view.target_scroll + 500.0 / view.target_pps - 10.2).abs() < 1e-9, "target view stays under the anchor");
+        assert!(app.tl.zoom_anchor.is_none(), "the completed anchor is released");
     }
 
     #[test]

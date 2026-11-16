@@ -528,7 +528,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     });
     // a zoom established under the old ceiling must obey the new one at once: the same cap the
     // control channel applies when `maxZoomLevel` changes
-    {
+    if changed && app.session.state.active_sequence.is_some() && app.last_timeline_width > 50.0 {
         let width = app.last_timeline_width;
         let extent = timeline_extent(sequence_seconds);
         let (floor, cap) = zoom_pps_limits(sequence_seconds, width, settings.max_zoom_secs());
@@ -704,6 +704,7 @@ fn zoombar_settings_rows(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     // why the flyout used to vanish the moment the pointer left the row. A 300 ms grace after the
     // last hit covers any one-frame hole in the geometry.
     let flyout_id = ui.make_persistent_id("timeline-zoombar-minimap-flyout");
+    remember_flyout_id(ui.ctx(), flyout_id);
     let rect_key = flyout_id.with("rect");
     let height_key = flyout_id.with("height");
     let stamp_key = flyout_id.with("stamp");
@@ -998,6 +999,19 @@ pub fn custom_control_shortcut_pending_for_events(app: &FilmcraftApp, ctx: &egui
     }
     let mut normalized = events.to_vec();
     crate::panels::timeline::clipboard_events_as_keys(&mut normalized, modifiers, false);
+    let paste_press_will_be_recovered = !app.v_down
+        && modifiers.command
+        && events.iter().any(|event| matches!(event, egui::Event::Key { key: egui::Key::V, pressed: false, .. }))
+        && !normalized.iter().any(|event| matches!(event, egui::Event::Key { key: egui::Key::V, pressed: true, .. }));
+    if paste_press_will_be_recovered {
+        normalized.push(egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: Some(egui::Key::V),
+            pressed: true,
+            repeat: false,
+            modifiers: modifiers | egui::Modifiers::COMMAND,
+        });
+    }
     let chord = normalized
         .iter()
         .filter_map(|event| {
@@ -1030,12 +1044,13 @@ pub fn custom_control_shortcut_pending_for_events(app: &FilmcraftApp, ctx: &egui
         && [settings.control_center_on_playhead.as_str(), settings.control_explode_slider.as_str()].into_iter().any(matches)
         || !settings.zoom_bar_hidden && zoom_drag && matches(&settings.control_alternate_drag_speed)
         || !settings.zoom_bar_hidden && zoom_over_bar && matches(&settings.control_settings);
+    let track_over_bar =
+        pointer.is_some_and(|pos| ["timeline.trackSlider.video.bar", "timeline.trackSlider.audio.bar"].into_iter().any(|id| automation_contains(app, id, pos)));
     let track_action = !settings.track_slider_hidden
-        && pointer
-            .is_some_and(|pos| ["timeline.trackSlider.video.bar", "timeline.trackSlider.audio.bar"].into_iter().any(|id| automation_contains(app, id, pos)))
-        && ([settings.track_control_copy_slider.as_str(), settings.track_control_minimum_height.as_str(), settings.track_control_settings.as_str()]
-            .into_iter()
-            .any(matches)
+        && ((track_over_bar
+            && [settings.track_control_copy_slider.as_str(), settings.track_control_minimum_height.as_str(), settings.track_control_settings.as_str()]
+                .into_iter()
+                .any(matches))
             || app.tl.track_slider_dragging && matches(&settings.track_control_alternate_drag_speed));
     zoom_action || track_action
 }
@@ -1137,12 +1152,13 @@ fn controls_listening_for_bar(ctx: &egui::Context) -> bool {
 /// events (which is also why the capture used to miss them), and a bound key would fire its
 /// action in the background while the user is naming a new binding.
 pub fn controls_listening(app: &FilmcraftApp, ctx: &egui::Context) -> bool {
+    let timeline_available = timeline_consumer_available(app);
     let zoom_bar_menu_open = egui::Popup::is_id_open(ctx, egui::Id::unique("tl-zoombar").with("popup"));
     let custom_zoom_popup_open = ctx.data(|data| data.get_temp::<bool>(zoombar_popup_open_key())).unwrap_or(false);
     let session_open = app.tl.zoombar_settings_pos.is_some() || app.tl.track_slider_settings_pos.is_some() || zoom_bar_menu_open || custom_zoom_popup_open;
     ctx.data_mut(|d| {
         let listening = d.get_temp::<Option<usize>>(controls_listen_key()).flatten().is_some();
-        if listening && !session_open {
+        if listening && (!session_open || !timeline_available) {
             d.insert_temp(controls_listen_key(), None::<usize>);
             false
         } else {
@@ -1226,6 +1242,7 @@ fn hover_flyout(
     auto_label: &str,
     items: &[(&str, String, usize)],
 ) {
+    remember_flyout_id(ui.ctx(), flyout_id);
     let rect_key = flyout_id.with("rect");
     let height_key = flyout_id.with("height");
     let stamp_key = flyout_id.with("stamp");
@@ -1395,6 +1412,7 @@ fn open_pointer_key() -> egui::Id {
 /// picker or flyout left over from the last time.
 pub(super) fn zoombar_state_reset(ctx: &egui::Context) {
     let pointer = ctx.input(|i| i.pointer.hover_pos()).unwrap_or(pos2(-1e9, -1e9));
+    let flyout_ids = ctx.data(|data| data.get_temp::<Vec<egui::Id>>(flyout_id_registry_key()).unwrap_or_default());
     ctx.data_mut(|d| {
         d.insert_temp(color_open_key(), None::<egui::Id>);
         d.insert_temp(controls_listen_key(), None::<usize>);
@@ -1403,15 +1421,25 @@ pub(super) fn zoombar_state_reset(ctx: &egui::Context) {
         d.insert_temp(open_pointer_key(), pointer);
         d.insert_temp(egui::Id::unique("tl-zoombar-family"), Vec::<Rect>::new());
         d.insert_temp(egui::Id::unique("tl-zoombar-family-prev"), Vec::<Rect>::new());
-        d.insert_temp(egui::Id::unique("timeline-zoombar-minimap-flyout").with("rect"), Rect::NOTHING);
-        d.insert_temp(egui::Id::unique("timeline-zoombar-minimap-flyout").with("stamp"), -1e9f64);
-        d.insert_temp(egui::Id::unique("timeline-zoombar-minimap-flyout").with("height"), 110.0f32);
-        d.insert_temp(egui::Id::unique("timeline-zoombar-minimap-flyout").with("open"), false);
-        for id in ["timeline-zoombar-advanced-flyout", "timeline-track-slider-advanced-flyout"] {
-            d.insert_temp(egui::Id::unique(id).with("rect"), Rect::NOTHING);
-            d.insert_temp(egui::Id::unique(id).with("stamp"), -1e9f64);
-            d.insert_temp(egui::Id::unique(id).with("height"), 110.0f32);
-            d.insert_temp(egui::Id::unique(id).with("open"), false);
+        for id in flyout_ids {
+            d.insert_temp(id.with("rect"), Rect::NOTHING);
+            d.insert_temp(id.with("stamp"), -1e9f64);
+            d.insert_temp(id.with("height"), 110.0f32);
+            d.insert_temp(id.with("open"), false);
+        }
+    });
+}
+
+fn flyout_id_registry_key() -> egui::Id {
+    egui::Id::unique("timeline-zoombar-flyout-id-registry")
+}
+
+fn remember_flyout_id(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|data| {
+        let mut ids = data.get_temp::<Vec<egui::Id>>(flyout_id_registry_key()).unwrap_or_default();
+        if !ids.contains(&id) {
+            ids.push(id);
+            data.insert_temp(flyout_id_registry_key(), ids);
         }
     });
 }
@@ -1630,7 +1658,7 @@ fn color_setting(ui: &mut egui::Ui, t: &Tokens, automation: &mut ColorAutomation
                     // alignment refused to centre it)
                     let (hrow, _) = ui.allocate_exact_size(egui::vec2(132.0, 26.0), Sense::hover());
                     let field = Rect::from_min_size(pos2(hrow.center().x - 46.0, hrow.center().y - 11.0), egui::vec2(92.0, 22.0));
-                    let edit = ui.put(field, egui::TextEdit::singleline(&mut buf).align(egui::Align2::CENTER_CENTER));
+                    let edit = ui.put(field, egui::TextEdit::singleline(&mut buf).char_limit(6).align(egui::Align2::CENTER_CENTER));
                     automation.add("hex", &edit, &format!("{label} hex value"));
                     hex_focus = edit.has_focus();
                     if edit.changed() {
@@ -2100,6 +2128,30 @@ mod controls_tests {
     }
 
     #[test]
+    fn settings_reset_uses_the_registered_scoped_flyout_id() {
+        let ctx = egui::Context::default();
+        let actual_id = egui::Id::unique("popup-scope").with("timeline-zoombar-advanced-flyout");
+        super::remember_flyout_id(&ctx, actual_id);
+        ctx.data_mut(|data| data.insert_temp(actual_id.with("open"), true));
+
+        super::zoombar_state_reset(&ctx);
+
+        assert_eq!(ctx.data(|data| data.get_temp::<bool>(actual_id.with("open"))), Some(false));
+    }
+
+    #[test]
+    fn leaving_edit_mode_clears_a_controls_capture() {
+        let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        let ctx = egui::Context::default();
+        app.ui.mode = crate::state::Mode::Export;
+        app.tl.zoombar_settings_pos = Some(egui::pos2(10.0, 10.0));
+        ctx.data_mut(|data| data.insert_temp(controls_listen_key(), Some(0usize)));
+
+        assert!(!controls_listening(&app, &ctx));
+        assert!(!ctx.data(|data| data.get_temp::<Option<usize>>(controls_listen_key()).flatten().is_some()));
+    }
+
+    #[test]
     fn zoom_handles_have_stable_automation_ids() {
         use egui::{Context, RawInput, Rect, pos2, vec2};
         use serde_json::json;
@@ -2235,6 +2287,24 @@ mod controls_tests {
             (app.ui.timeline.target_scroll + 250.0 / app.ui.timeline.target_pps - target_center).abs() < 1e-6,
             "the popup change preserves the target viewport center"
         );
+    }
+
+    #[test]
+    fn collapsed_timeline_width_does_not_reduce_saved_zoom() {
+        use egui::{Context, RawInput, Rect, pos2, vec2};
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.last_timeline_width = 1.0;
+        app.ui.timeline.pps = 1000.0;
+        app.ui.timeline.target_pps = 1200.0;
+        let ctx = Context::default();
+        let mut output = ctx.run_ui(RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), ..RawInput::default() }, |ui| {
+            super::zoombar_settings(&mut app, ui)
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.ui.timeline.pps, 1000.0);
+        assert_eq!(app.ui.timeline.target_pps, 1200.0);
     }
 
     #[test]
@@ -2389,8 +2459,12 @@ mod controls_tests {
         });
         output.textures_delta.clear();
         app.tl.track_slider_dragging = true;
-        let mut output = ctx.run_ui(RawInput { events: events.clone(), ..RawInput::default() }, |_| {
-            assert!(super::custom_control_shortcut_pending_for_events(&app, &ctx, &events, Modifiers::CTRL));
+        let outside = vec![
+            Event::PointerMoved(pos2(200.0, 200.0)),
+            Event::Key { key: Key::K, physical_key: Some(Key::K), pressed: true, repeat: false, modifiers: Modifiers::CTRL },
+        ];
+        let mut output = ctx.run_ui(RawInput { events: outside.clone(), ..RawInput::default() }, |_| {
+            assert!(super::custom_control_shortcut_pending_for_events(&app, &ctx, &outside, Modifiers::CTRL));
         });
         output.textures_delta.clear();
     }

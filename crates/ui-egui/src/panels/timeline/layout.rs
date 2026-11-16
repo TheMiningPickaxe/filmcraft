@@ -134,7 +134,7 @@ pub fn min_pps(sequence_seconds: f64, width: f32) -> f64 {
 
 /// The legal zoom range for a sequence view: show its full extent at the wide end and obey the
 /// Maximum Zoom Level setting at the close end. The floor cannot cross the ceiling.
-pub(super) fn zoom_pps_limits(sequence_seconds: f64, width: f32, min_view_secs: f64) -> (f64, f64) {
+pub(crate) fn zoom_pps_limits(sequence_seconds: f64, width: f32, min_view_secs: f64) -> (f64, f64) {
     let ceiling = max_pps(width, min_view_secs);
     (min_pps(sequence_seconds, width).min(ceiling), ceiling)
 }
@@ -191,7 +191,7 @@ pub fn max_pps(width: f32, min_view_secs: f64) -> f64 {
 /// Zoom about a time (keeps it under the same screen x).
 pub fn zoom_about(v: &mut TimelineView, factor: f64, anchor_secs: f64, width: f32, min_view_secs: f64) {
     let old = v.target_pps;
-    if !(old.is_finite() && old > 0.0 && factor.is_finite() && factor > 0.0 && anchor_secs.is_finite() && width.is_finite()) {
+    if !(old.is_finite() && old > 0.0 && factor.is_finite() && factor > 0.0 && anchor_secs.is_finite() && width.is_finite() && width > 50.0) {
         return;
     }
     // the sharp end is the Maximum Zoom Level setting; the wide end is enforced by animate_view
@@ -230,6 +230,8 @@ mod finite_zoom_tests {
         let before = (view.target_pps, view.target_scroll);
         zoom_about(&mut view, f64::INFINITY, 1.0, 800.0, 0.4);
         zoom_about(&mut view, 2.0, f64::NAN, 800.0, 0.4);
+        zoom_about(&mut view, 2.0, 1.0, 0.5, 0.4);
+        zoom_about(&mut view, 2.0, 1.0, 50.0, 0.4);
         assert_eq!((view.target_pps, view.target_scroll), before);
     }
 

@@ -258,6 +258,7 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
     // First capture any displayed geometry before applying a control update, then persist the
     // resulting view below so a follow-up close command cannot race the next UI frame.
     let initial_view_epoch = app.session.view_epoch;
+    let playback_scroll_pending = app.timeline_auto_scroll_pending.is_some();
     app.sync_timeline_view();
     let bounded = |key: &str, min: f64, max: f64| -> Result<Option<f64>, String> {
         tl.get(key)
@@ -275,6 +276,24 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
     let track_slider_shift_drag_speed = bounded("trackSliderShiftDragSpeed", 0.1, 10.0)?;
     let video_track_height = bounded("videoTrackHeight", 8.0, 600.0)?;
     let audio_track_height = bounded("audioTrackHeight", 8.0, 600.0)?;
+    let control_bindings = [
+        ("controlCenterOnPlayhead", "control_center_on_playhead"),
+        ("controlExplodeSlider", "control_explode_slider"),
+        ("controlAlternateDragSpeed", "control_alternate_drag_speed"),
+        ("controlSettings", "control_settings"),
+        ("trackControlCopySlider", "track_control_copy_slider"),
+        ("trackControlMinimumHeight", "track_control_minimum_height"),
+        ("trackControlAlternateDragSpeed", "track_control_alternate_drag_speed"),
+        ("trackControlSettings", "track_control_settings"),
+    ];
+    for (key, _) in control_bindings {
+        if tl.get(key).is_some() {
+            let Some(value) = tl.get(key).and_then(Value::as_str) else { return Err(format!("timeline.{key} must be a string")) };
+            if !valid_control_binding(value) {
+                return Err(format!("timeline.{key} must be empty or a shortcut chord such as `Ctrl + K`"));
+            }
+        }
+    }
     for key in ["positionIndicatorColor", "videoIndicatorColor", "audioIndicatorColor", "offlineIndicatorColor"] {
         if let Some(value) = tl.get(key) {
             let valid = value.as_str().and_then(filmcraft_project::normalize_hex_color).is_some();
@@ -295,6 +314,19 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         })
         .transpose()?;
     let timeline_settings_before = app.session.state.timeline_ui.clone();
+    for (key, field) in control_bindings {
+        let Some(value) = tl.get(key).and_then(Value::as_str) else { continue };
+        match field {
+            "control_center_on_playhead" => app.session.state.timeline_ui.control_center_on_playhead = value.to_owned(),
+            "control_explode_slider" => app.session.state.timeline_ui.control_explode_slider = value.to_owned(),
+            "control_alternate_drag_speed" => app.session.state.timeline_ui.control_alternate_drag_speed = value.to_owned(),
+            "control_settings" => app.session.state.timeline_ui.control_settings = value.to_owned(),
+            "track_control_copy_slider" => app.session.state.timeline_ui.track_control_copy_slider = value.to_owned(),
+            "track_control_minimum_height" => app.session.state.timeline_ui.track_control_minimum_height = value.to_owned(),
+            "track_control_alternate_drag_speed" => app.session.state.timeline_ui.track_control_alternate_drag_speed = value.to_owned(),
+            _ => app.session.state.timeline_ui.track_control_settings = value.to_owned(),
+        }
+    }
     // hostile control parameters: NaN or infinite zoom/scroll would poison every rect in the
     // Timeline, so only finite, positive values are accepted. The zoom ceiling is applied by
     // `animate_view` every frame (with the measured Timeline width -- this early in a session
@@ -307,6 +339,13 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         // auto-scrolled earlier in this frame.
         app.timeline_auto_scroll_pending = None;
         app.ui.timeline.target_scroll = v;
+    }
+    let explicit_view = tl.get("pps").and_then(Value::as_f64).is_some_and(|v| v.is_finite() && v > 0.0)
+        || tl.get("scroll").and_then(Value::as_f64).is_some_and(|v| v.is_finite() && v >= 0.0);
+    if explicit_view && app.ui.timeline.fit_pending {
+        // An explicit view from the control channel takes precedence over the first-layout fit.
+        app.ui.timeline.fit_pending = false;
+        app.ui.timeline.fit_empty = None;
     }
     if let Some(v) = tl.get("smoothAnimations").and_then(Value::as_bool) {
         app.session.state.timeline_ui.smooth_animations = v;
@@ -415,10 +454,21 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
     if app.ui.timeline.fit_pending
         && (tl.get("videoTrackHeight").is_some() || tl.get("audioTrackHeight").is_some())
         && let Some(active) = app.session.state.active_sequence
+        && app.last_timeline_width > 50.0
     {
+        let duration = app.session.active_sequence().map_or(0.0, |sequence| sequence.duration().seconds());
+        let duration_floor = duration.max(1.0);
+        let (fit_floor, ceiling) = crate::panels::timeline::zoom_pps_limits(duration, app.last_timeline_width, app.session.state.timeline_ui.max_zoom_secs());
+        let fit_pps = (app.last_timeline_width as f64 * 0.94 / duration_floor).clamp(fit_floor, ceiling);
+        app.ui.timeline.target_pps = fit_pps;
+        app.ui.timeline.pps = fit_pps;
+        app.ui.timeline.target_scroll = 0.0;
+        app.ui.timeline.scroll = 0.0;
+        app.ui.timeline.fit_pending = false;
+        app.ui.timeline.fit_empty = (duration <= 0.0).then_some(fit_pps);
         let view = filmcraft_engine::project::SequenceView {
-            pps: app.ui.timeline.target_pps,
-            scroll: app.ui.timeline.target_scroll,
+            pps: fit_pps,
+            scroll: 0.0,
             v_scroll: app.ui.timeline.v_scroll,
             a_scroll: app.ui.timeline.a_scroll,
             video_track_h: app.ui.timeline.video_track_h,
@@ -449,6 +499,12 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
         }
     }
     app.sync_timeline_view();
+    let explicit_scroll = tl.get("scroll").and_then(Value::as_f64).is_some_and(|v| v.is_finite() && v >= 0.0);
+    if playback_scroll_pending && explicit_scroll && app.session.view_epoch == initial_view_epoch {
+        // The initial sync consumes the playback exemption. A control-channel scroll remains
+        // an explicit edit even when it happens to equal the pending playback target.
+        app.session.view_changed();
+    }
     if timeline_view_changed_since(initial_view_epoch, app.session.view_epoch) {
         app.session.sync_persistence();
     }
@@ -457,6 +513,28 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
 
 fn timeline_view_changed_since(before_sync: u64, after_sync: u64) -> bool {
     before_sync != after_sync
+}
+
+fn valid_control_binding(binding: &str) -> bool {
+    if binding.is_empty() {
+        return true;
+    }
+    if binding.len() > 64 || !binding.is_ascii() {
+        return false;
+    }
+    let mut parts = binding.split(" + ");
+    let Some(first) = parts.next() else { return false };
+    let mut tokens = vec![first];
+    tokens.extend(parts);
+    if tokens.iter().any(|token| token.is_empty()) {
+        return false;
+    }
+    let Some(key) = tokens.pop() else { return false };
+    if !key.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        return false;
+    }
+    let mut modifiers = std::collections::HashSet::new();
+    tokens.into_iter().all(|token| ["Ctrl", "Shift", "Alt"].contains(&token) && modifiers.insert(token))
 }
 
 /// The `gfxEdit` part of a `ui.set` payload: which layer the Type tool edits. Resolves that
@@ -1074,6 +1152,10 @@ mod input_bounds_tests {
         let mut app = app();
         app.session.execute("file.openDemoProject", json!({})).unwrap();
         let sequence = app.session.state.active_sequence.unwrap();
+        app.ui.timeline.pps = 200.0;
+        app.ui.timeline.target_pps = 200.0;
+        app.ui.timeline.scroll = 120.0;
+        app.ui.timeline.target_scroll = 120.0;
         app.session.state.timeline_views.remove(&sequence);
         app.sync_timeline_view();
         assert!(app.ui.timeline.fit_pending);
@@ -1083,7 +1165,43 @@ mod input_bounds_tests {
 
         assert!(matches!(outcome, Outcome::Done(reply) if reply["ok"] == true));
         assert!(app.session.view_epoch > epoch);
-        assert_eq!(app.session.state.timeline_views.get(&sequence).map(|view| view.video_track_h), Some(80.0));
+        let stored = app.session.state.timeline_views.get(&sequence).expect("first-fit height control stores an initialized view");
+        assert_eq!(stored.video_track_h, 80.0);
+        assert_eq!(stored.scroll, 0.0, "the new sequence must not inherit another sequence's horizontal scroll");
+        assert_ne!(stored.pps, 200.0, "the new sequence must not inherit another sequence's horizontal zoom");
+    }
+
+    #[test]
+    fn ui_set_explicit_zoom_and_scroll_cancel_the_first_layout_fit() {
+        let mut app = app();
+        app.session.execute("file.openDemoProject", json!({})).unwrap();
+        let sequence = app.session.state.active_sequence.unwrap();
+        app.session.state.timeline_views.remove(&sequence);
+        app.sync_timeline_view();
+        assert!(app.ui.timeline.fit_pending);
+
+        let outcome = request(&mut app, "ui.set", json!({"timeline": {"pps": 37.0, "scroll": 12.0}}));
+
+        assert!(matches!(outcome, Outcome::Done(reply) if reply["ok"] == true));
+        assert!(!app.ui.timeline.fit_pending);
+        let saved = app.session.state.timeline_views.get(&sequence).expect("explicit control view is saved");
+        assert_eq!(saved.pps, 37.0);
+        assert_eq!(saved.scroll, 12.0);
+    }
+
+    #[test]
+    fn ui_set_scroll_during_pending_playback_scroll_records_a_view_edit() {
+        let mut app = app();
+        app.session.execute("file.openDemoProject", json!({})).unwrap();
+        let sequence = app.session.state.active_sequence.unwrap();
+        app.ui.timeline.target_scroll = 9.0;
+        app.timeline_auto_scroll_pending = Some((sequence, app.session.document_epoch, 9.0));
+        let epoch = app.session.view_epoch;
+
+        let outcome = request(&mut app, "ui.set", json!({"timeline": {"scroll": 9.0}}));
+
+        assert!(matches!(outcome, Outcome::Done(reply) if reply["ok"] == true));
+        assert!(app.session.view_epoch > epoch, "the explicit scroll is persisted even when it equals the playback target");
     }
 
     #[test]
@@ -1096,6 +1214,38 @@ mod input_bounds_tests {
         assert!(matches!(outcome, Outcome::Done(reply) if reply["ok"] == false));
         assert_eq!(app.session.state.timeline_ui.max_zoom_seconds, zoom_before);
         assert_eq!(app.session.view_epoch, epoch_before);
+    }
+
+    #[test]
+    fn ui_set_exposes_all_timeline_control_bindings_for_set_clear_and_inspect() {
+        let mut app = app();
+        let bindings = [
+            ("controlCenterOnPlayhead", "control_center_on_playhead"),
+            ("controlExplodeSlider", "control_explode_slider"),
+            ("controlAlternateDragSpeed", "control_alternate_drag_speed"),
+            ("controlSettings", "control_settings"),
+            ("trackControlCopySlider", "track_control_copy_slider"),
+            ("trackControlMinimumHeight", "track_control_minimum_height"),
+            ("trackControlAlternateDragSpeed", "track_control_alternate_drag_speed"),
+            ("trackControlSettings", "track_control_settings"),
+        ];
+        let mut patch = serde_json::Map::new();
+        for (key, _) in bindings {
+            patch.insert(key.to_owned(), json!("Ctrl + K"));
+        }
+        let outcome = request(&mut app, "ui.set", json!({"timeline": patch}));
+        assert!(matches!(outcome, Outcome::Done(reply) if reply["ok"] == true));
+        let inspected = super::inspect(&app, &egui::Context::default());
+        for (_, field) in bindings {
+            assert_eq!(inspected["timelineSettings"][field], "Ctrl + K", "{field} can be read back");
+        }
+
+        let cleared = request(&mut app, "ui.set", json!({"timeline": {"controlCenterOnPlayhead": ""}}));
+        assert!(matches!(cleared, Outcome::Done(reply) if reply["ok"] == true));
+        let inspected = super::inspect(&app, &egui::Context::default());
+        assert_eq!(inspected["timelineSettings"]["control_center_on_playhead"], "");
+        let invalid = request(&mut app, "ui.set", json!({"timeline": {"trackControlSettings": "bad + + chord"}}));
+        assert!(matches!(invalid, Outcome::Done(reply) if reply["ok"] == false));
     }
 
     #[test]
