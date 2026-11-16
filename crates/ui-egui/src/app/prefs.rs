@@ -230,6 +230,7 @@ impl FilmcraftApp {
             self.timeline_view_of = Some(active);
             self.timeline_view_document = self.session.document_epoch;
             self.tl.track_anim = None;
+            v.seen_playhead = None;
             // the zoom ceiling is applied by animate_view with the measured content width --
             // clamping here (before the first layout) would use the placeholder width
             match stored.and_then(|s| s.checked()) {
@@ -259,6 +260,7 @@ impl FilmcraftApp {
                 self.session.view_changed();
             }
         } else if let Some(s) = stored.filter(|s| *s != shown).and_then(|s| s.checked()) {
+            self.tl.track_anim = None;
             show(v, s);
             self.timeline_view_last = Some(s);
             self.session.state.timeline_views.insert(active, s);
@@ -268,8 +270,9 @@ impl FilmcraftApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{playback_scroll_is_auto, playback_scroll_only};
+    use super::{FilmcraftApp, playback_scroll_is_auto, playback_scroll_only};
     use filmcraft_engine::project::SequenceView;
+    use serde_json::json;
 
     #[test]
     fn playback_scroll_detection_requires_scroll_to_be_the_only_change() {
@@ -282,5 +285,46 @@ mod tests {
         assert!(playback_scroll_is_auto(last, scrolled, Some((sequence, 3, scrolled.scroll)), sequence, 3));
         assert!(!playback_scroll_is_auto(last, scrolled, Some((sequence, 3, scrolled.scroll - 0.25)), sequence, 3));
         assert!(!playback_scroll_is_auto(last, scrolled, Some((sequence, 2, scrolled.scroll)), sequence, 3));
+    }
+
+    #[test]
+    fn a_document_change_resets_the_seen_playhead_before_restoring_its_view() {
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.newSequence", json!({})).unwrap();
+        let sequence = session.state.active_sequence.unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.ui.timeline.seen_playhead = Some((sequence, 7.0));
+        app.timeline_view_of = Some(sequence);
+        app.timeline_view_document = app.session.document_epoch.wrapping_sub(1);
+        app.sync_timeline_view();
+        assert_eq!(app.ui.timeline.seen_playhead, None);
+    }
+
+    #[test]
+    fn adopting_a_same_sequence_stored_view_cancels_track_animation() {
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.newSequence", json!({})).unwrap();
+        let sequence = session.state.active_sequence.unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.ui.timeline.fit_pending = false;
+        let stored = SequenceView { pps: 2.0, scroll: 1.0, v_scroll: 0.25, a_scroll: 0.5, video_track_h: 88.0, audio_track_h: 92.0 };
+        app.session.state.timeline_views.insert(sequence, stored);
+        app.timeline_view_of = Some(sequence);
+        app.timeline_view_document = app.session.document_epoch;
+        app.timeline_view_last = Some(SequenceView {
+            pps: app.ui.timeline.target_pps,
+            scroll: app.ui.timeline.target_scroll,
+            v_scroll: app.ui.timeline.v_scroll,
+            a_scroll: app.ui.timeline.a_scroll,
+            video_track_h: app.ui.timeline.video_track_h,
+            audio_track_h: app.ui.timeline.audio_track_h,
+        });
+        app.tl.track_anim = Some(crate::panels::timeline::TrackAnimation { sequence, target: [160.0, 0.0, 160.0, 0.0] });
+
+        app.sync_timeline_view();
+
+        assert!(app.tl.track_anim.is_none());
+        assert_eq!(app.ui.timeline.video_track_h, stored.video_track_h);
+        assert_eq!(app.ui.timeline.audio_track_h, stored.audio_track_h);
     }
 }

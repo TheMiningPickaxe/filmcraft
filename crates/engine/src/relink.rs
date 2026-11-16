@@ -593,10 +593,13 @@ pub fn make_offline(s: &mut Session, p: &Value) -> Result<Value> {
             // it is a regular media file that is still the one the item was linked to.
             if let Ok(path) = s.media.follow(path)
                 && deletable_media(s, *id, &path)
-                && std::fs::remove_file(&path).is_ok()
             {
+                // Drop the cached FileReader first so its pooled Windows handle is released
+                // before remove_file attempts to unlink the media.
                 s.media.remove_cached(*id);
-                deleted.push(path.clone());
+                if std::fs::remove_file(&path).is_ok() {
+                    deleted.push(path.clone());
+                }
             }
         }
     }

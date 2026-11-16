@@ -177,6 +177,45 @@ fn truncated_children_restore_audio_only_and_negative_lane_references() {
 }
 
 #[test]
+fn reimporting_a_deferred_parent_does_not_duplicate_its_audio_reference() {
+    let mut media = String::new();
+    for index in 0..8 {
+        let child = if index == 7 { "m0".to_string() } else { format!("w{}", index + 1) };
+        media.push_str(&format!(
+            r#"<media id="w{index}" name="Wrapper {index}"><sequence format="r1"><spine><ref-clip ref="{child}" offset="0s" start="0s" duration="1s"/></spine></sequence></media>"#
+        ));
+    }
+    media.push_str(
+        r#"<media id="m0" name="M0"><sequence format="r1"><spine>
+      <ref-clip ref="m1" name="M0 audio reference" offset="0s" start="0s" duration="1s" srcEnable="audio"/>
+    </spine></sequence></media>"#,
+    );
+    for index in 1..60 {
+        media.push_str(&format!(
+            r#"<media id="m{index}" name="M{index}"><sequence format="r1"><spine><ref-clip ref="m{}" offset="0s" start="0s" duration="1s"/></spine></sequence></media>"#,
+            index + 1
+        ));
+    }
+    media.push_str(
+        r#"<media id="m60" name="M60"><sequence format="r1"><spine>
+      <asset-clip ref="a0" name="Recovered sound" offset="0s" start="0s" duration="1s" srcEnable="audio"/>
+    </spine></sequence></media><asset id="a0" name="Tone" start="0s" duration="10s" hasAudio="1" src="tone.wav"/>"#,
+    );
+    let xml = format!(
+        r#"<fcpxml version="1.10"><resources><format id="r1" frameDuration="1/24s" width="1920" height="1080"/>{media}</resources>
+        <library><event>
+          <project name="Deep"><sequence format="r1"><spine><ref-clip ref="w0" offset="0s" start="0s" duration="1s"/></spine></sequence></project>
+          <project name="Shallow"><sequence format="r1"><spine><ref-clip ref="m0" offset="0s" start="0s" duration="1s"/></spine></sequence></project>
+        </event></library></fcpxml>"#
+    );
+    let (imported, report) = import(xml.as_bytes(), Format::Fcpxml, None).unwrap();
+    assert!(report.mentions("deeper clips were skipped"), "the first import must truncate the nested chain: {report}");
+    let m0 = imported.project.sequences().find(|item| item.name == "M0").and_then(|item| imported.project.sequence(item.id)).unwrap();
+    let audio: Vec<_> = m0.audio_tracks.iter().flat_map(|track| &track.items).filter(|clip| clip.name == "M0 audio reference").collect();
+    assert_eq!(audio.len(), 1, "reimporting M0 should replace its deferred audio reference, not restore a duplicate");
+}
+
+#[test]
 fn golden_connected_clips() {
     let d = doc();
     assert_eq!(detect(d.as_bytes(), Some("fcpxml")), Some(Format::Fcpxml));

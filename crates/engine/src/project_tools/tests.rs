@@ -179,11 +179,14 @@ fn close_commands_and_templates() {
     assert!(s.execute("file.closeAllProjects", json!({})).is_err(), "dirty: needs force");
     s.execute("file.closeAllProjects", json!({"force": true})).unwrap();
     assert!(s.project.items.is_empty());
+    s.prefs.timeline.restore_open_sequences = false;
+    s.transient_playheads.insert(seq, Tick::from_seconds_f64(7.0));
     s.execute("file.newProjectFromTemplate", json!({"template": path, "name": "Ep 2"})).unwrap();
     assert!(s.project.items.values().any(|i| i.name == "Main Edit"));
     assert_eq!(s.project.items.len(), n);
     assert_eq!(s.project.name, "Ep 2");
     assert!(s.path.is_none() && !s.is_dirty());
+    assert!(s.transient_playheads.is_empty());
 }
 
 #[test]

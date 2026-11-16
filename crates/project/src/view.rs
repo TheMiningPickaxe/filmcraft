@@ -26,7 +26,7 @@ impl SequenceView {
             return None;
         }
         Some(SequenceView {
-            pps: self.pps.clamp(1e-3, 1e5),
+            pps: self.pps.clamp(1e-6, 1e5),
             scroll: self.scroll.clamp(0.0, 1e7),
             v_scroll: self.v_scroll.clamp(0.0, 1e6),
             a_scroll: self.a_scroll.clamp(0.0, 1e6),
@@ -404,6 +404,19 @@ mod tests {
         assert!(view.open_sequences.is_empty());
         assert!(view.timeline_ui.inverted_controls, "a valid setting survives a malformed sibling");
         assert_eq!(view.timeline_ui.max_zoom_seconds, 0.4, "the invalid field uses its default");
+    }
+
+    #[test]
+    fn sequence_view_round_trip_preserves_a_long_sequence_fit_below_one_milli_pps() {
+        let item = crate::ItemId(7);
+        let pps = 800.0 / 1_000_000.0;
+        let mut view = ProjectView::default();
+        view.sequences.insert(item, SequenceView { pps, scroll: 0.0, v_scroll: 0.0, a_scroll: 0.0, video_track_h: 24.0, audio_track_h: 24.0 });
+
+        let bytes = serde_json::to_vec(&view).unwrap();
+        let reopened: ProjectView = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(reopened.sequences.get(&item).copied().and_then(SequenceView::checked).map(|sequence| sequence.pps), Some(pps));
     }
 
     /// The Controls bindings start empty (the built-in gestures do the actions) and Snap to

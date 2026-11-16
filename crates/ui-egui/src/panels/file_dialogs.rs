@@ -7,6 +7,7 @@
 
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Ui, vec2};
 use serde_json::json;
+use std::collections::HashSet;
 
 use crate::theme::Tokens;
 use crate::{Dialog, FilmcraftApp};
@@ -15,6 +16,8 @@ use crate::{Dialog, FilmcraftApp};
 #[derive(Default)]
 pub struct FileDialogState {
     pub recovery_choice: usize,
+    pub recovery_content_checked: HashSet<String>,
+    pub recovery_content_changed: HashSet<String>,
 }
 
 pub(crate) fn modal_frame(t: &Tokens) -> Frame {
@@ -37,9 +40,33 @@ pub(crate) fn button(app: &mut FilmcraftApp, ui: &mut Ui, id: &str, label: &str,
 pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
     let t = app.tokens;
     let list = app.session.execute("file.recoveryList", json!({})).unwrap_or_default();
-    let items = list.as_array().cloned().unwrap_or_default();
+    let mut items = list.as_array().cloned().unwrap_or_default();
     if items.is_empty() {
         return false;
+    }
+    let candidates = app.session.recovery_candidates().to_vec();
+    for item in &mut items {
+        if item["dirty"].as_bool() != Some(false) || item["viewDirty"].as_bool() != Some(true) {
+            continue;
+        }
+        let Some(id) = item["id"].as_str() else { continue };
+        let Some(candidate) = candidates.iter().find(|candidate| candidate.id == id) else { continue };
+        let cache_key = format!("{}:{}:{}", candidate.id, candidate.meta.revision, candidate.meta.snapshot_fingerprint.unwrap_or_default());
+        if app.file_dialogs.recovery_content_checked.insert(cache_key.clone()) {
+            let changed = candidate.meta.project_path.as_deref().is_some_and(|path| {
+                filmcraft_engine::autosave::load_candidate(candidate)
+                    .ok()
+                    .is_none_or(|loaded| !filmcraft_engine::autosave::candidate_content_matches_project(candidate, &loaded.project))
+                    && !path.is_empty()
+            });
+            if changed {
+                app.file_dialogs.recovery_content_changed.insert(cache_key.clone());
+            }
+        }
+        if app.file_dialogs.recovery_content_changed.contains(&cache_key) {
+            item["dirty"] = json!(true);
+            item["contentChanged"] = json!(true);
+        }
     }
     let mut choice = app.file_dialogs.recovery_choice.min(items.len() - 1);
     let mut open = true;
@@ -70,6 +97,14 @@ pub fn show_recovery(app: &mut FilmcraftApp, ctx: &egui::Context) -> bool {
             let recovery_prompt =
                 if view_only { tlf!("Recover Timeline view settings from {when}?", when) } else { tlf!("Recover unsaved changes from {when}?", when) };
             ui.label(RichText::new(recovery_prompt).size(13.5).color(t.text));
+            if c["contentChanged"].as_bool() == Some(true) {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(tl!("The project file has changed since this recovery snapshot. Recovering will replace its current contents."))
+                        .size(12.5)
+                        .color(t.text),
+                );
+            }
             if let Some(p) = c["projectPath"].as_str() {
                 ui.label(RichText::new(p).size(11.5).color(t.text_dim));
             } else {

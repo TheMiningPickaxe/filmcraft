@@ -712,7 +712,7 @@ pub fn candidate_content_matches_project(c: &RecoveryCandidate, recovered: &film
     let Ok(bytes) = filmcraft_media::reader::read_regular_file_bounded(std::path::Path::new(path), filmcraft_format::MAX_PROJECT_BYTES) else {
         return false;
     };
-    filmcraft_format::decode(&bytes).is_ok_and(|loaded| loaded.project == *recovered)
+    filmcraft_format::decode(&bytes).is_ok_and(|loaded| filmcraft_format::encode(&loaded.project, false) == filmcraft_format::encode(recovered, false))
 }
 
 pub fn discard_candidate(c: &RecoveryCandidate) -> io::Result<()> {
@@ -872,10 +872,38 @@ pub struct Persistence {
     failure: Arc<WorkerFailure>,
 }
 
+/// Coordinates automatic writes to the current project file with explicit saves.
+#[derive(Default)]
+pub(crate) struct ProjectFileFence {
+    pub(crate) last_saved: Option<(String, u64, u64)>,
+}
+
+impl ProjectFileFence {
+    fn is_stale(&self, path: &str, revision: u64, view_epoch: u64) -> bool {
+        self.last_saved
+            .as_ref()
+            .is_some_and(|(saved_path, saved_revision, saved_view_epoch)| saved_path == path && (revision < *saved_revision || view_epoch < *saved_view_epoch))
+    }
+
+    fn covers(&self, path: &str, revision: u64, view_epoch: u64) -> bool {
+        self.last_saved.as_ref().is_some_and(|(saved_path, saved_revision, saved_view_epoch)| {
+            saved_path == path && (*saved_revision > revision || (*saved_revision == revision && *saved_view_epoch >= view_epoch))
+        })
+    }
+}
+
 impl Persistence {
     /// Create this session's journal directory (holding its lock), find recovery candidates left by
     /// dead sessions, and start the worker thread.
     pub fn start(cfg: &AutosaveConfig, prefs: AutoSavePrefs) -> io::Result<Self> {
+        Self::start_with_project_file_fence(cfg, prefs, Arc::new(std::sync::Mutex::new(ProjectFileFence::default())))
+    }
+
+    pub(crate) fn start_with_project_file_fence(
+        cfg: &AutosaveConfig,
+        prefs: AutoSavePrefs,
+        project_file_fence: Arc<std::sync::Mutex<ProjectFileFence>>,
+    ) -> io::Result<Self> {
         let root = recovery_root(&cfg.data_dir);
         fs::create_dir_all(&root)?;
         cleanup_stale_sessions(&cfg.data_dir);
@@ -911,10 +939,12 @@ impl Persistence {
             journaled_content_dirty: false,
             journaled_view_dirty: false,
             autosaved: 0,
+            autosaved_path: None,
             first_pending: None,
             last_change: Instant::now(),
             next_autosave: Instant::now(),
             meta: JournalMeta { pid, started_unix: started, generator: filmcraft_format::generator(), ..Default::default() },
+            project_file_fence,
         };
         w.next_autosave = Instant::now() + w.autosave_interval();
         let worker_failure = failure.clone();
@@ -1093,10 +1123,12 @@ struct Worker {
     journaled_content_dirty: bool,
     journaled_view_dirty: bool,
     autosaved: u64,
+    autosaved_path: Option<PathBuf>,
     first_pending: Option<Instant>,
     last_change: Instant,
     next_autosave: Instant,
     meta: JournalMeta,
+    project_file_fence: Arc<std::sync::Mutex<ProjectFileFence>>,
 }
 
 impl Worker {
@@ -1189,7 +1221,14 @@ impl Worker {
             if self.prefs.enabled && self.next_autosave <= now {
                 // Defensive for any future view-only snapshot producer: it is not unsaved content
                 // and must not fill the auto-save ring with copies of the saved project.
-                if self.latest.as_ref().is_some_and(|s| s.content_dirty && s.revision != self.autosaved) {
+                if self.latest.as_ref().is_some_and(|s| {
+                    s.content_dirty
+                        && (s.revision != self.autosaved
+                            || (self.prefs.save_current_project
+                                && s.path.as_deref().is_some_and(|path| {
+                                    !self.project_file_fence.lock().unwrap_or_else(std::sync::PoisonError::into_inner).covers(path, s.revision, s.view_epoch)
+                                })))
+                }) {
                     let _ = self.auto_save();
                 }
                 self.next_autosave = now + self.autosave_interval();
@@ -1295,19 +1334,32 @@ impl Worker {
         let serialize_ms = t0.elapsed().as_secs_f64() * 1000.0;
         let t1 = Instant::now();
         let unix = unix_now();
-        let r = names::write_auto_save(&dir, &name, unix, (self.local_offset)(unix), &bytes, self.prefs.max_versions as usize);
+        let r = if s.revision != self.autosaved {
+            names::write_auto_save(&dir, &name, unix, (self.local_offset)(unix), &bytes, self.prefs.max_versions as usize)
+                .inspect(|path| {
+                    self.autosaved = s.revision;
+                    self.autosaved_path = Some(path.clone());
+                })
+                .map_err(|error| error.to_string())
+        } else {
+            self.autosaved_path.clone().ok_or_else(|| "auto-save version is missing for the completed revision".to_string())
+        };
         let write_ms = t1.elapsed().as_secs_f64() * 1000.0;
         match r {
             Ok(path) => {
-                self.autosaved = s.revision;
                 let _ = self.events.send(WorkerEvent::AutoSaved { path: path.clone(), revision: s.revision, unix, serialize_ms, write_ms, bytes: bytes.len() });
                 if self.prefs.save_current_project
                     && let Some(p) = &s.path
                 {
-                    match filmcraft_format::atomic_write(Path::new(p), &bytes) {
-                        Ok(()) => {
+                    let mut fence = self.project_file_fence.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let stale = fence.is_stale(p, s.revision, s.view_epoch);
+                    let result = if stale { Ok(false) } else { filmcraft_format::atomic_write(Path::new(p), &bytes).map(|()| true) };
+                    match result {
+                        Ok(true) => {
+                            fence.last_saved = Some((p.clone(), s.revision, s.view_epoch));
                             let _ = self.events.send(WorkerEvent::SavedProject { path: p.clone(), revision: s.revision, view_epoch: s.view_epoch });
                         }
+                        Ok(false) => {}
                         Err(e) => self.error(format!("saving {p}: {e}")),
                     }
                 }
@@ -1379,6 +1431,14 @@ fn write_recovery_pair(dir: &Path, snapshot: &[u8], meta: &JournalMeta, mut writ
         // pending file. Promote it before the next replacement overwrites that file.
         if let Some(previous) = previous_meta.as_ref() {
             let previous_bytes = serde_json::to_vec_pretty(previous).map_err(io::Error::other)?;
+            write(&meta_path, &previous_bytes)?;
+        } else {
+            // The old snapshot remains recoverable even when its metadata is missing or
+            // unreadable. Keep a conservative dirty record tied to the bytes currently on disk
+            // before pending metadata for the replacement can supersede it.
+            let fingerprint = read_snapshot_fingerprint(&snapshot_path).map_err(|_| io::Error::other("could not fingerprint previous recovery snapshot"))?;
+            let previous = JournalMeta { dirty: true, snapshot_fingerprint: Some(fingerprint), ..JournalMeta::default() };
+            let previous_bytes = serde_json::to_vec_pretty(&previous).map_err(io::Error::other)?;
             write(&meta_path, &previous_bytes)?;
         }
         let mut pending = meta.clone();
@@ -1480,6 +1540,15 @@ fn read_snapshot_fingerprint(path: &Path) -> io::Result<u64> {
 #[cfg(test)]
 mod durability_tests {
     use super::*;
+
+    #[test]
+    fn an_automatic_save_skips_a_snapshot_older_than_the_explicit_save_fence() {
+        let fence = ProjectFileFence { last_saved: Some(("project.fcproj".into(), 12, 8)) };
+        assert!(fence.is_stale("project.fcproj", 11, 8));
+        assert!(fence.is_stale("project.fcproj", 12, 7));
+        assert!(!fence.is_stale("project.fcproj", 12, 8));
+        assert!(!fence.is_stale("another.fcproj", 1, 0));
+    }
 
     #[test]
     fn oversized_snapshot_fingerprints_are_rejected_before_reading() {
@@ -1589,13 +1658,8 @@ mod durability_tests {
         fs::write(persistence.session_dir.join(META), serde_json::to_vec(&stale).unwrap()).unwrap();
         fs::write(persistence.session_dir.join(PENDING_META), serde_json::to_vec(&stale).unwrap()).unwrap();
 
-        persistence.tx.send(Msg::Clean).unwrap();
-        for _ in 0..100 {
-            if !persistence.session_dir.join(PENDING_META).exists() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        persistence.send_clean();
+        assert_eq!(persistence.flush().unwrap(), None, "Flush acknowledges that the queued Clean completed");
         assert!(!persistence.session_dir.join(PENDING_META).exists());
         let next = JournalMeta { dirty: false, view_dirty: true, revision: 8, project_path: Some("new.fcproj".into()), ..JournalMeta::default() };
         write_recovery_pair(&persistence.session_dir, &bytes, &next, filmcraft_format::atomic_write).unwrap();
@@ -1752,6 +1816,32 @@ mod durability_tests {
         assert_eq!(load_candidate(&candidates[0]).unwrap().project.name, "B");
         assert_eq!(candidates[0].meta.revision, 2);
         assert_eq!(candidates[0].meta.project_path.as_deref(), Some("b.fcproj"));
+    }
+
+    #[test]
+    fn interrupted_replacement_preserves_snapshot_without_readable_metadata() {
+        let dir = TestDir::new("missing-replacement-metadata");
+        let session = recovery_root(&dir).join("1-1");
+        fs::create_dir_all(&session).unwrap();
+        let old = filmcraft_format::encode(&Project::new("A"), false);
+        fs::write(session.join(SNAPSHOT), &old).unwrap();
+        fs::write(session.join(META), b"not valid metadata").unwrap();
+
+        let next = filmcraft_format::encode(&Project::new("B"), false);
+        let result = write_recovery_pair(&session, &next, &JournalMeta { dirty: true, revision: 2, ..JournalMeta::default() }, |path, bytes| {
+            if path.ends_with(SNAPSHOT) {
+                Err(io::Error::other("interrupted before snapshot replacement"))
+            } else {
+                filmcraft_format::atomic_write(path, bytes)
+            }
+        });
+
+        assert!(result.is_err());
+        let candidates = scan_candidates(&dir, None);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(load_candidate(&candidates[0]).unwrap().project.name, "A");
+        assert!(candidates[0].meta.dirty);
+        assert_eq!(candidates[0].meta.snapshot_fingerprint, Some(snapshot_fingerprint(&old)));
     }
 
     #[test]

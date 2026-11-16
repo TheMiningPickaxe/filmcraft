@@ -76,10 +76,6 @@ impl FilmcraftApp {
             self.sync_v_down(&events);
             return;
         }
-        if panels::timeline::custom_control_shortcut_pending_for_events(self, ctx, &events) {
-            self.sync_v_down(&events);
-            return;
-        }
         let mut input = egui::InputState::default();
         input.modifiers = self.floating_window_modifiers(ctx);
         input.events = events;
@@ -146,7 +142,7 @@ impl FilmcraftApp {
                 modifiers: m | egui::Modifiers::COMMAND,
             });
         }
-        clipboard_events_as_keys(&mut i.events, modifiers, label_selected);
+        panels::timeline::clipboard_events_as_keys(&mut i.events, modifiers, label_selected);
         let panel = self.bindings.iter().filter(|b| b.3.as_deref() == Some(focused));
         let app_wide = self.bindings.iter().filter(|b| b.3.is_none());
         let mut candidates: Vec<&menus::KeyBinding> = panel.chain(app_wide).collect();
@@ -240,38 +236,6 @@ impl FilmcraftApp {
     }
 }
 
-/// The windowing layer (egui-winit, and egui's web backend) reports the clipboard shortcuts as
-/// `Event::Copy` / `Event::Cut` / `Event::Paste` instead of key presses: Ctrl+C/X/V on Windows and
-/// Linux, plus Ctrl+Insert, Shift+Insert and Shift+Delete on Windows. The shortcut bindings only
-/// match key presses, so Copy, Cut, Paste, Paste Insert, Paste Attributes and (on Windows) Ripple
-/// Delete never fired from the keyboard (#199). macOS was unaffected because its native menu bar
-/// takes the key equivalents first.
-///
-/// Add the key press each event stands for, with the modifiers held, so the bindings see it. The
-/// original event stays for anything else that reads it. Only called when no text field has
-/// keyboard focus; text fields keep handling the clipboard themselves. Selected label text (a
-/// status bar message, #2295) keeps Copy and Cut the same way: Ctrl+C copies the text, not the
-/// selected clips.
-fn clipboard_events_as_keys(events: &mut Vec<egui::Event>, modifiers: egui::Modifiers, label_selected: bool) {
-    use egui::{Event, Key};
-    let keys: Vec<Key> = events
-        .iter()
-        .filter_map(|e| match e {
-            Event::Copy | Event::Cut if label_selected => None,
-            Event::Copy if modifiers.command => Some(Key::C),
-            Event::Copy => Some(Key::Copy),
-            Event::Cut if modifiers.command => Some(Key::X),
-            Event::Cut if modifiers.shift => Some(Key::Delete),
-            Event::Cut => Some(Key::Cut),
-            Event::Paste(_) | Event::PasteImage(_) if modifiers.command => Some(Key::V),
-            Event::Paste(_) | Event::PasteImage(_) if modifiers.shift => Some(Key::Insert),
-            Event::Paste(_) | Event::PasteImage(_) => Some(Key::Paste),
-            _ => None,
-        })
-        .collect();
-    events.extend(keys.into_iter().map(|key| Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers }));
-}
-
 /// Whether holding a shortcut's key repeats the command. Transport commands start, stop or
 /// toggle playback, so the OS key repeats of a held Space would flip Play/Stop many times a
 /// second; they run once per press. Stepping, nudging and the rest keep repeating.
@@ -308,11 +272,12 @@ fn lets_text_field_keep(modifiers: egui::Modifiers, text_focused: bool) -> bool 
 
 #[cfg(test)]
 mod clipboard_key_tests {
+    use crate::panels::timeline::clipboard_events_as_keys;
     use egui::{Event, Key, Modifiers};
 
     fn keys(events: Vec<Event>, m: Modifiers) -> Vec<(Key, Modifiers)> {
         let mut events = events;
-        super::clipboard_events_as_keys(&mut events, m, false);
+        clipboard_events_as_keys(&mut events, m, false);
         events.into_iter().filter_map(|e| if let Event::Key { key, modifiers, pressed: true, .. } = e { Some((key, modifiers)) } else { None }).collect()
     }
 
@@ -348,7 +313,7 @@ mod clipboard_key_tests {
     #[test]
     fn other_events_are_left_alone() {
         let mut events = vec![Event::Text("a".into()), Event::Copy];
-        super::clipboard_events_as_keys(&mut events, Modifiers::COMMAND, false);
+        clipboard_events_as_keys(&mut events, Modifiers::COMMAND, false);
         assert_eq!(events.len(), 3);
         assert!(matches!(events[0], Event::Text(_)));
         assert!(matches!(events[1], Event::Copy));
@@ -358,7 +323,7 @@ mod clipboard_key_tests {
     fn selected_label_text_keeps_copy_and_cut() {
         let c = Modifiers::COMMAND;
         let mut events = vec![Event::Copy, Event::Cut, Event::Paste("x".into())];
-        super::clipboard_events_as_keys(&mut events, c, true);
+        clipboard_events_as_keys(&mut events, c, true);
         let keys: Vec<Key> = events.iter().filter_map(|e| if let Event::Key { key, .. } = e { Some(*key) } else { None }).collect();
         assert_eq!(keys, vec![Key::V], "only Paste becomes a key press");
         assert!(matches!(events[0], Event::Copy), "the selection still gets the Copy event");
@@ -395,6 +360,27 @@ mod forwarded_key_tests {
         let mut input = egui::InputState::default();
         input.events = vec![Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND }];
         assert!(app.match_shortcuts(&mut input, false, false, false).is_empty(), "release must not synthesize a Paste press");
+    }
+
+    #[test]
+    fn forwarded_shortcut_is_not_dropped_by_a_pending_custom_control() {
+        use egui::{Event, Modifiers, RawInput, Rect, pos2, vec2};
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", serde_json::json!({})).unwrap();
+        let mut app = super::FilmcraftApp::new(session);
+        app.bindings = super::menus::bindings(&app);
+        app.ui.focused = crate::dock::PanelKind::Timeline;
+        app.session.state.timeline_ui.control_center_on_playhead = "Shift + Backtick".into();
+        app.auto.begin_frame();
+        app.auto.add("timeline.zoomBar.track", Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 20.0)), "zoom bar");
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(RawInput { events: vec![Event::PointerMoved(pos2(20.0, 15.0))], ..RawInput::default() }, |_| {});
+        output.textures_delta.clear();
+        let forwarded =
+            Event::Key { key: egui::Key::Backtick, physical_key: Some(egui::Key::Backtick), pressed: true, repeat: false, modifiers: Modifiers::SHIFT };
+        assert!(crate::panels::timeline::custom_control_shortcut_pending_for_events(&app, &ctx, std::slice::from_ref(&forwarded), Modifiers::SHIFT));
+        app.handle_forwarded_keys(&ctx, vec![forwarded]);
+        assert_eq!(app.ui.keys.maximized, Some(crate::dock::PanelKind::Timeline));
     }
 }
 

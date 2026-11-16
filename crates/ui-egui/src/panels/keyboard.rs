@@ -141,8 +141,7 @@ pub const COMMANDS: &[UiCommand] = &[
 pub const HELP_URL: &str = "https://github.com/storytold/filmcraft/tree/main/docs";
 
 const HEIGHT_STEP: f32 = 12.0;
-const MIN_TRACK_H: f32 = 24.0;
-const MAX_TRACK_H: f32 = 240.0;
+const MAX_TRACK_H: f32 = crate::panels::timeline::MAX_TRACK_HEIGHT;
 
 /// Run a keyboard UI command; None when `id` is not one of them.
 pub fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -216,10 +215,11 @@ pub fn route(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, params: &Val
         }
         "timeline.expandAllTracks" | "timeline.minimizeAllTracks" => Ok(all_heights(app, id == "timeline.expandAllTracks")),
         "timeline.increaseVideoHeight" | "timeline.decreaseVideoHeight" | "timeline.increaseAudioHeight" | "timeline.decreaseAudioHeight" => {
+            app.tl.track_anim = None;
             let d = if id.contains("increase") { HEIGHT_STEP } else { -HEIGHT_STEP };
             let tv = &mut app.ui.timeline;
             let h = if id.contains("Video") { &mut tv.video_track_h } else { &mut tv.audio_track_h };
-            *h = (*h + d).clamp(MIN_TRACK_H, MAX_TRACK_H);
+            *h = (*h + d).clamp(crate::panels::timeline::MIN_TRACK_HEIGHT, MAX_TRACK_H);
             Ok(json!({"videoTrackHeight": tv.video_track_h, "audioTrackHeight": tv.audio_track_h}))
         }
         "timeline.nextScreen" | "timeline.prevScreen" => {
@@ -352,8 +352,9 @@ fn play_range(app: &mut FilmcraftApp, preroll: bool) -> Result<Value, String> {
 }
 
 fn all_heights(app: &mut FilmcraftApp, expand: bool) -> Value {
+    app.tl.track_anim = None;
     let tv = &mut app.ui.timeline;
-    let target = if expand { 120.0 } else { MIN_TRACK_H };
+    let target = if expand { 120.0 } else { crate::panels::timeline::MIN_TRACK_HEIGHT };
     let at_target = tv.video_track_h == target && tv.audio_track_h == target;
     match (at_target, app.ui.keys.saved_heights) {
         // pressing again restores the heights from before
@@ -583,5 +584,42 @@ mod transcript_selection_tests {
         let (sa, sb) = app.ui.transcript_sel.unwrap();
         assert!(sa < 2 && sb < 2, "selection {sa}..{sb} outside the 2-word transcript");
         assert_eq!(r["word"], json!(sb));
+    }
+}
+
+#[cfg(test)]
+mod track_height_animation_tests {
+    use super::route;
+    use crate::panels::timeline::TrackAnimation;
+    use serde_json::Value;
+
+    #[test]
+    fn keyboard_height_changes_cancel_pending_track_animation() {
+        let mut app = crate::FilmcraftApp::new(filmcraft_engine::Session::default());
+        let commands = ["timeline.minimizeAllTracks", "timeline.increaseVideoHeight", "timeline.decreaseAudioHeight"];
+        for command in commands {
+            app.tl.track_anim = Some(TrackAnimation { sequence: filmcraft_project::ItemId(1), target: [120.0; 4] });
+            let result = route(&mut app, &egui::Context::default(), command, &Value::Null);
+            assert!(result.is_some_and(|result| result.is_ok()), "{command} should run");
+            assert!(app.tl.track_anim.is_none(), "{command} must cancel the old animation");
+        }
+    }
+
+    #[test]
+    fn keyboard_height_decrease_respects_the_track_slider_minimum() {
+        let mut app = crate::FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.ui.timeline.video_track_h = crate::panels::timeline::MIN_TRACK_HEIGHT;
+        let result = route(&mut app, &egui::Context::default(), "timeline.decreaseVideoHeight", &Value::Null);
+        assert!(result.is_some_and(|result| result.is_ok()));
+        assert_eq!(app.ui.timeline.video_track_h, crate::panels::timeline::MIN_TRACK_HEIGHT);
+    }
+
+    #[test]
+    fn keyboard_height_increase_uses_the_shared_slider_maximum() {
+        let mut app = crate::FilmcraftApp::new(filmcraft_engine::Session::default());
+        app.ui.timeline.video_track_h = crate::panels::timeline::MAX_TRACK_HEIGHT - 1.0;
+        let result = route(&mut app, &egui::Context::default(), "timeline.increaseVideoHeight", &Value::Null);
+        assert!(result.is_some_and(|result| result.is_ok()));
+        assert_eq!(app.ui.timeline.video_track_h, crate::panels::timeline::MAX_TRACK_HEIGHT);
     }
 }

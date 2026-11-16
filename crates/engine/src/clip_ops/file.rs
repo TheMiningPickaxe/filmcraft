@@ -225,6 +225,7 @@ pub(super) fn close_project(s: &mut Session, p: &Value) -> Result<Value> {
     s.history = Default::default();
     s.history.limit = 200;
     s.state = Session::default().state;
+    s.clear_transient_playhead();
     // The new untitled project starts from the default view, so it has no pending view save.
     s.saved_view_epoch = s.view_epoch;
     if s.path.take().is_some() {

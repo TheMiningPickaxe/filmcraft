@@ -128,7 +128,7 @@ mod deferred_audio_tests {
     use crate::{ImportOptions, Report};
     use filmcraft_project::{SequenceSettings, TrackKind};
     use filmcraft_time::Tick;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn deferred_audio_repairs_parent_chains_and_keeps_each_reference_adjustment() {
@@ -205,6 +205,93 @@ mod deferred_audio_tests {
     }
 
     #[test]
+    fn rebuilding_a_parent_drops_its_old_deferred_audio_entries() {
+        let opts = ImportOptions::default();
+        let mut report = Report::default();
+        let mut builder = Builder::new("deferred audio generation");
+        let parent = builder.reserve_sequence("Parent", SequenceSettings::default(), None);
+        let other = builder.reserve_sequence("Other", SequenceSettings::default(), None);
+        let child = builder.reserve_sequence("Child", SequenceSettings::default(), None);
+        let parent_audio = builder.clip(child, TrackKind::Audio, "old parent audio", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        let other_audio = builder.clip(child, TrackKind::Audio, "other audio", Tick::ZERO, Tick(TICKS_PER_SECOND), Tick::ZERO);
+        let mut imp = Imp {
+            b: builder,
+            opts: &opts,
+            report: &mut report,
+            formats: HashMap::new(),
+            asset_nodes: HashMap::new(),
+            assets: HashMap::new(),
+            media_nodes: HashMap::new(),
+            media_items: HashMap::new(),
+            media_active: Default::default(),
+            sequence_stack: Vec::new(),
+            deferred_audio_refs: vec![
+                DeferredAudioRef { parent, child, video: None, link: 1, lane: 0, audio: parent_audio },
+                DeferredAudioRef { parent: other, child, video: None, link: 2, lane: 0, audio: other_audio },
+            ],
+            truncation_hits: 0,
+            media_truncated_at: HashMap::new(),
+            reimports_left: 0,
+            effects: HashMap::new(),
+            depth: 0,
+        };
+        let doc = crate::xml::parse("<sequence><spine/></sequence>").unwrap();
+        imp.sequence(doc.root_element(), "Parent", None, Some(parent));
+        assert_eq!(imp.deferred_audio_refs.len(), 1);
+        assert_eq!(imp.deferred_audio_refs[0].parent, other);
+    }
+
+    #[test]
+    fn xml_budget_improvement_allows_reimport_when_media_depth_worsens() {
+        assert!(super::nesting_budget_improved((1, 4), (0, 122)));
+        assert!(!super::nesting_budget_improved((1, 123), (0, 122)));
+        assert!(!super::nesting_budget_improved((0, 122), (0, 122)));
+    }
+
+    #[test]
+    fn an_active_cached_resource_is_rejected_before_the_cache_return() {
+        let opts = ImportOptions::default();
+        let mut report = Report::default();
+        let mut builder = Builder::new("recursive cached media");
+        let cached = builder.reserve_sequence("Cached", SequenceSettings::default(), None);
+        let mut active = HashSet::new();
+        active.insert("m0".to_string());
+        let mut imp = Imp {
+            b: builder,
+            opts: &opts,
+            report: &mut report,
+            formats: HashMap::new(),
+            asset_nodes: HashMap::new(),
+            assets: HashMap::new(),
+            media_nodes: HashMap::new(),
+            media_items: HashMap::from([("m0".to_string(), cached)]),
+            media_active: active,
+            sequence_stack: Vec::new(),
+            deferred_audio_refs: Vec::new(),
+            truncation_hits: 0,
+            media_truncated_at: HashMap::from([("m0".to_string(), (0, 122))]),
+            reimports_left: 1,
+            effects: HashMap::new(),
+            depth: 4,
+        };
+        assert_eq!(imp.media("m0"), None);
+        assert!(imp.report.mentions("recursive FCPXML media"));
+    }
+
+    #[test]
+    fn deferred_audio_keeps_the_same_constant_time_map_as_its_video() {
+        let mut builder = Builder::new("held audio");
+        let item = builder.reserve_sequence("source", SequenceSettings::default(), None);
+        let source = Tick(TICKS_PER_SECOND / 3);
+        let mut video = builder.clip(item, TrackKind::Video, "held", Tick::ZERO, Tick(TICKS_PER_SECOND), source);
+        let mut deferred_audio = builder.clip(item, TrackKind::Audio, "held", Tick::ZERO, Tick(TICKS_PER_SECOND), source);
+        super::apply_time_map(&mut video, 0.0, false, true, source);
+        super::apply_time_map(&mut deferred_audio, 0.0, false, true, source);
+        assert_eq!(deferred_audio.frame_hold, video.frame_hold);
+        assert_eq!(deferred_audio.source_time_at(Tick(TICKS_PER_SECOND / 2)), source);
+    }
+
+    #[test]
     fn negative_audio_lanes_map_to_their_requested_track() {
         assert_eq!(super::audio_track_index(-1), 0);
         assert_eq!(super::audio_track_index(-2), 1);
@@ -227,6 +314,10 @@ struct Asset {
 
 /// Most times truncated media is imported again at a shallower depth.
 const MAX_REIMPORTS: usize = 4096;
+
+fn nesting_budget_improved(current: (usize, usize), previous: (usize, usize)) -> bool {
+    current.0 < previous.0 || current.1 < previous.1
+}
 
 /// Deepest storyline/element nesting a hostile file may walk. The FCPXML structure can nest
 /// connected clips and secondary storylines without limit, and layout recurses once per level
@@ -438,15 +529,16 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
 
     /// Nested sequence from a `<media>` resource.
     fn media(&mut self, id: &str) -> Option<ItemId> {
+        if self.media_active.contains(id) {
+            self.report.warn(format!("recursive FCPXML media resource {id:?} ignored"));
+            return None;
+        }
         let depth = self.media_active.len();
         let mut again = None;
         if let Some(i) = self.media_items.get(id) {
             // Imported with a nested one cut off: import it again (into the same item) where that
             // one now fits.
-            let shallower =
-                self.media_truncated_at.get(id).is_some_and(|&(media_depth, xml_depth)| {
-                    depth <= media_depth && self.depth <= xml_depth && (depth < media_depth || self.depth < xml_depth)
-                }) && !self.media_active.contains(id);
+            let shallower = self.media_truncated_at.get(id).is_some_and(|previous| nesting_budget_improved((depth, self.depth), *previous));
             if !shallower || self.reimports_left == 0 {
                 if self.media_truncated_at.contains_key(id) {
                     self.truncation_hits = self.truncation_hits.saturating_add(1);
@@ -492,6 +584,9 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
             settings.sample_rate = sr;
         }
         let id = reuse.unwrap_or_else(|| self.b.reserve_sequence(name, settings.clone(), bin));
+        // Deferred clips belong to the parent generation that created them. A reimport replaces
+        // that parent's contents, so discard its old deferrals before the replacement is built.
+        self.deferred_audio_refs.retain(|deferred| deferred.parent != id);
         self.sequence_stack.push(id);
         let mut seq = empty_sequence(settings);
         let tc_start = attr_time(s, "tcStart").unwrap_or(Tick::ZERO);
@@ -710,11 +805,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
                     continue;
                 }
                 let mut ti = self.b.clip(item, kind, &name, t0, dur, src_in.max(Tick::ZERO));
-                ti.speed = speed;
-                ti.reverse = reverse;
-                if hold {
-                    ti.frame_hold = Some(src_in.max(Tick::ZERO));
-                }
+                apply_time_map(&mut ti, speed, reverse, hold, src_in);
                 ti.link = link;
                 ti.enabled = flag(el, "enabled").unwrap_or(true);
                 if let Some(l) = el.attribute("label").and_then(Label::from_name) {
@@ -740,8 +831,7 @@ impl<'a, 'i> Imp<'a, 'i, '_> {
             }
             if let (Some(child), Some(parent), Some(link)) = (deferred_audio_reference, self.sequence_stack.last().copied(), link) {
                 let mut audio = self.b.clip(item, TrackKind::Audio, &name, t0, dur, src_in.max(Tick::ZERO));
-                audio.speed = speed;
-                audio.reverse = reverse;
+                apply_time_map(&mut audio, speed, reverse, hold, src_in);
                 audio.link = Some(link);
                 audio.enabled = flag(el, "enabled").unwrap_or(true);
                 if let Some(label) = el.attribute("label").and_then(Label::from_name) {
@@ -910,6 +1000,12 @@ fn parse_db(v: &str) -> f64 {
 }
 
 /// (speed, reverse, freeze, source time at the element's local start) from a `timeMap`.
+fn apply_time_map(item: &mut TrackItem, speed: f64, reverse: bool, hold: bool, source_in: Tick) {
+    item.speed = speed;
+    item.reverse = reverse;
+    item.frame_hold = hold.then_some(source_in.max(Tick::ZERO));
+}
+
 fn time_map(el: Node, local_start: Tick) -> (f64, bool, bool, Tick) {
     let Some(tm) = child(el, "timeMap") else { return (1.0, false, false, local_start) };
     let pts: Vec<(Tick, Tick)> = children(tm, "timept").filter_map(|p| Some((attr_time(p, "time")?, attr_time(p, "value")?))).collect();

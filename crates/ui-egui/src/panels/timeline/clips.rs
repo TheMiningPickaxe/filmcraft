@@ -179,6 +179,12 @@ pub fn zoomed_thumbnail_tiles(
     tiles.into_iter().map(|(x, t)| (x0 + (x - x0) * r, tile_w * r, t)).collect()
 }
 
+fn zoomed_thumbnail_width_cap(width: f32, height: f32, aspect: f32, pps: f64, frozen: f64) -> f32 {
+    let frozen_scale = frozen as f32 / pps as f32;
+    (width * frozen_scale).min(height * aspect * frozen_scale)
+}
+
+#[cfg(test)]
 fn thumbnail_render_size(width: f32, aspect: f32, max_height: f32) -> egui::Vec2 {
     if !width.is_finite() || !aspect.is_finite() || aspect <= 0.0 || !max_height.is_finite() {
         return egui::Vec2::ZERO;
@@ -242,7 +248,7 @@ pub(super) fn draw_clip(
             // and reveals new frames, each one a thumbnail request
             let cap_w = match (mode, frozen) {
                 (crate::state::ThumbnailMode::Continuous, Some(f)) if pps.is_finite() && pps > 0.0 && f.is_finite() && f > 0.0 => {
-                    th.width() * (f as f32 / pps as f32)
+                    zoomed_thumbnail_width_cap(th.width(), th.height(), aspect, pps, f)
                 }
                 _ => th.width(),
             };
@@ -273,10 +279,11 @@ pub(super) fn draw_clip(
                     })
                     .unwrap_or((it.item, mt));
                 if let Some((tex, _)) = app.thumbnail(ctx, thumb_item, mt, 160) {
-                    // Continuous tiles stretch horizontally with live zoom; derive their height
-                    // from that same rendered width to preserve the source aspect ratio.
-                    let tile_size = thumbnail_render_size(w, aspect, th.height());
-                    let r = Rect::from_min_size(pos2(x, th.min.y), tile_size);
+                    // Keep the zoomed tile's full width so neighboring tiles remain contiguous.
+                    // When preserving aspect ratio makes it taller than the track, center-crop
+                    // vertically through the clip rect instead of shrinking it and leaving gaps.
+                    let tile_h = (w / aspect).max(th.height());
+                    let r = Rect::from_min_size(pos2(x, th.center().y - tile_h / 2.0), vec2(w, tile_h));
                     cp.image(tex, r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 }
             }
@@ -395,7 +402,8 @@ pub(super) fn draw_transition(p: &egui::Painter, r: Rect, trn: &filmcraft_projec
 
 #[cfg(test)]
 mod thumbnail_height_tests {
-    use super::thumbnail_render_size;
+    use super::{thumbnail_render_size, zoomed_thumbnail_tiles, zoomed_thumbnail_width_cap};
+    use filmcraft_time::Tick;
 
     #[test]
     fn rendered_thumbnail_height_tracks_live_width_and_stays_in_clip() {
@@ -404,5 +412,26 @@ mod thumbnail_height_tests {
         assert!((fitted.x - 100.0 * 16.0 / 9.0).abs() < 0.001);
         assert_eq!(fitted.y, 100.0);
         assert_eq!(thumbnail_render_size(100.0, 0.0, 100.0), egui::Vec2::ZERO);
+    }
+
+    #[test]
+    fn continuous_tiles_stay_contiguous_when_the_picture_height_caps_the_frame() {
+        let aspect = 16.0 / 9.0;
+        let picture_height = 90.0;
+        let base = 1000.0f32.min(zoomed_thumbnail_width_cap(1000.0, picture_height, aspect, 2.0, 1.0));
+        let tiles = zoomed_thumbnail_tiles(crate::state::ThumbnailMode::Continuous, 0.0, 900.0, base, (0.0, 900.0), Tick(1000), Tick(1), 2.0, Some(1.0));
+        assert!(tiles.len() > 1);
+        let picture = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(900.0, picture_height));
+        let image_rects: Vec<_> = tiles
+            .iter()
+            .map(|(x, width, _)| {
+                let height = (*width / aspect).max(picture_height);
+                egui::Rect::from_min_size(egui::pos2(*x, picture_height / 2.0 - height / 2.0), egui::vec2(*width, height)).intersect(picture)
+            })
+            .collect();
+        for pair in image_rects.windows(2) {
+            assert!((pair[0].max.x - pair[1].min.x).abs() < 0.001, "painted tile rectangles must touch: {pair:?}");
+            assert!((pair[0].height() - picture_height).abs() < 0.001, "the cropped tile fills the picture area");
+        }
     }
 }

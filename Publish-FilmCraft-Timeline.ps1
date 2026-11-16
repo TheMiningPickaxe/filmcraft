@@ -90,7 +90,7 @@ if (-not [string]::IsNullOrWhiteSpace($CommitBody)) {
     Write-Host $CommitBody
 }
 Write-Host ''
-Write-Host 'The required FilmCraft quality gate runs before the commit and may take 20–60 minutes under load.'
+Write-Host 'The required FilmCraft quality gate runs in an isolated checkout of the staged tree before the commit and may take 20–60 minutes under load.'
 Write-Host ''
 $confirmation = Read-Host "Type YES to commit these files and push branch '$branch' to your GitHub fork"
 if ($confirmation -cne 'YES') {
@@ -123,13 +123,31 @@ if ($workingTreeChanges.Count -gt 0) {
     throw "Unstaged or untracked changes exist. Stage or discard these paths before publishing; the quality gate runs on the working tree. Nothing was committed or pushed:`n$($workingTreeChanges -join "`n")"
 }
 $gateExitCode = 1
-Push-Location -LiteralPath $repo
+$gateCommit = & git -C $repo commit-tree $stagedTreeBeforeConfirmation -p $headBeforeConfirmation -m 'FilmCraft staged-tree quality gate'
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$gateCommit")) {
+    throw 'Could not create the isolated staged-tree quality gate commit. Nothing was committed or pushed.'
+}
+$gateCommit = "$gateCommit".Trim()
+$gateWorktree = Join-Path ([System.IO.Path]::GetTempPath()) ("filmcraft-quality-gate-" + [guid]::NewGuid().ToString('N'))
+$gateWorktreeAdded = $false
 try {
-    & cargo xtask ci
-    $gateExitCode = $LASTEXITCODE
+    & git -C $repo worktree add --detach $gateWorktree $gateCommit
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the isolated staged-tree quality gate checkout. Nothing was committed or pushed.' }
+    $gateWorktreeAdded = $true
+    Push-Location -LiteralPath $gateWorktree
+    try {
+        & cargo xtask ci
+        $gateExitCode = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+    }
 }
 finally {
-    Pop-Location
+    if ($gateWorktreeAdded) {
+        & git -C $repo worktree remove --force $gateWorktree
+        if ($LASTEXITCODE -ne 0) { throw 'The isolated quality gate checkout could not be removed. Nothing was committed or pushed.' }
+    }
 }
 if ($gateExitCode -ne 0) {
     throw 'The FilmCraft quality gate failed. Nothing was committed or pushed.'
@@ -144,6 +162,20 @@ if ($branchExit -ne 0 -or $headExit -ne 0 -or $treeExit -ne 0 -or "$currentBranc
     throw 'The branch, HEAD, or staged changes changed while the quality gate ran. Nothing was committed or pushed; review and confirm again.'
 }
 Assert-PushDestinationsUnchanged
+$unstagedChanges = @(& git -C $repo diff --name-only 2>$null)
+$unstagedExit = $LASTEXITCODE
+if ($unstagedExit -ne 0) {
+    throw 'Could not inspect unstaged changes after the quality gate. Nothing was committed or pushed.'
+}
+$untrackedChanges = @(& git -C $repo ls-files --others --exclude-standard 2>$null)
+$untrackedExit = $LASTEXITCODE
+if ($untrackedExit -ne 0) {
+    throw 'Could not inspect untracked changes after the quality gate. Nothing was committed or pushed.'
+}
+$workingTreeChanges = @($unstagedChanges + $untrackedChanges | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+if ($workingTreeChanges.Count -gt 0) {
+    throw "Unstaged or untracked changes appeared while the quality gate ran. Nothing was committed or pushed:`n$($workingTreeChanges -join "`n")"
+}
 if ([string]::IsNullOrWhiteSpace($CommitBody)) {
     & git -C $repo commit -m $CommitTitle
 } else {
@@ -164,10 +196,8 @@ if ($treeExit -ne 0 -or $parentExit -ne 0 -or $committedTree -cne $stagedTreeBef
 }
 
 Assert-PushDestinationsUnchanged
-foreach ($pushUrl in $pushUrls) {
-    & git -C $repo push --no-follow-tags $pushUrl "${verifiedCommit}:refs/heads/${branch}"
-    if ($LASTEXITCODE -ne 0) { throw 'Commit succeeded, but pushing failed. The commit is still local or only partially published.' }
-}
+& git -C $repo push --no-follow-tags --no-recurse-submodules origin "${verifiedCommit}:refs/heads/${branch}"
+if ($LASTEXITCODE -ne 0) { throw 'Commit succeeded, but pushing failed. The commit is still local or only partially published.' }
 
 Write-Host ''
 Write-Host "Published branch '$branch' to the configured FilmCraft fork."

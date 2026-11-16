@@ -293,10 +293,12 @@ fn new_sequence_from_clip_bin_from_selection_and_offline_file() {
     let a = item_named(&s, "Desert_Dunes.mp4");
     let b = item_named(&s, "Misty_Forest.mp4");
     s.execute("project.select", json!({"items": [a.0, b.0]})).unwrap();
+    let _ = s.persistence_project_view();
     let undo0 = s.history.undo.len();
     let r = s.execute("file.newSequenceFromClip", json!({})).unwrap();
     let seq = ItemId(r["sequence"].as_u64().unwrap());
     assert_eq!(s.state.active_sequence, Some(seq));
+    assert_eq!(s.persistence_project_view().active_sequence, Some(seq), "the cached view must reflect the sequence created by the edit");
     assert_eq!(s.project.item(seq).unwrap().name, "Desert_Dunes.mp4");
     let q = s.project.sequence(seq).unwrap();
     assert_eq!(q.video_tracks[0].items.len(), 2, "both clips, one after the other");
@@ -343,12 +345,17 @@ fn close_project_and_save_all() {
     assert!(!s.is_dirty(), "a view-only change must not dirty project content");
     assert!(s.is_view_dirty(), "the view change still needs saving");
     assert!(s.execute("file.closeProject", json!({})).is_err(), "closing must preserve unsaved view settings");
+    s.execute("file.saveAll", json!({})).unwrap();
+    assert!(!s.is_view_dirty(), "save the view before independently checking content dirtiness");
+    assert!(!s.is_dirty());
     s.execute("edit.label.tan", json!({})).unwrap();
     assert!(s.execute("file.closeProject", json!({})).is_err(), "unsaved changes");
+    s.transient_playheads.insert(ItemId(1), Tick(123));
     s.execute("file.closeProject", json!({"force": true})).unwrap();
     assert!(s.project.items.is_empty() && s.path.is_none() && s.state.active_sequence.is_none());
     assert!(!s.has_unsaved_changes(), "the new untitled project starts clean");
     assert!(!s.history.can_undo());
+    assert!(s.transient_playheads.is_empty());
 }
 
 #[test]

@@ -109,6 +109,29 @@ fn playhead_changes_advance_only_the_view_persistence_epoch() {
 }
 
 #[test]
+fn transient_playback_positions_survive_sequence_switches_independently() {
+    let (mut s, [main, b, _]) = three_tabs();
+    let main_rate = s.project.sequence(main).unwrap().settings.frame_rate;
+    let b_rate = s.project.sequence(b).unwrap().settings.frame_rate;
+    let main_at = main_rate.snap(Tick(10 * TICKS_PER_SECOND));
+    let b_at = b_rate.snap(Tick(2 * TICKS_PER_SECOND));
+    s.execute("sequence.open", json!({"item": main.0})).unwrap();
+    s.set_playhead_during_playback(main_at);
+    s.execute("sequence.open", json!({"item": b.0})).unwrap();
+    s.set_playhead_during_playback(b_at);
+
+    s.execute("sequence.open", json!({"item": main.0})).unwrap();
+    assert_eq!(s.playhead(), main_at, "switching and seeking in B must not erase A's live transport position");
+    s.execute("sequence.open", json!({"item": b.0})).unwrap();
+    assert_eq!(s.playhead(), b_at);
+
+    let manual_b = b_rate.snap(Tick(3 * TICKS_PER_SECOND));
+    s.set_playhead(manual_b);
+    assert_eq!(s.playhead_for_sequence(main), Some(main_at), "a seek in B replaces only B's transient position");
+    assert_eq!(s.playhead_for_sequence(b), Some(manual_b));
+}
+
+#[test]
 fn a_saved_project_reopens_with_its_tabs_and_their_views() {
     let (mut s, [main, b, c]) = three_tabs();
     s.execute("sequence.moveTab", json!({"item": c.0, "index": 0})).unwrap();

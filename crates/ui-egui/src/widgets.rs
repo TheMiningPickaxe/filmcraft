@@ -116,7 +116,13 @@ fn hot_number_editor(
     let stepped = if draft_is_valid { step_typed_value(ui, edit_id, buf, value, range, suffix) } else { None };
     let previous_buf = buf.clone();
     let previous_cursor = egui::text_edit::TextEditState::load(ui.ctx(), edit_id).and_then(|state| state.cursor.char_range());
-    let r = accessible_name(ui.add(egui::TextEdit::singleline(buf).id(edit_id).desired_width(56.0).font(Tokens::ui(12.0))), label);
+    let mut editor = egui::TextEdit::singleline(buf).id(edit_id).desired_width(56.0).font(Tokens::ui(12.0));
+    if numeric_only {
+        // Bound paste and layout work before TextEdit processes changed text. Keep one extra
+        // character so the validator can reject an over-limit draft instead of accepting a trim.
+        editor = editor.char_limit(33);
+    }
+    let r = accessible_name(ui.add(editor), label);
     if numeric_only {
         // Treat malformed input as one rejected edit: dropping only the bad character would
         // silently turn a paste such as "1x2" into the different number "12".
@@ -772,6 +778,19 @@ mod tests {
         assert_eq!(ctx.data(|data| data.get_temp::<String>(id.with("editing"))), Some("12.5".to_string()));
         let state = egui::text_edit::TextEditState::load(&ctx, edit_id).unwrap_or_default();
         assert_eq!(state.cursor.char_range().map(|range| range.sorted_cursors()), Some([egui::text::CCursor::new(2), egui::text::CCursor::new(2)]));
+    }
+
+    #[test]
+    fn numeric_hot_number_rejects_oversized_paste_before_accepting_it() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique("numeric-hot-number-paste-limit");
+        ctx.data_mut(|data| {
+            data.insert_temp(id.with("editing"), "7".to_string());
+            data.insert_temp(id.with("select-all"), true);
+        });
+        numeric_hot_number_frame(&ctx, id, 7.0, vec![]);
+        assert_eq!(numeric_hot_number_frame(&ctx, id, 7.0, vec![egui::Event::Paste("1".repeat(1_000_000))]), None);
+        assert_eq!(ctx.data(|data| data.get_temp::<String>(id.with("editing"))), Some("7".to_string()));
     }
 
     #[test]

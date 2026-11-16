@@ -1,4 +1,4 @@
-﻿//! Programmatic control of the running app (agents, tests, MCP bridge).
+//! Programmatic control of the running app (agents, tests, MCP bridge).
 //!
 //! Transport-agnostic: a transport thread (TCP in the desktop app) sends [`ControlRequest`]s; the
 //! UI thread handles them between frames and replies with `{"ok":â€¦, "result"|"error":â€¦}`.
@@ -255,6 +255,10 @@ fn handle_ui_set(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Outc
 #[allow(clippy::cognitive_complexity)]
 fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Result<(), String> {
     let Some(tl) = p.get("timeline") else { return Ok(()) };
+    // First capture any displayed geometry before applying a control update, then persist the
+    // resulting view below so a follow-up close command cannot race the next UI frame.
+    let initial_view_epoch = app.session.view_epoch;
+    app.sync_timeline_view();
     for (key, min, max) in [
         ("playheadSideSeconds", 0.1, 3600.0),
         ("shiftDragSpeed", 0.1, 50.0),
@@ -417,7 +421,15 @@ fn set_timeline(app: &mut FilmcraftApp, ctx: &egui::Context, p: &Value) -> Resul
             app.ui.timeline.thumbnail_mode = mode;
         }
     }
+    app.sync_timeline_view();
+    if timeline_view_changed_since(initial_view_epoch, app.session.view_epoch) {
+        app.session.sync_persistence();
+    }
     Ok(())
+}
+
+fn timeline_view_changed_since(before_sync: u64, after_sync: u64) -> bool {
+    before_sync != after_sync
 }
 
 /// The `gfxEdit` part of a `ui.set` payload: which layer the Type tool edits. Resolves that
@@ -1012,6 +1024,31 @@ mod input_bounds_tests {
         app.synthetic.clear();
         assert!(matches!(request(&mut app, "ui.move", json!({"x": 10, "y": 20, "count": u64::MAX})), Outcome::AfterInput));
         assert_eq!(app.synthetic.len(), 3, "ui.move does not use count");
+    }
+
+    #[test]
+    fn ui_set_track_height_updates_the_saved_view_before_acknowledgement() {
+        let mut app = app();
+        app.session.execute("file.openDemoProject", json!({})).unwrap();
+        let sequence = app.session.state.active_sequence.unwrap();
+        let initial =
+            filmcraft_engine::project::SequenceView { pps: 10.0, scroll: 0.0, v_scroll: 0.0, a_scroll: 0.0, video_track_h: 60.0, audio_track_h: 60.0 };
+        app.session.state.timeline_views.insert(sequence, initial);
+        app.sync_timeline_view();
+        let epoch = app.session.view_epoch;
+        let outcome = request(&mut app, "ui.set", json!({"timeline": {"videoTrackHeight": 80.0}}));
+        assert!(matches!(outcome, Outcome::Done(_)));
+        assert!(app.session.view_epoch > epoch, "the control update marks the project view dirty before returning");
+        assert_eq!(app.session.state.timeline_views.get(&sequence).map(|view| view.video_track_h), Some(80.0));
+    }
+
+    #[test]
+    fn ui_set_persistence_check_includes_geometry_captured_before_the_update() {
+        let epoch_before_geometry_sync = 12;
+        let epoch_after_geometry_sync = 13;
+        let epoch_after_control_update = 13;
+        assert!(super::timeline_view_changed_since(epoch_before_geometry_sync, epoch_after_control_update));
+        assert!(!super::timeline_view_changed_since(epoch_after_geometry_sync, epoch_after_control_update));
     }
 
     /// Verify missing/null defaults and accepted drag bounds retain endpoints and button release.

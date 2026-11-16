@@ -54,8 +54,30 @@ pub use layout::{Layout, Row, max_pps, max_scroll, min_pps, scroll_to_reveal, ti
 pub(crate) use menus::{CLIP_MENU, EDIT_POINT_TYPES};
 use ruler::draw_top;
 pub use ruler::ruler_steps;
+
+pub(crate) fn clipboard_events_as_keys(events: &mut Vec<egui::Event>, modifiers: egui::Modifiers, label_selected: bool) {
+    use egui::{Event, Key};
+    let command_or_control = modifiers.command || modifiers.ctrl || modifiers.mac_cmd;
+    let keys: Vec<Key> = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Copy | Event::Cut if label_selected => None,
+            Event::Copy if command_or_control => Some(Key::C),
+            Event::Copy => Some(Key::Copy),
+            Event::Cut if command_or_control => Some(Key::X),
+            Event::Cut if modifiers.shift => Some(Key::Delete),
+            Event::Cut => Some(Key::Cut),
+            Event::Paste(_) | Event::PasteImage(_) if command_or_control => Some(Key::V),
+            Event::Paste(_) | Event::PasteImage(_) if modifiers.shift => Some(Key::Insert),
+            Event::Paste(_) | Event::PasteImage(_) => Some(Key::Paste),
+            _ => None,
+        })
+        .collect();
+    events.extend(keys.into_iter().map(|key| Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers }));
+}
 #[cfg(test)]
 pub(crate) use scrollbars::controls_listen_key;
+pub(crate) use scrollbars::flush_pending_zoombar_view_change;
 pub use scrollbars::{
     controls_listening, custom_control_shortcut_pending, custom_control_shortcut_pending_for_events, set_track_slider_hidden, set_zoombar_hidden,
     zoombar_cursor_watchdog,
@@ -81,6 +103,8 @@ fn content_right(rect: Rect, header_w: f32, side_off: f32, side_left: bool) -> f
     (rect.max.x - if side_left { 0.0 } else { side_off }).max(rect.min.x + header_w)
 }
 const MASTER_H: f32 = 34.0;
+pub(crate) const MIN_TRACK_HEIGHT: f32 = 8.0;
+pub(crate) const MAX_TRACK_HEIGHT: f32 = 600.0;
 /// The selected gap between two clips (#648, #668).
 const GAP_FILL: Color32 = Color32::from_gray(224);
 /// Duplicate frame marker colors, one per master clip with duplicate frames in the order they
@@ -379,6 +403,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // A damaged project can name an active sequence that no longer exists.
     // Keep the immutable project snapshot alive while UI commands mutate the session.
     // Cloning a sequence here copies every clip and effect on every redraw.
+    let minimap_revision = app.session.revision;
     let project = app.session.project.clone();
     let Some(seq) = app.session.state.active_sequence.and_then(|id| project.sequence(id)) else {
         empty_state(app, ui, rect);
@@ -589,7 +614,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         } else {
             Rect::from_min_max(pos2(full.min.x + 7.0, full.max.y - SCROLLBAR_H + 2.0), pos2(full.max.x - 7.0, full.max.y - 2.0))
         };
-        zoom_scrollbar(app, ui, bar, content.width(), seq, seq.settings.frame_rate.frame_duration().seconds(), &t);
+        zoom_scrollbar(app, ui, bar, content.width(), seq, minimap_revision, seq.settings.frame_rate.frame_duration().seconds(), &t);
     }
     let mut on_side = false;
     if !tracks_hidden {
@@ -677,16 +702,16 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 if video { (app.ui.timeline.v_scroll, max_vs, video_area.height()) } else { (app.ui.timeline.a_scroll, max_as, audio_area.height()) };
             let mut tg = [app.ui.timeline.video_track_h, app.ui.timeline.v_scroll, app.ui.timeline.audio_track_h, app.ui.timeline.a_scroll];
             if clicks == 3 {
-                // Ctrl+Shift+double-click sets both sides to the 22-point minimum.
+                // Ctrl+Shift+double-click sets both sides to the minimum track height.
                 // A pane with many tracks can still require scrolling.
-                tg = [22.0, 0.0, 22.0, 0.0];
+                tg = [MIN_TRACK_HEIGHT, 0.0, MIN_TRACK_HEIGHT, 0.0];
             } else if clicks == 2 {
-                // Shift+double-click sets this side to the 22-point minimum.
+                // Shift+double-click sets this side to the minimum track height.
                 if video {
-                    tg[0] = 22.0;
+                    tg[0] = MIN_TRACK_HEIGHT;
                     tg[1] = 0.0;
                 } else {
-                    tg[2] = 22.0;
+                    tg[2] = MIN_TRACK_HEIGHT;
                     tg[3] = 0.0;
                 }
             } else {
@@ -715,6 +740,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 app.ui.timeline.v_scroll = tg[1];
                 app.ui.timeline.audio_track_h = tg[2];
                 app.ui.timeline.a_scroll = tg[3];
+                app.timeline_still = 0;
             }
         }
         for (name, thumb) in [("video", vthumb), ("audio", athumb)] {
@@ -932,8 +958,18 @@ fn animate_view(app: &mut FilmcraftApp, ctx: &egui::Context, content: Rect, seq_
             // The first fit is a display default. Later fits are explicit view changes and
             // must be exchanged with the project before marking the local snapshot current.
             if app.timeline_view_last.is_some() {
-                app.session.state.timeline_views.insert(seq_id, fitted);
-                app.session.view_changed();
+                let unchanged = app.session.state.timeline_views.get(&seq_id).is_some_and(|stored| {
+                    stored.pps == fitted.pps
+                        && stored.scroll == fitted.scroll
+                        && stored.v_scroll == fitted.v_scroll
+                        && stored.a_scroll == fitted.a_scroll
+                        && stored.video_track_h == fitted.video_track_h
+                        && stored.audio_track_h == fitted.audio_track_h
+                });
+                if !unchanged {
+                    app.session.state.timeline_views.insert(seq_id, fitted);
+                    app.session.view_changed();
+                }
             }
             app.timeline_view_last = Some(fitted);
         }
@@ -1762,10 +1798,12 @@ mod zoom_ceiling_animation_tests {
         v.target_scroll = 10.0;
         let width = 1000.0;
         let before = v.scroll + width * 0.5 / v.pps;
+        let target_before = v.target_scroll + width * 0.5 / v.target_pps;
         animate_view(&mut app, &egui::Context::default(), Rect::from_min_size(pos2(0.0, 0.0), vec2(width as f32, 400.0)), id, seq);
         let v = &app.ui.timeline;
         assert!(v.pps < 2500.0);
         assert!((v.scroll + width * 0.5 / v.pps - before).abs() < 1e-9);
+        assert!((v.target_scroll + width * 0.5 / v.target_pps - target_before).abs() < 1e-9);
     }
 
     #[test]
@@ -1816,6 +1854,28 @@ mod zoom_ceiling_animation_tests {
         app.session.prefs.appearance.animations = false;
         animate_view(&mut app, &egui::Context::default(), Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 400.0)), id, seq);
         assert!(!app.session.state.timeline_views.contains_key(&id));
+    }
+
+    #[test]
+    fn fitting_an_already_stored_view_does_not_mark_it_changed() {
+        let mut session = filmcraft_engine::Session::default();
+        session.execute("file.openDemoProject", json!({})).unwrap();
+        let id = session.state.active_sequence.unwrap();
+        let project = session.project.clone();
+        let seq = project.sequence(id).unwrap();
+        let mut app = FilmcraftApp::new(session);
+        app.session.prefs.appearance.animations = false;
+        let ctx = egui::Context::default();
+        let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 400.0));
+        app.ui.timeline.fit_pending = true;
+        animate_view(&mut app, &ctx, rect, id, seq);
+        let fitted = app.timeline_view_last.unwrap();
+        app.session.state.timeline_views.insert(id, fitted);
+        app.timeline_view_last = Some(fitted);
+        let epoch = app.session.view_epoch;
+        app.ui.timeline.fit_pending = true;
+        animate_view(&mut app, &ctx, rect, id, seq);
+        assert_eq!(app.session.view_epoch, epoch, "a no-op Fit does not create a save prompt");
     }
 }
 

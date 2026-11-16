@@ -62,6 +62,7 @@ pub mod transcript;
 pub mod trim;
 pub mod voiceover;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use filmcraft_edit::EditCtx;
@@ -538,7 +539,7 @@ pub struct Session {
     /// unsaved content.
     pub saved_view_epoch: u64,
     /// Live transport position is shown by the UI but excluded from saved ProjectView snapshots.
-    pub(crate) transient_playhead: Option<(ItemId, Tick)>,
+    pub(crate) transient_playheads: HashMap<ItemId, Tick>,
     /// Most recent view snapshot sent to autosave. Drags update every frame; spacing these sends
     /// bounds project-view cloning and queued channel work without delaying the final close flush.
     last_view_snapshot_sent: Option<web_time::Instant>,
@@ -562,6 +563,8 @@ pub struct Session {
     pub prefs_path: Option<std::path::PathBuf>,
     /// Auto-save ring + crash-recovery journal (native frontends start it; None = off).
     pub persistence: Option<autosave::Persistence>,
+    /// Shared write fence for explicit saves and the autosave worker's optional project-file write.
+    pub(crate) project_file_fence: Arc<std::sync::Mutex<autosave::ProjectFileFence>>,
     /// Schema version of the file at `path` as found on disk (older = upgraded on load; the first
     /// save over it keeps a backup of the original).
     pub loaded_schema: u32,
@@ -670,7 +673,7 @@ impl Session {
             saved_revision: 1,
             view_epoch: 0,
             saved_view_epoch: 0,
-            transient_playhead: None,
+            transient_playheads: HashMap::new(),
             last_view_snapshot_sent: None,
             persistence_view_cache: None,
             path: None,
@@ -690,6 +693,7 @@ impl Session {
             prefs: Default::default(),
             prefs_path: None,
             persistence: None,
+            project_file_fence: Arc::new(std::sync::Mutex::new(autosave::ProjectFileFence::default())),
             loaded_schema: filmcraft_format::SCHEMA_VERSION,
             previews: Arc::new(previews::PreviewStore::temp()),
             mixrec: Default::default(),
@@ -760,7 +764,7 @@ impl Session {
         self.export_presets.set_dir(&cfg.data_dir);
         self.prefs_path = Some(prefs_path);
         self.apply_media_cache();
-        self.persistence = Some(autosave::Persistence::start(&cfg, self.prefs.auto_save.clone())?);
+        self.persistence = Some(autosave::Persistence::start_with_project_file_fence(&cfg, self.prefs.auto_save.clone(), self.project_file_fence.clone())?);
         self.sync_persistence();
         Ok(())
     }
@@ -1088,7 +1092,7 @@ impl Session {
     /// view without any open sequence leaves the project on its first sequence: a project saved
     /// by a session that never showed one (a script, the CLI) should not open on an empty Timeline.
     pub fn restore_project_view(&mut self, view: filmcraft_project::ProjectView) {
-        self.transient_playhead = None;
+        self.clear_transient_playhead();
         self.state.timeline_ui = view.timeline_ui.checked();
         let mut open: Vec<ItemId> = Vec::new();
         for id in view.open_sequences {
@@ -1154,6 +1158,7 @@ impl Session {
         self.history.redo.clear();
         self.history.merge_key = None;
         self.state = st;
+        self.persistence_view_cache = None;
         self.drop_stale_gap();
         self.bump();
         Ok(r)
@@ -1175,6 +1180,7 @@ impl Session {
         self.drop_orphan_transitions(&mut p);
         self.project = Arc::new(p);
         self.state = st;
+        self.persistence_view_cache = None;
         self.drop_stale_gap();
         self.bump();
         Ok(r)
@@ -1394,15 +1400,17 @@ impl Session {
     }
 
     pub fn playhead_for_sequence(&self, sequence: ItemId) -> Option<Tick> {
-        self.transient_playhead.filter(|(id, _)| *id == sequence).map(|(_, tick)| tick).or_else(|| self.state.playheads.get(&sequence).copied())
+        self.transient_playheads.get(&sequence).copied().or_else(|| self.state.playheads.get(&sequence).copied())
     }
 
     pub(crate) fn clear_transient_playhead(&mut self) {
-        self.transient_playhead = None;
+        self.transient_playheads.clear();
     }
 
     pub fn set_playhead(&mut self, t: Tick) {
-        self.transient_playhead = None;
+        if let Some(sequence) = self.state.active_sequence {
+            self.transient_playheads.remove(&sequence);
+        }
         self.set_playhead_inner(t);
     }
 
@@ -1411,7 +1419,7 @@ impl Session {
     pub fn set_playhead_during_playback(&mut self, t: Tick) {
         let Some(sequence) = self.state.active_sequence else { return };
         let rate = self.active_sequence().map(|sequence| sequence.settings.frame_rate).unwrap_or_default();
-        self.transient_playhead = Some((sequence, rate.snap(t.max(Tick::ZERO))));
+        self.transient_playheads.insert(sequence, rate.snap(t.max(Tick::ZERO)));
         self.persistence_view_cache = None;
         if self.state.selection_follows_playhead {
             sequence_tools::select_under_playhead(self);

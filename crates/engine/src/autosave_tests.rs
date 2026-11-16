@@ -160,7 +160,7 @@ fn view_only_autosave_snapshots_are_coalesced_during_drags() {
     }
 
     s.last_view_snapshot_sent = Some(web_time::Instant::now() - std::time::Duration::from_secs(1));
-    s.project_view_changed();
+    s.poll_persistence();
     assert_eq!(s.persistence.as_ref().unwrap().last_sent.as_ref().map(|sent| sent.view_epoch), Some(s.view_epoch));
     s.shutdown();
     std::fs::remove_dir_all(d).unwrap();
@@ -534,6 +534,36 @@ fn auto_save_ring_rotates_and_can_save_the_project() {
     let mut t = Session::default();
     t.execute("file.open", json!({"path": proj})).unwrap();
     assert_eq!(*t.project, *s.project);
+    s.shutdown();
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn failed_current_project_write_retries_without_another_version() {
+    let d = temp_dir("retry-current-project");
+    let saved_path = d.join("saved.fcproj");
+    let invalid_path = d.join("directory-target");
+    std::fs::create_dir_all(&invalid_path).unwrap();
+    let mut s = demo();
+    start(&mut s, &d);
+    s.execute("file.saveAs", json!({"path": saved_path.to_string_lossy()})).unwrap();
+    s.execute("prefs.set", json!({"key": "autoSave.saveCurrentProject", "value": true})).unwrap();
+    s.path = Some(invalid_path.to_string_lossy().into_owned());
+    s.execute("sequence.addEdit", json!({"seconds": 1.0})).unwrap();
+
+    let first = s.execute("file.autoSaveNow", json!({})).unwrap();
+    assert!(first["path"].as_str().is_some());
+    assert!(s.is_dirty(), "the failed project write leaves content unsaved");
+    let auto_save_dir = d.join("Auto-Save");
+    let versions_after_first = std::fs::read_dir(&auto_save_dir).unwrap().count();
+
+    s.path = Some(saved_path.to_string_lossy().into_owned());
+    s.execute("file.autoSaveNow", json!({})).unwrap();
+    assert_eq!(std::fs::read_dir(&auto_save_dir).unwrap().count(), versions_after_first, "retry reuses the successful auto-save version");
+    wait_for("retried current project write", || {
+        s.poll_persistence();
+        !s.is_dirty()
+    });
     s.shutdown();
     let _ = std::fs::remove_dir_all(&d);
 }

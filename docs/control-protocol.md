@@ -69,6 +69,16 @@ any Timeline field is applied. Other parts of the same request may already have 
 that validation runs. An unknown thumbnail mode is also rejected, and earlier Timeline fields in
 that request may already have been applied.
 
+`ui.inspect.timelineSettings` returns the serialized project settings, whose field names are
+snake_case. The `ui.set.timeline` camelCase preference keys map to these readback fields:
+`playheadSideSeconds` → `playhead_side_seconds`, `shiftDragSpeed` → `shift_drag_speed`,
+`maxZoomLevel` → `max_zoom_seconds`, `trackSliderShiftDragSpeed` →
+`track_slider_shift_drag_speed`, `smoothAnimations` → `smooth_animations`,
+`trackSliderSmoothAnimations` → `track_slider_smooth`, `trackSliderDecoupleEdges` →
+`track_slider_decouple`, and `trackSliderAlternatePosition` →
+`track_slider_alternate_position`. Boolean preference names otherwise use their corresponding
+snake_case field names (for example, `showWholeTimeline` → `show_whole_timeline`).
+
 For `ui.click` and `ui.drag`, omitted or null counts/steps use the defaults. Out-of-range or
 non-integer values return `{"ok": false, "error": "…"}` before queuing any pointer input.
 These limits also apply to the MCP bridge's `ui_click`, `ui_drag` and `ui_control` tools.

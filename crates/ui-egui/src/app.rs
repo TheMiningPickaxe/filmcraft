@@ -246,8 +246,12 @@ impl FilmcraftApp {
     /// Close-request handling and control-driven synthetic input, in the original order.
     fn logic_control(&mut self, ctx: &egui::Context) {
         // Quitting with unsaved changes asks to save them first.
-        if ctx.input(|i| i.viewport().close_requested()) && panels::clip_dialogs::intercept_quit(self) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if ctx.input(|i| i.viewport().close_requested()) {
+            panels::timeline::flush_pending_zoombar_view_change(self, ctx);
+            self.sync_timeline_view();
+            if panels::clip_dialogs::intercept_quit(self) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
         }
         let had_synthetic = !self.synthetic.is_empty() || self.synthetic_pending_step.is_some();
         self.drain_control(ctx);
@@ -408,6 +412,7 @@ impl FilmcraftApp {
             self.ui_error = Some(crash::take_last().unwrap_or_else(|| "unknown error".into()));
             self.playback.playing = false;
         }
+        panels::timeline::flush_pending_zoombar_view_change(self, &ctx);
         if !ctx.will_discard() {
             self.cancel_value_drag(&ctx);
         }

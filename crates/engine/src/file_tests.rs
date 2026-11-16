@@ -142,3 +142,21 @@ fn open_demo_project_clears_saved_path_so_save_does_not_overwrite() {
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+#[test]
+fn revert_marks_tabs_changed_when_it_restores_the_previous_active_sequence() {
+    let d = temp_dir("revert-tabs-view-dirty");
+    let path = d.join("revert.fcproj").to_string_lossy().to_string();
+    let mut s = demo();
+    let previous_sequence = s.state.active_sequence.unwrap();
+    s.execute("file.newSequence", json!({"name": "Saved active sequence"})).unwrap();
+    let saved_sequence = s.state.active_sequence.unwrap();
+    s.execute("file.saveAs", json!({"path": path})).unwrap();
+    s.state.active_sequence = Some(previous_sequence);
+    s.state.open_sequences = vec![previous_sequence];
+    s.execute("file.revert", json!({})).unwrap();
+    assert_eq!(s.state.open_sequences, vec![previous_sequence]);
+    assert_ne!(s.state.active_sequence, Some(saved_sequence));
+    assert!(s.is_view_dirty(), "Revert's tab restoration must be reflected in the save state");
+    let _ = std::fs::remove_dir_all(&d);
+}

@@ -2000,8 +2000,12 @@ fn build() -> Vec<CommandSpec> {
             let keep = s.state.active_sequence;
             let r = open_project(s, &path)?;
             if let Some(k) = keep.filter(|k| s.project.sequence(*k).is_some()) {
-                s.state.active_sequence = Some(k);
-                s.state.open_sequences = vec![k];
+                let changed = s.state.active_sequence != Some(k) || s.state.open_sequences.as_slice() != [k];
+                if changed {
+                    s.state.active_sequence = Some(k);
+                    s.state.open_sequences = vec![k];
+                    s.view_changed();
+                }
             }
             Ok(r)
         }),
@@ -5347,6 +5351,8 @@ fn name_project(p: &mut filmcraft_project::Project, name: String) {
 }
 
 fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
+    let fence = s.project_file_fence.clone();
+    let mut fence = fence.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let t0 = web_time::Instant::now();
     // Save As renames the project after its new file (not an edit: no undo step, not dirty).
     if adopt
@@ -5370,6 +5376,7 @@ fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
     }
     s.services.write_file(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     if adopt {
+        fence.last_saved = Some((path.to_string(), s.revision, s.view_epoch));
         s.path = Some(path.to_string());
         s.previews_follow_path();
         s.note_recent_project();
@@ -5489,7 +5496,7 @@ fn recover(s: &mut Session, id: Option<&str>) -> Result<Value> {
         ))
     })?;
     per.candidates.remove(idx);
-    if c.meta.dirty {
+    if !content_is_clean {
         s.toast(format!("Recovered unsaved changes to {} from {saved_at}", c.meta.project_name));
     } else {
         s.toast(format!("Recovered Timeline view settings for {} from {saved_at}", c.meta.project_name));

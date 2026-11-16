@@ -684,6 +684,7 @@ fn new_from_template(s: &mut Session, p: &Value) -> Result<Value> {
     s.history = Default::default();
     s.history.limit = 200;
     s.state = Session::default().state;
+    s.clear_transient_playhead();
     s.state.active_sequence = s.project.sequences().next().map(|i| i.id);
     s.state.open_sequences = s.state.active_sequence.into_iter().collect();
     if let Some(view) = view {

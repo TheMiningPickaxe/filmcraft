@@ -107,6 +107,15 @@ fn a_project_saved_after_an_interchange_import_opens_again() {
     let mut t = Session::default();
     t.execute("file.open", json!({"path": path})).unwrap();
     assert_eq!(filmcraft_format::encode(&t.project, false), filmcraft_format::encode(&s.project, false));
+    let candidate = crate::autosave::RecoveryCandidate {
+        id: "offline-auto-point".into(),
+        dir: d.to_path_buf(),
+        meta: crate::autosave::JournalMeta { project_path: Some(path.clone()), ..Default::default() },
+    };
+    assert!(
+        crate::autosave::candidate_content_matches_project(&candidate, &t.project),
+        "recovery content comparison treats matching serialized auto coordinates as equal"
+    );
     assert_eq!(auto_points(&t.project), ["motion.anchor"]);
     assert_eq!(motion_point(&first_clip(&t, seq), "position"), Vec2::new(960.0, 540.0));
     // without a link step the import is one undo step

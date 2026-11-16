@@ -248,6 +248,10 @@ fn drag_uses_video_scroll(seq: &Sequence, clips: &[ClipId], start_track: TrackId
     kind == Some(TrackKind::Video)
 }
 
+fn drag_pointer_position(response: Option<egui::Pos2>, interact: Option<egui::Pos2>, latest: Option<egui::Pos2>) -> Option<egui::Pos2> {
+    response.or(interact).or(latest)
+}
+
 fn shift_track(seq: &Sequence, tid: TrackId, delta: i32) -> Option<TrackId> {
     if delta == 0 {
         return Some(tid);
@@ -305,6 +309,34 @@ fn horizontal_dominant_scroll(delta: egui::Vec2) -> bool {
     delta.x.abs() > delta.y.abs()
 }
 
+fn wheel_vertical_component(wheel: &WheelInput) -> f32 {
+    if wheel.alt && horizontal_dominant_scroll(wheel.delta) {
+        0.0
+    } else if horizontal_dominant_scroll(wheel.delta) || (wheel.shift && wheel.delta.y == 0.0) {
+        wheel.delta.x
+    } else {
+        wheel.delta.y
+    }
+}
+
+fn wheel_requests_zoom(wheel: &WheelInput) -> bool {
+    let vertical = wheel_vertical_component(wheel);
+    (wheel.pinch - 1.0).abs() > 1e-4 || (wheel.alt && vertical != 0.0) || (wheel.command && wheel.shift && vertical != 0.0)
+}
+
+fn horizontal_edge_factors(x: f32, min: f32, max: f32, left_zone: f32, right_zone: f32) -> (f32, f32) {
+    let mut right = ((x - (max - right_zone)) / right_zone).clamp(0.0, 1.0);
+    let mut left = (((min + left_zone) - x) / left_zone).clamp(0.0, 1.0);
+    if right > 0.0 && left > 0.0 {
+        if x - min < max - x {
+            right = 0.0;
+        } else {
+            left = 0.0;
+        }
+    }
+    (left, right)
+}
+
 /// Puts the playhead where the pointer is on the ruler: what a press does before any drag (#1090).
 fn scrub_playhead(app: &mut FilmcraftApp, seq: &Sequence, layout: &Layout, p: Pos2, shift: bool) {
     // A press on the ruler stops playback, but it must not close a scrub stream that is already
@@ -349,15 +381,9 @@ fn wheel_scroll(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, layout: &
         let horizontal_dominant = horizontal_dominant_scroll(w.delta);
         let horizontal_only = w.delta.y == 0.0 && w.delta.x != 0.0;
         // Alt+horizontal is still a trackpad time gesture, not the vertical-wheel zoom shortcut.
-        let wdy = if horizontal_only && w.alt {
-            0.0
-        } else if horizontal_dominant || (w.shift && w.delta.y == 0.0) {
-            w.delta.x
-        } else {
-            w.delta.y
-        };
+        let wdy = wheel_vertical_component(&w);
         // Ctrl + Shift + wheel zooms about the pointer, and Inverted controls turns that around
-        if (w.pinch - 1.0).abs() > 1e-4 || (w.alt && wdy != 0.0) || (w.command && w.shift && wdy != 0.0) {
+        if wheel_requests_zoom(&w) {
             let f = if (w.pinch - 1.0).abs() > 1e-4 {
                 w.pinch as f64
             } else {
@@ -779,8 +805,8 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
     let mods = ctx.input(|i| i.modifiers);
     // ---- drag
     if !app.tl.cancelled
-        && resp.dragged()
-        && let Some(p) = resp.interact_pointer_pos()
+        && (resp.dragged() || resp.drag_stopped())
+        && let Some(p) = drag_pointer_position(resp.interact_pointer_pos(), ctx.input(|i| i.pointer.interact_pos()), ctx.input(|i| i.pointer.latest_pos()))
         && let Some(d) = app.tl.drag.clone()
     {
         let t_here = layout.tick_at(p.x);
@@ -930,8 +956,7 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
             let base = 9.0 * dt * 60.0 / app.ui.timeline.pps.max(1e-9);
             let right_zone = 80.0f32;
             let left_zone = 40.0f32;
-            let over_right = ((p.x - (layout.content.max.x - right_zone)) / right_zone).clamp(0.0, 1.0);
-            let over_left = (((layout.content.min.x + left_zone) - p.x) / left_zone).clamp(0.0, 1.0);
+            let (over_left, over_right) = horizontal_edge_factors(p.x, layout.content.min.x, layout.content.max.x, left_zone, right_zone);
             let v = &mut app.ui.timeline;
             if over_right > 0.0 {
                 v.target_scroll += base * f64::from(over_right);
@@ -946,6 +971,9 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
             // own pane moves that pane's track slider (the video clips scroll the video slider,
             // audio clips theirs), so a drag can reach tracks that are off screen
             if let Some(Drag::Move { clips, start_track, .. }) = app.tl.drag.clone() {
+                // Clip-drag autoscroll owns both pane offsets until release. A pending slider
+                // animation must not pull either offset back toward its earlier target.
+                app.tl.track_anim = None;
                 let video = drag_uses_video_scroll(seq, &clips, start_track);
                 let (top, bottom) =
                     if video { (layout.video_top, layout.split_y) } else { (layout.split_y + super::DIVIDER_H, layout.content.max.y - super::MASTER_H) };
@@ -976,9 +1004,16 @@ fn drag_update(app: &mut FilmcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
 
 #[cfg(test)]
 mod visible_row_fallback_tests {
-    use super::{drag_uses_video_scroll, move_is_locked_for_drop, nearest_visible_row, validate_updated_drag};
+    use super::{drag_pointer_position, drag_uses_video_scroll, move_is_locked_for_drop, nearest_visible_row, validate_updated_drag};
     use crate::panels::timeline::layout::{Layout, Row};
     use egui::{Rect, pos2};
+
+    #[test]
+    fn release_drag_uses_latest_pointer_when_response_has_no_interaction_position() {
+        let release = pos2(80.0, 40.0);
+        assert_eq!(drag_pointer_position(None, None, Some(release)), Some(release));
+        assert_eq!(drag_pointer_position(Some(pos2(20.0, 10.0)), None, Some(release)), Some(pos2(20.0, 10.0)));
+    }
     use filmcraft_project::{ClipId, ItemId, Label, Project, SequenceSettings, TrackId, TrackItem, TrackKind};
     use filmcraft_time::Tick;
 
@@ -1713,6 +1748,7 @@ pub(super) fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence
                     app.auto.add("timeline.trackSliderSettings", r.rect, "Track Slider Settings");
                     if r.clicked() {
                         app.tl.track_slider_settings_pos = Some(r.rect.min);
+                        super::scrollbars::zoombar_state_reset(&ctx);
                         // the two settings menus are mutually exclusive
                         app.tl.zoombar_settings_pos = None;
                         super::scrollbars::close_zoombar_popup(&ctx);
@@ -1804,11 +1840,25 @@ mod marquee_tests {
 
 #[cfg(test)]
 mod wheel_axis_tests {
-    use super::horizontal_dominant_scroll;
+    use super::{WheelInput, horizontal_dominant_scroll, horizontal_edge_factors, wheel_requests_zoom, wheel_vertical_component};
 
     #[test]
     fn horizontal_trackpad_motion_survives_small_vertical_drift() {
         assert!(horizontal_dominant_scroll(egui::vec2(-100.0, 1.0)));
         assert!(!horizontal_dominant_scroll(egui::vec2(1.0, -100.0)));
+    }
+
+    #[test]
+    fn alt_horizontal_trackpad_scroll_with_vertical_drift_dispatches_to_time_scroll() {
+        let wheel = WheelInput { delta: egui::vec2(-100.0, 1.0), pinch: 1.0, command: false, alt: true, shift: false };
+        assert_eq!(wheel_vertical_component(&wheel), 0.0);
+        assert!(!wheel_requests_zoom(&wheel), "dominant horizontal motion with Alt must reach the time-scroll branch");
+        assert!(horizontal_dominant_scroll(wheel.delta));
+    }
+
+    #[test]
+    fn narrow_timeline_edge_zones_choose_the_nearer_edge() {
+        assert_eq!(horizontal_edge_factors(30.0, 0.0, 100.0, 40.0, 80.0), (0.25, 0.0));
+        assert_eq!(horizontal_edge_factors(70.0, 0.0, 100.0, 40.0, 80.0), (0.0, 0.625));
     }
 }
